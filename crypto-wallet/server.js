@@ -32,7 +32,11 @@ if (ENV === 'production') {
 
 // Configuration des Middlewares globaux
 app.use(cors({ origin: FRONTEND_URL }));
-app.use(express.json()); // Permet au serveur de lire les formulaires envoyés par l'application
+app.use(express.json({
+  // Garde le corps brut pour vérifier la signature des webhooks MoonPay
+  // (le HMAC se calcule sur les octets exacts reçus, pas sur du JSON re-sérialisé).
+  verify: (req, res, buf) => { req.rawBody = buf.toString('utf8'); },
+}));
 
 // Anti-bruteforce : limite le nombre de requêtes par IP (voir RATE_LIMIT_MAX dans .env)
 app.use(rateLimit({

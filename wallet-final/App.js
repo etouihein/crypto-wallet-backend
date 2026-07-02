@@ -419,6 +419,9 @@ export default function App() {
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
   const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
+  const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
+  const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
+  const [newsItems, setNewsItems]         = useState([]);
 
   // Token de session du wallet actif côté serveur (isole ce wallet de celui
   // des autres clients — voir requireSession dans crypto-wallet/src/routes/wallet.js).
@@ -687,6 +690,39 @@ export default function App() {
     }
   }, [network, walletAddr, refreshPortfolio]);
 
+  // Retour depuis MoonPay/Stripe : confirme l'achat et revérifie le solde
+  // plusieurs fois (la crypto arrive on-chain, pas instantanément).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('transactionStatus');
+    const isDemo = params.get('payment') === 'demo';
+    if (!status && !isDemo) return;
+
+    if (status) {
+      const label = { completed: '✅ Achat confirmé', pending: '⏳ Achat en cours', failed: '❌ Achat échoué' }[status] || `Statut MoonPay : ${status}`;
+      Alert.alert(label, status === 'failed'
+        ? 'La transaction MoonPay n\'a pas abouti.'
+        : 'Ton solde se met à jour dès que la transaction est confirmée sur la blockchain — vérification automatique en cours.');
+    } else {
+      Alert.alert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure MoonPay pour un achat réel.');
+    }
+
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (status === 'completed' || status === 'pending') {
+      let attempts = 0;
+      const poll = setInterval(() => {
+        attempts += 1;
+        refreshPortfolio();
+        if (attempts >= 6) clearInterval(poll);
+      }, 15000);
+      return () => clearInterval(poll);
+    }
+    // Ne doit s'exécuter qu'une fois au chargement de la page de retour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     setSendToken(network === 'bsc' ? 'BNB' : 'ETH');
     setSwapFrom(network === 'bsc' ? 'BNB' : 'ETH');
@@ -733,9 +769,110 @@ export default function App() {
       return candles;
     }
 
+    // Vraies bougies (CoinGecko) pour les vues plus longues — remplace la
+    // simulation tant qu'elles n'ont pas encore été récupérées (fetchCoinCandles).
+    const real = realCandles[`${symbol}_${detailTf}`];
     const numCandles = cfg?.numCandles || 8;
+    if (real && real.length) return real.slice(-numCandles);
+
     return generateCandlesFromPrice(symbol, price, detailTf, numCandles) || [];
-  }, [detailTf, tokens, candleHistory, chartTick]);
+  }, [detailTf, tokens, candleHistory, chartTick, realCandles]);
+
+  // Récupère les vraies bougies + la fiche crypto (CoinGecko) dès qu'on ouvre
+  // le détail d'un token ou qu'on change de zoom — avec cache pour ne pas
+  // re-télécharger à chaque re-render.
+  useEffect(() => {
+    if (!selectedToken) return;
+    const cfg = TF_CONFIG[detailTf];
+    if (cfg?.live) return; // 5M/15M restent sur l'agrégation live locale (déjà réelle)
+    const cgId = WALLET_TOKENS[selectedToken]?.cgId;
+    if (!cgId) return;
+    const key = `${selectedToken}_${detailTf}`;
+    if (realCandles[key]) return;
+    axios.get(`${API_BASE}/coin/${cgId}/candles`, {
+      params: { timeframe: detailTf }, headers: API_HEADERS, timeout: 15000,
+    }).then(res => {
+      if (res.data?.success) setRealCandles(prev => ({ ...prev, [key]: res.data.candles }));
+    }).catch(err => console.warn('candles CoinGecko indisponibles:', err.message));
+  }, [selectedToken, detailTf, realCandles]);
+
+  useEffect(() => {
+    if (!selectedToken || coinDetails[selectedToken]) return;
+    const cgId = WALLET_TOKENS[selectedToken]?.cgId;
+    if (!cgId) return;
+    axios.get(`${API_BASE}/coin/${cgId}`, { headers: API_HEADERS, timeout: 15000 })
+      .then(res => {
+        if (res.data?.success) setCoinDetails(prev => ({ ...prev, [selectedToken]: res.data.coin }));
+      })
+      .catch(err => console.warn('fiche crypto indisponible:', err.message));
+  }, [selectedToken, coinDetails]);
+
+  useEffect(() => {
+    const fetchNews = () => {
+      axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
+        .then(res => { if (res.data?.success) setNewsItems(res.data.items); })
+        .catch(err => console.warn('news indisponibles:', err.message));
+    };
+    fetchNews();
+    const id = setInterval(fetchNews, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const fmtCompactNumber = useCallback((n) => {
+    if (n === null || n === undefined || !isFinite(n)) return '—';
+    if (n >= 1e12) return (n / 1e12).toFixed(2) + 'T';
+    if (n >= 1e9)  return (n / 1e9).toFixed(2) + 'Md';
+    if (n >= 1e6)  return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3)  return (n / 1e3).toFixed(2) + 'k';
+    return n.toFixed(2);
+  }, []);
+
+  const renderCoinAbout = (symbol) => {
+    const info = coinDetails[symbol];
+    if (!info) {
+      return (
+        <View style={[st.about_box, { alignItems: 'center' }]}>
+          <ActivityIndicator color={T.green} />
+          <Text style={{ color: T.text2, fontSize: 12, marginTop: 8 }}>Chargement des infos réelles (CoinGecko)…</Text>
+        </View>
+      );
+    }
+    return (
+      <View style={st.about_box}>
+        <Text style={st.about_title}>À propos de {info.name}</Text>
+        {!!info.description && <Text style={st.about_text}>{info.description}</Text>}
+        {!!info.categories?.length && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+            {info.categories.slice(0, 4).map(c => (
+              <View key={c} style={st.about_tag}><Text style={st.about_tag_txt}>{c}</Text></View>
+            ))}
+          </View>
+        )}
+        <View style={st.detail_grid}>
+          {[
+            { label: 'Rang marché',       val: info.marketCapRank ? `#${info.marketCapRank}` : '—' },
+            { label: 'Capitalisation',    val: info.marketCap ? `$${fmtCompactNumber(info.marketCap)}` : '—' },
+            { label: 'Volume 24h',        val: info.totalVolume ? `$${fmtCompactNumber(info.totalVolume)}` : '—' },
+            { label: 'Valo. diluée',      val: info.fullyDilutedValuation ? `$${fmtCompactNumber(info.fullyDilutedValuation)}` : '—' },
+            { label: 'Offre en circulation', val: info.circulatingSupply ? fmtCompactNumber(info.circulatingSupply) : '—' },
+            { label: 'Offre max',         val: info.maxSupply ? fmtCompactNumber(info.maxSupply) : 'Illimitée' },
+            { label: 'Plus haut historique', val: info.ath ? `$${fmtCompactNumber(info.ath)}` : '—' },
+            { label: 'Création',          val: info.genesisDate || '—' },
+          ].map(item => (
+            <View key={item.label} style={st.detail_stat}>
+              <Text style={st.detail_stat_lbl}>{item.label}</Text>
+              <Text style={st.detail_stat_val}>{item.val}</Text>
+            </View>
+          ))}
+        </View>
+        {!!info.homepage && (
+          <AnimPressable style={st.about_link_btn} onPress={() => Linking.openURL(info.homepage)}>
+            <Text style={st.about_link_txt}>🔗 Site officiel</Text>
+          </AnimPressable>
+        )}
+      </View>
+    );
+  };
 
   // ── TOTAUX ──
   const totalUSD = useMemo(() =>
@@ -791,6 +928,11 @@ export default function App() {
       setShowBuy(false);
       if (res.data?.demo) {
         Alert.alert('✅ Achat prêt', res.data?.message || 'Le flux d’achat est lancé en mode test.');
+      } else if (Platform.OS === 'web') {
+        // window.open() est bloqué par les navigateurs quand il arrive après un
+        // appel réseau (hors du geste de clic direct) — on navigue dans le même
+        // onglet à la place, comme le fait un vrai flux de paiement (Stripe/MoonPay).
+        window.location.href = res.data.url;
       } else {
         await Linking.openURL(res.data.url);
       }
@@ -1029,14 +1171,17 @@ export default function App() {
                 { icon: '↓', label: 'Recevoir', onPress: () => { setSelectedToken(null); setShowReceive(true); } },
                 { icon: '⇄', label: 'Swap',     onPress: () => { setSelectedToken(null); setSwapFrom(selectedToken); setTab('swap'); } },
               ].map(a => (
-                <TouchableOpacity key={a.label} style={st.detail_action_btn} onPress={a.onPress}>
+                <AnimPressable key={a.label} style={st.detail_action_btn} onPress={a.onPress}>
                   <View style={st.detail_action_icon}>
                     <Text style={{ color: T.green, fontSize: 20 }}>{a.icon}</Text>
                   </View>
                   <Text style={st.detail_action_lbl}>{a.label}</Text>
-                </TouchableOpacity>
+                </AnimPressable>
               ))}
             </View>
+
+            {renderCoinAbout(selectedToken)}
+
             <View style={{ height: 40 }} />
           </ScrollView>
         </SafeAreaView>
@@ -1291,6 +1436,23 @@ export default function App() {
           placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
       </View>
       <ScrollView showsVerticalScrollIndicator={false}>
+        {!!newsItems.length && (
+          <View style={{ marginBottom: 18 }}>
+            <View style={st.section_hdr}>
+              <Text style={st.section_title}>📰 Actu crypto en direct</Text>
+            </View>
+            {newsItems.slice(0, 6).map((item, i) => (
+              <AnimPressable key={i} style={st.news_card} scaleTo={0.98} onPress={() => item.link && Linking.openURL(item.link)}>
+                <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
+                {!!item.description && <Text style={st.news_desc} numberOfLines={2}>{item.description}</Text>}
+                <Text style={st.news_date}>{item.pubDate ? new Date(item.pubDate).toLocaleString('fr-FR') : ''}</Text>
+              </AnimPressable>
+            ))}
+            <View style={st.section_hdr}>
+              <Text style={st.section_title}>Tous les cours</Text>
+            </View>
+          </View>
+        )}
         {filteredCoins.map((coin, idx) => {
           const pos = (coin.price_change_percentage_24h || 0) >= 0;
           const logo = COIN_LOGOS[coin.id];
@@ -1540,6 +1702,14 @@ const st = StyleSheet.create({
   detail_action_icon:{ width: 52, height: 52, borderRadius: 26, backgroundColor: T.greenBg, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
   detail_action_lbl: { color: T.text2, fontSize: 12 },
 
+  about_box:      { marginHorizontal: 16, backgroundColor: T.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
+  about_title:    { color: T.text, fontSize: 15, fontWeight: 'bold', marginBottom: 8 },
+  about_text:     { color: T.text2, fontSize: 13, lineHeight: 19 },
+  about_tag:      { backgroundColor: T.blueBg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 },
+  about_tag_txt:  { color: T.blue, fontSize: 10, fontWeight: '600' },
+  about_link_btn: { alignSelf: 'center', marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border },
+  about_link_txt: { color: T.text, fontSize: 13, fontWeight: '600' },
+
   tf_row:    { flexDirection: 'row', backgroundColor: T.card, borderRadius: 10, padding: 3, marginBottom: 4 },
   tf_btn:    { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   tf_btn_on: { backgroundColor: T.card2 },
@@ -1580,6 +1750,11 @@ const st = StyleSheet.create({
   market_sym:     { color: T.text, fontSize: 13, fontWeight: '700' },
   market_name:    { color: T.text2, fontSize: 11, marginTop: 1 },
   market_price:   { color: T.text, fontSize: 13, fontWeight: '600' },
+
+  news_card:  { marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 5, elevation: 2 },
+  news_title: { color: T.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  news_desc:  { color: T.text2, fontSize: 12, lineHeight: 17, marginBottom: 6 },
+  news_date:  { color: T.text3, fontSize: 10 },
 
   tab_title:          { color: T.text, fontSize: 22, fontWeight: 'bold', marginBottom: 4 },
   swap_card:          { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.border },

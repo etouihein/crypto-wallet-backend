@@ -52,6 +52,27 @@ function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redi
   return `${url}&signature=${encodeURIComponent(signature)}`;
 }
 
+// Webhook MoonPay — LA vraie confirmation qu'un achat a abouti. MoonPay livre
+// la crypto directement on-chain à walletAddress ; ce webhook nous notifie
+// côté serveur (utile pour logs/support), le solde réel reste vérifiable sur
+// la blockchain via /wallet/info comme pour n'importe quelle transaction.
+// Clé distincte de MOONPAY_SECRET_KEY — dashboard.moonpay.com > Developers > Webhooks.
+const MOONPAY_WEBHOOK_KEY = process.env.MOONPAY_WEBHOOK_KEY || '';
+
+function verifyMoonPayWebhook(req) {
+  const header = req.header('moonpay-signature-v2');
+  const match = header && /t=([^,]+),s=(.+)/.exec(header);
+  if (!match) return false;
+  const [, timestamp, signature] = match;
+  const signedPayload = `${timestamp}.${req.rawBody || ''}`;
+  const expected = crypto.createHmac('sha256', MOONPAY_WEBHOOK_KEY).update(signedPayload).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
 const NETWORKS = {
   ethereum: {
     chainId: 1,
@@ -152,15 +173,15 @@ const FALLBACK_MARKET_DATA = [
   { id: 'matic-network', symbol: 'MATIC', name: 'Polygon', current_price: 0.9, market_cap: 8500000000, price_change_percentage_24h: 0.2, image: 'https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png' },
 ];
 
+function coingeckoHeaders() {
+  return process.env.COINGECKO_API_KEY ? { 'x-api-key': process.env.COINGECKO_API_KEY } : {};
+}
+
 async function fetchCoinGeckoMarket() {
   const ids = TOKENS.map(t => t.cgId).join(',');
   const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&sparkline=false&price_change_percentage=24h`;
-  const headers = {};
-  if (process.env.COINGECKO_API_KEY) {
-    headers['x-api-key'] = process.env.COINGECKO_API_KEY;
-  }
   try {
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { headers: coingeckoHeaders() });
     if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
     const data = await response.json();
     return data.map(item => ({
@@ -176,6 +197,49 @@ async function fetchCoinGeckoMarket() {
     console.warn('CoinGecko unavailable, using fallback market data:', error.message);
     return FALLBACK_MARKET_DATA;
   }
+}
+
+// Jours d'historique demandés à CoinGecko selon le zoom choisi dans l'app —
+// la granularité des bougies (30min/4h/4j) est décidée par CoinGecko selon `days`.
+const CANDLE_DAYS_BY_TIMEFRAME = { '1H': 1, '1J': 7, '1S': 90, '1M': 180 };
+
+async function fetchCoinOhlc(cgId, timeframe) {
+  const days = CANDLE_DAYS_BY_TIMEFRAME[timeframe] || 7;
+  const url = `https://api.coingecko.com/api/v3/coins/${cgId}/ohlc?vs_currency=usd&days=${days}`;
+  const response = await fetch(url, { headers: coingeckoHeaders() });
+  if (!response.ok) throw new Error(`CoinGecko OHLC error ${response.status}`);
+  const raw = await response.json(); // [ [time, open, high, low, close], ... ]
+  return raw.map(([time, o, h, l, c]) => ({ time, o, h, l, c }));
+}
+
+async function fetchCoinDetail(cgId) {
+  const url = `https://api.coingecko.com/api/v3/coins/${cgId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
+  const response = await fetch(url, { headers: coingeckoHeaders() });
+  if (!response.ok) throw new Error(`CoinGecko coin error ${response.status}`);
+  const d = await response.json();
+  const md = d.market_data || {};
+  return {
+    id: d.id,
+    symbol: d.symbol?.toUpperCase(),
+    name: d.name,
+    // Première phrase de la description CoinGecko : mentionne en général qui/quelle
+    // fondation a créé le projet et son objectif — pas de donnée inventée.
+    description: (d.description?.en || '').split(/(?<=\.)\s+/)[0] || '',
+    homepage: d.links?.homepage?.find(Boolean) || '',
+    genesisDate: d.genesis_date || null,
+    categories: (d.categories || []).filter(Boolean),
+    marketCapRank: d.market_cap_rank ?? null,
+    marketCap: md.market_cap?.usd ?? null,
+    fullyDilutedValuation: md.fully_diluted_valuation?.usd ?? null,
+    totalVolume: md.total_volume?.usd ?? null,
+    circulatingSupply: md.circulating_supply ?? null,
+    totalSupply: md.total_supply ?? null,
+    maxSupply: md.max_supply ?? null,
+    ath: md.ath?.usd ?? null,
+    athDate: md.ath_date?.usd ?? null,
+    atl: md.atl?.usd ?? null,
+    atlDate: md.atl_date?.usd ?? null,
+  };
 }
 
 // ── Sessions par wallet ──────────────────────────────────────────
@@ -228,11 +292,27 @@ function requireSession(req, res, next) {
 
 router.use((req, res, next) => {
   const apiKey = req.header('x-api-key');
-  if (req.path === '/' || req.method === 'OPTIONS') return next();
+  // MoonPay appelle ce endpoint directement — il ne connaît pas notre clé API,
+  // sa légitimité est prouvée par la signature HMAC vérifiée dans le handler.
+  if (req.path === '/' || req.path === '/webhooks/moonpay' || req.method === 'OPTIONS') return next();
   if (!apiKey || !APP_API_KEYS.has(apiKey)) {
     return res.status(401).json({ success: false, error: 'Clé API invalide ou absente.' });
   }
   next();
+});
+
+router.post('/webhooks/moonpay', (req, res) => {
+  if (MOONPAY_WEBHOOK_KEY) {
+    if (!verifyMoonPayWebhook(req)) {
+      return res.status(401).json({ success: false, error: 'Signature webhook invalide.' });
+    }
+  } else {
+    console.warn('⚠️  Webhook MoonPay reçu sans MOONPAY_WEBHOOK_KEY configurée — signature NON vérifiée, événement ignoré.');
+    return res.json({ received: true, verified: false });
+  }
+  const { type, data } = req.body || {};
+  console.log(`💳 MoonPay [${type}] statut=${data?.status} adresse=${data?.walletAddress} montant=${data?.baseCurrencyAmount}${data?.baseCurrencyCode} -> ${data?.quoteCurrencyAmount} ${data?.currency?.code}`);
+  res.json({ received: true, verified: true });
 });
 
 // 1. ROUTE DE CRÉATION DE WALLET (Génération d'une vraie Seed Phrase à 12 mots)
@@ -343,6 +423,53 @@ router.get('/market', async (req, res) => {
   try {
     const tokens = await fetchCoinGeckoMarket();
     res.json({ success: true, tokens });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/coin/:cgId', async (req, res) => {
+  try {
+    const coin = await fetchCoinDetail(req.params.cgId);
+    res.json({ success: true, coin });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/coin/:cgId/candles', async (req, res) => {
+  try {
+    const timeframe = (req.query.timeframe || '1J').toUpperCase();
+    const candles = await fetchCoinOhlc(req.params.cgId, timeframe);
+    res.json({ success: true, candles });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// News crypto — flux RSS CoinDesk, public et gratuit, pas de clé requise.
+async function fetchCryptoNews() {
+  const response = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss/');
+  if (!response.ok) throw new Error(`RSS error ${response.status}`);
+  const xml = await response.text();
+  const pick = (block, tag) => {
+    const m = block.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`));
+    return m ? m[1].trim() : '';
+  };
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+    .slice(0, 20)
+    .map(([, block]) => ({
+      title: pick(block, 'title'),
+      link: pick(block, 'link'),
+      pubDate: pick(block, 'pubDate'),
+      description: pick(block, 'description').replace(/<[^>]+>/g, '').slice(0, 220),
+    }));
+}
+
+router.get('/news', async (req, res) => {
+  try {
+    const items = await fetchCryptoNews();
+    res.json({ success: true, items });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
