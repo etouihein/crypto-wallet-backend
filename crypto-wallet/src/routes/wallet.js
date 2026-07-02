@@ -28,16 +28,23 @@ const MOONPAY_CURRENCY_CODES = {
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
 };
 
-function buildMoonPaySignedUrl({ currencyCode, walletAddress, baseCurrencyAmount, redirectURL }) {
-  const params = new URLSearchParams({
+function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redirectURL }) {
+  const fields = {
     apiKey: MOONPAY_API_KEY,
     currencyCode,
-    walletAddress,
     baseCurrencyCode: 'usd',
     baseCurrencyAmount: String(baseCurrencyAmount),
     redirectURL,
-  });
+  };
+  // La signature est obligatoire dès qu'on préremplit walletAddress. Sans clé
+  // secrète configurée, on laisse le champ vide : le widget MoonPay marche
+  // quand même, l'utilisateur colle juste son adresse à la main.
+  if (MOONPAY_SECRET_KEY) fields.walletAddress = walletAddress;
+
+  const params = new URLSearchParams(fields);
   const url = `${MOONPAY_BASE_URL}?${params.toString()}`;
+  if (!MOONPAY_SECRET_KEY) return url;
+
   const signature = crypto
     .createHmac('sha256', MOONPAY_SECRET_KEY)
     .update(new URL(url).search)
@@ -372,20 +379,25 @@ router.post('/payments/create-checkout-session', requireSession, async (req, res
     })();
 
     if (PAYMENT_PROVIDER === 'moonpay') {
-      if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
-        return res.status(503).json({ success: false, error: 'MoonPay non configuré (MOONPAY_API_KEY / MOONPAY_SECRET_KEY manquants dans .env).' });
+      if (!MOONPAY_API_KEY) {
+        return res.status(503).json({ success: false, error: 'MoonPay non configuré (MOONPAY_API_KEY manquante dans .env).' });
       }
       const currencyCode = MOONPAY_CURRENCY_CODES[normalizeNetwork(network)]?.[tokenSymbol.toUpperCase()];
       if (!currencyCode) {
         return res.status(400).json({ success: false, error: `Achat de ${tokenSymbol} non supporté sur ce wallet (une seule adresse EVM) — choisis ETH, BNB, USDT ou USDC.` });
       }
-      const url = buildMoonPaySignedUrl({
+      const url = buildMoonPayUrl({
         currencyCode,
         walletAddress: req.walletSession.wallet.address,
         baseCurrencyAmount: (intAmount / 100).toFixed(2),
         redirectURL: frontendBase,
       });
-      return res.json({ success: true, provider: 'moonpay', url });
+      return res.json({
+        success: true,
+        provider: 'moonpay',
+        url,
+        message: MOONPAY_SECRET_KEY ? undefined : 'Adresse non pré-remplie (clé secrète MoonPay absente) — colle ton adresse dans le widget.',
+      });
     }
 
     if (!stripe || PAYMENT_PROVIDER !== 'stripe') {
