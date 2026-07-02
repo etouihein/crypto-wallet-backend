@@ -379,12 +379,13 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
   };
   return (
     <Pressable
+      style={style}
       onPress={onPress}
       disabled={disabled}
       onPressIn={() => animateTo(scaleTo)}
       onPressOut={() => animateTo(1)}
     >
-      <Animated.View style={[style, { transform: [{ scale }] }]}>
+      <Animated.View style={{ width: '100%', transform: [{ scale }] }}>
         {children}
       </Animated.View>
     </Pressable>
@@ -906,16 +907,17 @@ export default function App() {
       .catch(err => console.warn('fiche crypto indisponible:', err.message));
   }, [selectedToken, coinDetails]);
 
+  const fetchNews = useCallback(() => {
+    return axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
+      .then(res => { if (res.data?.success) setNewsItems(res.data.items); })
+      .catch(err => console.warn('news indisponibles:', err.message));
+  }, []);
+
   useEffect(() => {
-    const fetchNews = () => {
-      axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
-        .then(res => { if (res.data?.success) setNewsItems(res.data.items); })
-        .catch(err => console.warn('news indisponibles:', err.message));
-    };
     fetchNews();
     const id = setInterval(fetchNews, 5 * 60 * 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchNews]);
 
   const fmtCompactNumber = useCallback((n) => {
     if (n === null || n === undefined || !isFinite(n)) return '—';
@@ -1585,7 +1587,7 @@ export default function App() {
         );
       })}
 
-      <View style={{ height: 30 }} />
+      <View style={{ height: 90 }} />
     </ScrollView>
   );
 
@@ -1598,7 +1600,16 @@ export default function App() {
         <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
           placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
       </View>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); Promise.all([fetchMarket(), fetchNews()]).finally(() => setRefreshing(false)); }}
+            tintColor={T.green}
+          />
+        }
+      >
         {!!newsItems.length && (
           <View style={{ marginBottom: 20 }}>
             <View style={st.section_hdr}>
@@ -1648,7 +1659,9 @@ export default function App() {
                     <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
                   </View>
                 </View>
-                <Text style={st.market_card_price}>{fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}</Text>
+                <Text style={st.market_card_price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+                  {fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}
+                </Text>
                 <View style={[st.market_card_badge, { backgroundColor: pos ? T.greenBg : T.redBg }]}>
                   <Text style={{ color: pos ? T.green : T.red, fontSize: 11, fontWeight: 'bold' }}>
                     {pos ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
@@ -1658,7 +1671,7 @@ export default function App() {
             );
           })}
         </View>
-        <View style={{ height: 30 }} />
+        <View style={{ height: 90 }} />
       </ScrollView>
     </View>
   );
