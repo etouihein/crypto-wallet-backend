@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CRYPTO WALLET — Key Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Variables ─────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #050508;
+      --surface:  #0a0c12;
+      --panel:    #0e1118;
+      --border:   #1a1f2e;
+      --accent:   #00e5ff;
+      --accent2:  #7b61ff;
+      --accent3:  #00ff88;
+      --warn:     #ff6b35;
+      --danger:   #ff2d55;
+      --text:     #c8cfe8;
+      --muted:    #4a5070;
+      --mono:     'Share Tech Mono', monospace;
+      --sans:     'Rajdhani', sans-serif;
+      --glow:     0 0 20px rgba(0,229,255,0.15);
+      --glow2:    0 0 30px rgba(123,97,255,0.2);
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Grid Background ───────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Header ────────────────────────────────────── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(5,5,8,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 60px;
+    }
+
+    .logo {
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      color: var(--accent);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .logo::before {
+      content: '⬡';
+      font-size: 1.3rem;
+      animation: pulse-hex 2s ease-in-out infinite;
+    }
+    @keyframes pulse-hex {
+      0%,100% { opacity:1; text-shadow: 0 0 10px var(--accent); }
+      50%      { opacity:0.5; text-shadow: none; }
+    }
+
+    .header-status {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .status-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent3);
+      box-shadow: 0 0 8px var(--accent3);
+      animation: blink 2s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity:0; } }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .container {
+      position: relative; z-index: 1;
+      max-width: 1400px; margin: 0 auto;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 1.5rem;
+      min-height: calc(100vh - 60px);
+    }
+
+    /* ── Sidebar ────────────────────────────────────── */
+    .sidebar {
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+
+    .nav-section-label {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 1rem 0.75rem 0.4rem;
+    }
+
+    .nav-btn {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+      width: 100%;
+    }
+    .nav-btn:hover { border-color: var(--border); color: var(--text); background: var(--surface); }
+    .nav-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0,229,255,0.06);
+      box-shadow: var(--glow);
+    }
+    .nav-btn .icon { font-size: 1rem; width: 20px; text-align: center; }
+
+    /* ── Main Content ────────────────────────────────── */
+    .main { display: flex; flex-direction: column; gap: 1.5rem; }
+
+    /* ── Panels / Tabs ──────────────────────────────── */
+    .tab-panel { display: none; animation: fadeIn 0.3s ease; }
+    .tab-panel.active { display: flex; flex-direction: column; gap: 1.5rem; }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+
+    /* ── Card ───────────────────────────────────────── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem;
+    }
+    .card-title {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 1.25rem;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-title::after {
+      content: ''; flex: 1; height: 1px;
+      background: linear-gradient(to right, var(--border), transparent);
+    }
+
+    /* ── Form Elements ──────────────────────────────── */
+    .form-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .form-group { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 200px; }
+    label {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    input, select, textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      padding: 0.55rem 0.8rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      width: 100%;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(0,229,255,0.1);
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    select option { background: var(--panel); }
+
+    /* ── Buttons ─────────────────────────────────────── */
+    .btn {
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      font-weight: 700;
+      padding: 0.6rem 1.4rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+    .btn-primary:hover { background: #33eaff; box-shadow: 0 0 20px rgba(0,229,255,0.4); }
+    .btn-secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .btn-secondary:hover { background: rgba(0,229,255,0.08); }
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+    .btn-danger:hover { background: rgba(255,45,85,0.1); }
+    .btn-violet {
+      background: var(--accent2);
+      color: #fff;
+    }
+    .btn-violet:hover { background: #9278ff; box-shadow: 0 0 20px rgba(123,97,255,0.4); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
+
+    /* ── Mnemonic Grid ──────────────────────────────── */
+    .mnemonic-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 0.5rem;
+      margin: 1rem 0;
+    }
+    .mnemonic-word {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.7rem;
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+    .word-index {
+      font-size: 0.6rem;
+      color: var(--muted);
+      min-width: 16px;
+    }
+    .word-value { color: var(--accent3); }
+
+    /* ── Keys Table ─────────────────────────────────── */
+    .keys-table-wrap { overflow-x: auto; }
+    table {
+      width: 100%; border-collapse: collapse;
+      font-family: var(--mono); font-size: 0.72rem;
+    }
+    th {
+      text-align: left; padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted); font-weight: normal;
+      letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid rgba(26,31,46,0.5);
+      color: var(--text);
+    }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .td-mono { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+    .td-addr { color: var(--accent); font-size: 0.7rem; }
+    .td-priv { color: var(--warn); font-size: 0.65rem; }
+
+    /* ── Chain Tabs ─────────────────────────────────── */
+    .chain-tabs {
+      display: flex; gap: 0.4rem; flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    .chain-tab {
+      font-family: var(--mono); font-size: 0.7rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chain-tab:hover { border-color: var(--text); color: var(--text); }
+    .chain-tab.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0,229,255,0.08);
+    }
+
+    /* ── Key Row (compact display) ──────────────────── */
+    .key-field {
+      display: flex; align-items: center; gap: 0.5rem;
+      margin-bottom: 0.6rem;
+    }
+    .key-label {
+      font-family: var(--mono); font-size: 0.6rem;
+      color: var(--muted); min-width: 90px;
+      letter-spacing: 0.08em;
+    }
+    .key-value {
+      flex: 1;
+      font-family: var(--mono); font-size: 0.7rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.3rem 0.6rem;
+      color: var(--text);
+      word-break: break-all;
+      cursor: text;
+    }
+    .key-value.private { color: var(--warn); }
+    .key-value.address { color: var(--accent); }
+
+    .copy-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 0.7rem;
+      padding: 0.25rem 0.5rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .copy-btn.copied { border-color: var(--accent3); color: var(--accent3); }
+
+    /* ── Toggle Private Keys ─────────────────────────── */
+    .reveal-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: var(--mono); font-size: 0.7rem;
+      color: var(--warn);
+      background: rgba(255,107,53,0.08);
+      border: 1px solid rgba(255,107,53,0.3);
+      border-radius: 4px;
+      padding: 0.3rem 0.7rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .reveal-toggle:hover { background: rgba(255,107,53,0.15); }
+    .hidden-val { filter: blur(4px); user-select: none; transition: filter 0.3s; }
+    .hidden-val.revealed { filter: none; }
+
+    /* ── Alerts ─────────────────────────────────────── */
+    .alert {
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      display: flex; align-items: flex-start; gap: 8px;
+      margin-bottom: 1rem;
+    }
+    .alert-warn {
+      background: rgba(255,107,53,0.08);
+      border: 1px solid rgba(255,107,53,0.3);
+      color: var(--warn);
+    }
+    .alert-success {
+      background: rgba(0,255,136,0.06);
+      border: 1px solid rgba(0,255,136,0.25);
+      color: var(--accent3);
+    }
+    .alert-error {
+      background: rgba(255,45,85,0.08);
+      border: 1px solid rgba(255,45,85,0.3);
+      color: var(--danger);
+    }
+    .alert-info {
+      background: rgba(0,229,255,0.06);
+      border: 1px solid rgba(0,229,255,0.2);
+      color: var(--accent);
+    }
+
+    /* ── Spinner ─────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Master Key Section ─────────────────────────── */
+    .master-card {
+      background: linear-gradient(135deg, rgba(123,97,255,0.05), rgba(0,229,255,0.03));
+      border-color: rgba(123,97,255,0.3);
+    }
+
+    /* ── Chain Badge ─────────────────────────────────── */
+    .chain-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-family: var(--mono); font-size: 0.65rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .chain-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    /* ── Scrollbar ───────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+    /* ── Responsive ─────────────────────────────────── */
+    @media (max-width: 900px) {
+      .container { grid-template-columns: 1fr; }
+      .sidebar {
+        flex-direction: row; flex-wrap: wrap; gap: 0.4rem;
+      }
+      .nav-section-label { display: none; }
+      .nav-btn { flex: 0; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">⬡ CRYPTO WALLET</div>
+  <div class="header-status">
+    <span class="status-dot"></span>
+    <span id="status-text">LOCAL — AUCUNE DONNÉE TRANSMISE</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- SIDEBAR NAV -->
+  <aside class="sidebar">
+    <div class="nav-section-label">Portefeuille</div>
+    <button class="nav-btn active" onclick="showTab('generate')" id="nav-generate">
+      <span class="icon">⊕</span> Générer
+    </button>
+    <button class="nav-btn" onclick="showTab('import')" id="nav-import">
+      <span class="icon">↓</span> Importer
+    </button>
+    <button class="nav-btn" onclick="showTab('keys')" id="nav-keys">
+      <span class="icon">⬡</span> Toutes les clés
+    </button>
+
+    <div class="nav-section-label">Outils</div>
+    <button class="nav-btn" onclick="showTab('encrypt')" id="nav-encrypt">
+      <span class="icon">🔒</span> Chiffrer
+    </button>
+    <button class="nav-btn" onclick="showTab('sign')" id="nav-sign">
+      <span class="icon">✍</span> Signer
+    </button>
+    <button class="nav-btn" onclick="showTab('verify')" id="nav-verify">
+      <span class="icon">✓</span> Vérifier
+    </button>
+    <button class="nav-btn" onclick="showTab('derive')" id="nav-derive">
+      <span class="icon">⊞</span> Dériver
+    </button>
+
+    <div class="nav-section-label">Session</div>
+    <button class="nav-btn btn-danger" onclick="clearSession()" style="margin-top:auto;">
+      <span class="icon">✕</span> Effacer session
+    </button>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- ════════════════ TAB: GENERATE ════════════════ -->
+    <div class="tab-panel active" id="tab-generate">
+      <div class="card">
+        <div class="card-title">⊕ Générer un nouveau portefeuille</div>
+
+        <div class="alert alert-warn">
+          ⚠ Notez votre phrase mnémonique hors ligne. Ne la partagez jamais.
+          Quiconque la possède contrôle tous vos fonds.
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Entropie (force)</label>
+            <select id="gen-strength">
+              <option value="128">128 bits — 12 mots (standard)</option>
+              <option value="256">256 bits — 24 mots (maximum)</option>
+              <option value="192">192 bits — 18 mots</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Passphrase BIP39 (25ème mot, optionnel)</label>
+            <input type="password" id="gen-passphrase" placeholder="Laisser vide pour aucun" />
+          </div>
+          <div class="form-group">
+            <label>Mot de passe de chiffrement (optionnel)</label>
+            <input type="password" id="gen-password" placeholder="Chiffre le mnémonique en session" />
+          </div>
+          <div class="form-group">
+            <label>Adresses à dériver (par chain)</label>
+            <select id="gen-count">
+              <option value="1">1</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="generateWallet()">
+            ⊕ Générer le portefeuille
+          </button>
+        </div>
+      </div>
+
+      <!-- Résultat génération -->
+      <div id="gen-result" style="display:none;">
+        <div class="card master-card">
+          <div class="card-title">🔑 Phrase mnémonique</div>
+          <div class="mnemonic-grid" id="mnemonic-display"></div>
+          <div class="btn-row">
+            <button class="btn btn-secondary" onclick="copyMnemonic()">⎘ Copier le mnémonique</button>
+            <button class="btn btn-secondary" onclick="showTab('keys')">→ Voir toutes les clés</button>
+          </div>
+        </div>
+
+        <div class="card" id="master-info-card">
+          <div class="card-title">∞ Clé maîtresse (BIP32 Root Key)</div>
+          <div id="master-key-fields"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: IMPORT ════════════════ -->
+    <div class="tab-panel" id="tab-import">
+      <div class="card">
+        <div class="card-title">↓ Importer depuis un mnémonique</div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 100%;">
+            <label>Phrase mnémonique (12 ou 24 mots, séparés par des espaces)</label>
+            <textarea id="import-mnemonic" rows="3"
+              placeholder="mot1 mot2 mot3 mot4 mot5 mot6 mot7 mot8 mot9 mot10 mot11 mot12"></textarea>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Passphrase BIP39 (optionnel)</label>
+            <input type="password" id="import-passphrase" placeholder="" />
+          </div>
+          <div class="form-group">
+            <label>Mot de passe de chiffrement (optionnel)</label>
+            <input type="password" id="import-password" placeholder="" />
+          </div>
+          <div class="form-group">
+            <label>Adresses à dériver</label>
+            <select id="import-count">
+              <option value="1">1</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="importMnemonic()">↓ Importer</button>
+          <button class="btn btn-secondary" onclick="validateOnly()">✓ Valider seulement</button>
+        </div>
+        <div id="import-validation" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">↓ Importer depuis une clé privée (EVM)</div>
+        <div class="alert alert-warn">⚠ Import d'une clé privée seule — pas de dérivation HD possible.</div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 100%;">
+            <label>Clé privée (64 hex ou avec préfixe 0x)</label>
+            <input type="text" id="import-pk" placeholder="0x..." />
+          </div>
+          <div class="form-group">
+            <label>Mot de passe (optionnel)</label>
+            <input type="password" id="import-pk-password" placeholder="" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="importPrivateKey()">↓ Importer clé</button>
+        </div>
+        <div id="pk-import-result" style="margin-top:0.75rem;"></div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: ALL KEYS ════════════════ -->
+    <div class="tab-panel" id="tab-keys">
+      <div class="card" id="keys-placeholder">
+        <div class="card-title">⬡ Toutes les clés — Multi-chain</div>
+        <div class="alert alert-info">
+          ℹ Génère ou importe un portefeuille d'abord pour voir les clés dérivées.
+        </div>
+      </div>
+
+      <div id="keys-content" style="display:none; display:flex; flex-direction:column; gap:1.5rem;">
+        <!-- Sélecteur de chain -->
+        <div class="card">
+          <div class="card-title">Chain sélectionnée</div>
+          <div class="chain-tabs" id="chain-tabs"></div>
+          <div class="btn-row" style="margin-top:0;">
+            <button class="reveal-toggle" onclick="toggleReveal()" id="reveal-btn">
+              👁 Révéler les clés privées
+            </button>
+          </div>
+        </div>
+
+        <!-- Adresses dérivées -->
+        <div class="card" id="chain-addresses-card">
+          <div class="card-title" id="chain-card-title">Adresses dérivées</div>
+          <div id="chain-addresses"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: ENCRYPT ════════════════ -->
+    <div class="tab-panel" id="tab-encrypt">
+      <div class="card">
+        <div class="card-title">🔒 Chiffrer une donnée</div>
+        <div class="alert alert-info">
+          Chiffrement AES-256-GCM + PBKDF2-SHA512 (310 000 itérations). Le résultat peut
+          être stocké en sécurité.
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:100%;">
+            <label>Donnée à chiffrer (mnémonique, clé privée…)</label>
+            <textarea id="enc-data" rows="3" placeholder="Entrer la donnée sensible…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Mot de passe (min 8 caractères)</label>
+            <input type="password" id="enc-password" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="encryptData()">🔒 Chiffrer</button>
+        </div>
+        <div id="enc-result" style="margin-top:1rem;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔓 Déchiffrer</div>
+        <div class="form-row">
+          <div class="form-group" style="flex:100%;">
+            <label>Payload chiffré (hex)</label>
+            <textarea id="dec-data" rows="3" placeholder="Coller le payload chiffré…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Mot de passe</label>
+            <input type="password" id="dec-password" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-violet" onclick="decryptData()">🔓 Déchiffrer</button>
+        </div>
+        <div id="dec-result" style="margin-top:1rem;"></div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: SIGN ════════════════ -->
+    <div class="tab-panel" id="tab-sign">
+      <div class="card">
+        <div class="card-title">✍ Signer un message (EIP-191)</div>
+        <div class="form-row">
+          <div class="form-group" style="flex:100%;">
+            <label>Message à signer</label>
+            <textarea id="sign-message" rows="3" placeholder="Je confirme que je contrôle cette adresse…"></textarea>
+          </div>
+          <div class="form-group" style="flex:100%;">
+            <label>Clé privée EVM (hex)</label>
+            <input type="password" id="sign-pk" placeholder="La clé ne quitte pas votre navigateur" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="signMessage()">✍ Signer</button>
+        </div>
+        <div id="sign-result" style="margin-top:1rem;"></div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: VERIFY ════════════════ -->
+    <div class="tab-panel" id="tab-verify">
+      <div class="card">
+        <div class="card-title">✓ Vérifier une signature</div>
+        <div class="form-row">
+          <div class="form-group" style="flex:100%;">
+            <label>Message original</label>
+            <textarea id="verify-message" rows="2"></textarea>
+          </div>
+          <div class="form-group" style="flex:100%;">
+            <label>Signature (hex ou base64)</label>
+            <textarea id="verify-sig" rows="2" placeholder="0x..."></textarea>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="verifySignature()">✓ Vérifier</button>
+        </div>
+        <div id="verify-result" style="margin-top:1rem;"></div>
+      </div>
+    </div>
+
+    <!-- ════════════════ TAB: DERIVE ════════════════ -->
+    <div class="tab-panel" id="tab-derive">
+      <div class="card">
+        <div class="card-title">⊞ Dérivation BIP44 personnalisée</div>
+        <div class="form-row">
+          <div class="form-group" style="flex:100%;">
+            <label>Mnémonique</label>
+            <textarea id="derive-mnemonic" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Chemin de dérivation (BIP44)</label>
+            <input type="text" id="derive-path" value="m/44'/60'/0'/0/0"
+              placeholder="m/44'/60'/0'/0/0" />
+          </div>
+          <div class="form-group">
+            <label>Passphrase (optionnel)</label>
+            <input type="password" id="derive-passphrase" />
+          </div>
+        </div>
+
+        <!-- Référence chemins rapides -->
+        <div style="margin-bottom:1rem;">
+          <div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);margin-bottom:0.5rem;">
+            CHEMINS RAPIDES
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.4rem;">
+            <button class="chain-tab" onclick="setPath(`m/44'/60'/0'/0/0`)">ETH index 0</button>
+            <button class="chain-tab" onclick="setPath(`m/44'/60'/0'/0/1`)">ETH index 1</button>
+            <button class="chain-tab" onclick="setPath(`m/44'/0'/0'/0/0`)">BTC Legacy</button>
+            <button class="chain-tab" onclick="setPath(`m/84'/0'/0'/0/0`)">BTC SegWit</button>
+            <button class="chain-tab" onclick="setPath(`m/44'/501'/0'/0'`)">Solana</button>
+            <button class="chain-tab" onclick="setPath(`m/44'/195'/0'/0/0`)">TRON</button>
+            <button class="chain-tab" onclick="setPath(`m/44'/2'/0'/0/0`)">Litecoin</button>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="deriveCustom()">⊞ Dériver</button>
+        </div>
+        <div id="derive-result" style="margin-top:1rem;"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ════════════════ JAVASCRIPT ════════════════ -->
+<script>
+// ── État global ─────────────────────────────────
+const state = {
+  walletData: null,
+  currentChain: 'ETH',
+  revealed: false,
+  mnemonic: null
+};
+
+// ── Navigation ──────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('nav-' + name)?.classList.add('active');
+}
+
+// ── API Helper ──────────────────────────────────
+async function api(endpoint, body = null) {
+  const opts = {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    credentials: 'same-origin'
+  };
+  if (body) opts.body = JSON.stringify(body);
+
+  const resp = await fetch('/api/wallet/' + endpoint, opts);
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.error || 'Erreur API');
+  return data;
+}
+
+// ── UI Helpers ──────────────────────────────────
+function alert_(html, type = 'info') {
+  return `<div class="alert alert-${type}">${html}</div>`;
+}
+
+function fieldRow(label, value, cls = '', copyable = true) {
+  const id = 'field-' + Math.random().toString(36).slice(2);
+  return `
+    <div class="key-field">
+      <span class="key-label">${label}</span>
+      <span class="key-value ${cls}" id="${id}">${value}</span>
+      ${copyable ? `<button class="copy-btn" onclick="copyField('${id}', this)">⎘</button>` : ''}
+    </div>`;
+}
+
+function copyField(id, btn) {
+  const val = document.getElementById(id)?.innerText || '';
+  navigator.clipboard.writeText(val).then(() => {
+    btn.textContent = '✓';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '⎘'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+function spinner() {
+  return '<span class="spinner"></span>';
+}
+
+// ── Generate Wallet ──────────────────────────────
+async function generateWallet() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = spinner() + ' Génération…';
+
+  try {
+    const data = await api('generate', {
+      strength:     document.getElementById('gen-strength').value,
+      passphrase:   document.getElementById('gen-passphrase').value,
+      password:     document.getElementById('gen-password').value || null,
+      addressCount: document.getElementById('gen-count').value
+    });
+
+    state.walletData = data;
+    state.mnemonic   = data.mnemonic;
+    renderMnemonic(data.mnemonic);
+    renderMasterInfo(data);
+    document.getElementById('gen-result').style.display = 'block';
+    renderChainKeys(data);
+    showTab('generate');
+  } catch (e) {
+    document.getElementById('gen-result').innerHTML = alert_(e.message, 'error');
+    document.getElementById('gen-result').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⊕ Générer le portefeuille';
+  }
+}
+
+// ── Render Mnemonic Grid ─────────────────────────
+function renderMnemonic(mnemonic) {
+  const words = mnemonic.split(' ');
+  const grid  = document.getElementById('mnemonic-display');
+  grid.innerHTML = words.map((w, i) => `
+    <div class="mnemonic-word">
+      <span class="word-index">${String(i+1).padStart(2,'0')}</span>
+      <span class="word-value">${w}</span>
+    </div>
+  `).join('');
+}
+
+// ── Render Master Key Info ───────────────────────
+function renderMasterInfo(data) {
+  const el = document.getElementById('master-key-fields');
+  el.innerHTML = [
+    fieldRow('Entropie (hex)', data.entropy || '—', '', true),
+    fieldRow('Clé pub. maître', data.masterPublicKey || '—', '', true),
+  ].join('');
+  if (data.encryptedMnemonic) {
+    el.innerHTML += fieldRow('Mnémonique chiffré', data.encryptedMnemonic, 'private', true);
+  }
+}
+
+// ── Import Mnemonic ─────────────────────────────
+async function importMnemonic() {
+  const btn = event.target;
+  btn.disabled = true; btn.innerHTML = spinner() + ' Import…';
+  const resultEl = document.getElementById('import-validation');
+  resultEl.innerHTML = '';
+
+  try {
+    const data = await api('import/mnemonic', {
+      mnemonic:     document.getElementById('import-mnemonic').value,
+      passphrase:   document.getElementById('import-passphrase').value,
+      password:     document.getElementById('import-password').value || null,
+      addressCount: document.getElementById('import-count').value
+    });
+    state.walletData = data;
+    state.mnemonic   = data.mnemonic;
+    renderChainKeys(data);
+    resultEl.innerHTML = alert_(`✓ Portefeuille importé — ${data.wordCount} mots — <strong style="color:var(--accent)">Voir "Toutes les clés"</strong>`, 'success');
+  } catch(e) {
+    resultEl.innerHTML = alert_(e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '↓ Importer';
+  }
+}
+
+async function validateOnly() {
+  const mnemonic = document.getElementById('import-mnemonic').value;
+  const resultEl = document.getElementById('import-validation');
+  try {
+    const data = await api('validate/mnemonic', { mnemonic });
+    resultEl.innerHTML = data.valid
+      ? alert_(`✓ Mnémonique valide — ${data.wordCount} mots`, 'success')
+      : alert_('✕ ' + (data.error || 'Invalide'), 'error');
+  } catch(e) {
+    resultEl.innerHTML = alert_(e.message, 'error');
+  }
+}
+
+// ── Import Private Key ──────────────────────────
+async function importPrivateKey() {
+  const btn = event.target;
+  btn.disabled = true; btn.innerHTML = spinner() + ' Import…';
+  const resultEl = document.getElementById('pk-import-result');
+  try {
+    const data = await api('import/privatekey', {
+      privateKey: document.getElementById('import-pk').value,
+      password:   document.getElementById('import-pk-password').value || null
+    });
+    resultEl.innerHTML = `
+      <div class="card" style="margin-top:0;">
+        <div class="card-title">⬡ Clé EVM importée</div>
+        ${fieldRow('Adresse ETH', data.checksumAddress, 'address')}
+        ${fieldRow('Clé publique', data.publicKey)}
+        ${fieldRow('Clé privée', data.privateKey, 'private hidden-val')}
+        ${data.encryptedKey ? fieldRow('Chiffré', data.encryptedKey, 'private') : ''}
+      </div>`;
+  } catch(e) {
+    resultEl.innerHTML = alert_(e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '↓ Importer clé';
+  }
+}
+
+// ── Render Chain Keys ────────────────────────────
+function renderChainKeys(data) {
+  const chains = data.chains;
+  if (!chains) return;
+
+  // Affiche le panneau keys
+  document.getElementById('keys-placeholder').style.display = 'none';
+  const kc = document.getElementById('keys-content');
+  kc.style.display = 'flex';
+
+  // Génère les onglets chain
+  const tabsEl = document.getElementById('chain-tabs');
+  const colors  = { ETH:'#627EEA', BTC:'#F7931A', BNB:'#F3BA2F', MATIC:'#8247E5',
+                    AVAX:'#E84142', SOL:'#9945FF', TRX:'#EB0029', LTC:'#BFBBBB' };
+  tabsEl.innerHTML = Object.keys(chains).map(sym => `
+    <button class="chain-tab ${sym === 'ETH' ? 'active' : ''}"
+      onclick="selectChain('${sym}')" id="ctab-${sym}">
+      <span class="chain-dot" style="background:${colors[sym]||'#ccc'};display:inline-block;width:6px;height:6px;border-radius:50%;"></span>
+      ${sym}
+    </button>
+  `).join('');
+
+  selectChain('ETH');
+}
+
+function selectChain(sym) {
+  document.querySelectorAll('.chain-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('ctab-' + sym)?.classList.add('active');
+  state.currentChain = sym;
+  renderChainAddresses(sym);
+}
+
+function renderChainAddresses(sym) {
+  const chain = state.walletData?.chains?.[sym];
+  if (!chain) return;
+
+  const title = document.getElementById('chain-card-title');
+  title.textContent = `${chain.name || sym} — ${chain.path || ''}`;
+
+  const el = document.getElementById('chain-addresses');
+  const addresses = chain.addresses || [];
+
+  if (chain.error) {
+    el.innerHTML = alert_('Erreur: ' + chain.error, 'error');
+    return;
+  }
+
+  el.innerHTML = addresses.map((addr, i) => `
+    <div style="margin-bottom:1.25rem;padding-bottom:1.25rem;border-bottom:1px solid var(--border);">
+      <div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);margin-bottom:0.5rem;">
+        INDEX ${addr.index} — ${addr.path}
+      </div>
+      ${fieldRow('Adresse', addr.address || addr.checksumAddress || '—', 'address')}
+      ${fieldRow('Clé publique', addr.publicKey || '—', '')}
+      ${fieldRow('Clé privée', addr.privateKey || '—', 'private hidden-val' + (state.revealed ? ' revealed' : ''))}
+      ${addr.wif ? fieldRow('WIF (Bitcoin)', addr.wif, 'private hidden-val' + (state.revealed ? ' revealed' : '')) : ''}
+      ${addr.publicKeyUncompressed ? fieldRow('Pub. décompressée', addr.publicKeyUncompressed, '') : ''}
+    </div>
+  `).join('');
+
+  // SegWit si disponible
+  if (chain.addressesSegwit) {
+    el.innerHTML += `
+      <div style="font-family:var(--mono);font-size:0.65rem;color:var(--accent2);margin:1rem 0 0.5rem;">
+        ▸ SEGWIT NATIF (P2WPKH — bech32 "bc1…")
+      </div>`;
+    el.innerHTML += chain.addressesSegwit.map(addr => `
+      <div style="margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid var(--border);">
+        <div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);margin-bottom:0.5rem;">
+          INDEX ${addr.index} — ${addr.path}
+        </div>
+        ${fieldRow('WIF', addr.wif || '—', 'private hidden-val' + (state.revealed ? ' revealed' : ''))}
+        ${fieldRow('Clé publique', addr.publicKey || '—', '')}
+        ${fieldRow('Clé privée', addr.privateKey || '—', 'private hidden-val' + (state.revealed ? ' revealed' : ''))}
+      </div>
+    `).join('');
+  }
+}
+
+// ── Toggle Reveal ────────────────────────────────
+function toggleReveal() {
+  state.revealed = !state.revealed;
+  document.querySelectorAll('.hidden-val').forEach(el => {
+    el.classList.toggle('revealed', state.revealed);
+  });
+  document.getElementById('reveal-btn').textContent = state.revealed
+    ? '🔒 Masquer les clés privées'
+    : '👁 Révéler les clés privées';
+}
+
+// ── Copy Mnemonic ────────────────────────────────
+function copyMnemonic() {
+  if (state.mnemonic) {
+    navigator.clipboard.writeText(state.mnemonic);
+    event.target.textContent = '✓ Copié';
+    setTimeout(() => { event.target.textContent = '⎘ Copier le mnémonique'; }, 1500);
+  }
+}
+
+// ── Encrypt ─────────────────────────────────────
+async function encryptData() {
+  const el = document.getElementById('enc-result');
+  try {
+    const data = await api('encrypt', {
+      data:     document.getElementById('enc-data').value,
+      password: document.getElementById('enc-password').value
+    });
+    el.innerHTML = `
+      <div class="card" style="margin-top:0;">
+        <div class="card-title">Payload chiffré (AES-256-GCM)</div>
+        ${fieldRow('Résultat hex', data.encrypted, 'private')}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = alert_(e.message, 'error');
+  }
+}
+
+// ── Decrypt ─────────────────────────────────────
+async function decryptData() {
+  const el = document.getElementById('dec-result');
+  try {
+    const data = await api('decrypt', {
+      encrypted: document.getElementById('dec-data').value,
+      password:  document.getElementById('dec-password').value
+    });
+    el.innerHTML = `
+      <div class="card" style="margin-top:0;">
+        <div class="card-title">Données déchiffrées</div>
+        ${fieldRow('Résultat', data.data, '')}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = alert_('Déchiffrement échoué — vérifier le mot de passe', 'error');
+  }
+}
+
+// ── Sign ─────────────────────────────────────────
+async function signMessage() {
+  const el = document.getElementById('sign-result');
+  try {
+    const data = await api('sign', {
+      message:    document.getElementById('sign-message').value,
+      privateKey: document.getElementById('sign-pk').value
+    });
+    el.innerHTML = `
+      <div class="card" style="margin-top:0;">
+        <div class="card-title">Signature EIP-191</div>
+        ${fieldRow('Signataire', data.signer, 'address')}
+        ${fieldRow('Hash message', data.messageHash)}
+        ${fieldRow('Signature', data.signature, 'private')}
+        ${fieldRow('v', String(data.v))}
+        ${fieldRow('r', data.r)}
+        ${fieldRow('s', data.s)}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = alert_(e.message, 'error');
+  }
+}
+
+// ── Verify ────────────────────────────────────────
+async function verifySignature() {
+  const el = document.getElementById('verify-result');
+  try {
+    const data = await api('verify', {
+      message:   document.getElementById('verify-message').value,
+      signature: document.getElementById('verify-sig').value
+    });
+    el.innerHTML = data.valid
+      ? alert_(`✓ Signature valide — Signataire : <strong>${data.signer}</strong>`, 'success')
+      : alert_('✕ Signature invalide', 'error');
+  } catch(e) {
+    el.innerHTML = alert_(e.message, 'error');
+  }
+}
+
+// ── Derive Custom ─────────────────────────────────
+async function deriveCustom() {
+  const el = document.getElementById('derive-result');
+  try {
+    const data = await api('derive/custom', {
+      mnemonic:   document.getElementById('derive-mnemonic').value,
+      path:       document.getElementById('derive-path').value,
+      passphrase: document.getElementById('derive-passphrase').value
+    });
+    el.innerHTML = `
+      <div class="card" style="margin-top:0;">
+        <div class="card-title">Clé dérivée — ${data.path}</div>
+        ${fieldRow('Adresse ETH', data.address, 'address')}
+        ${fieldRow('Clé publique', data.publicKey)}
+        ${fieldRow('Clé privée', data.privateKey, 'private hidden-val')}
+        ${fieldRow('Chain code', data.chainCode)}
+        ${fieldRow('Profondeur', String(data.depth))}
+        ${fieldRow('Index', String(data.index))}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = alert_(e.message, 'error');
+  }
+}
+
+function setPath(p) {
+  document.getElementById('derive-path').value = p;
+}
+
+// ── Clear Session ─────────────────────────────────
+function clearSession() {
+  if (!confirm('Effacer toutes les données de session ? Cette action est irréversible.')) return;
+  state.walletData = null;
+  state.mnemonic   = null;
+  state.revealed   = false;
+  document.getElementById('gen-result').style.display = 'none';
+  document.getElementById('import-validation').innerHTML = '';
+  document.getElementById('pk-import-result').innerHTML = '';
+  document.getElementById('keys-placeholder').style.display = 'block';
+  document.getElementById('keys-content').style.display = 'none';
+  // Effacer les champs
+  document.querySelectorAll('input, textarea').forEach(el => el.value = '');
+  showTab('generate');
+}
+</script>
+</body>
+</html>
