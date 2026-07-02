@@ -13,12 +13,13 @@ import {
   StyleSheet, Text, View, SafeAreaView, TouchableOpacity,
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
-  FlatList, Linking, Platform,
+  FlatList, Linking, Platform, Animated, Pressable,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
@@ -339,6 +340,28 @@ function CoinLogo({ logo, icon, size = 44 }) {
       style={{ width: size, height: size, borderRadius: size / 2 }}
       onError={() => setImageError(true)}
     />
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  BOUTON AVEC RETOUR TACTILE (scale au toucher)
+// ═══════════════════════════════════════════════════════════
+function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const animateTo = (toValue) => {
+    Animated.spring(scale, { toValue, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
+  };
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      onPressIn={() => animateTo(scaleTo)}
+      onPressOut={() => animateTo(1)}
+    >
+      <Animated.View style={[style, { transform: [{ scale }] }]}>
+        {children}
+      </Animated.View>
+    </Pressable>
   );
 }
 
@@ -879,12 +902,12 @@ export default function App() {
         </View>
 
         <View style={st.auth_actions}>
-          <TouchableOpacity style={st.auth_btn} onPress={createWallet}>
+          <AnimPressable style={st.auth_btn} onPress={createWallet}>
             <Text style={st.auth_btn_txt}>Créer un wallet</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={st.auth_btn} onPress={() => { setImportMode(true); setImportError(null); }}>
+          </AnimPressable>
+          <AnimPressable style={st.auth_btn} onPress={() => { setImportMode(true); setImportError(null); }}>
             <Text style={st.auth_btn_txt}>Importer wallet</Text>
-          </TouchableOpacity>
+          </AnimPressable>
         </View>
 
         {importMode && (
@@ -907,9 +930,9 @@ export default function App() {
               autoCapitalize="none"
             />
             {importError ? <Text style={st.import_error}>{importError}</Text> : null}
-            <TouchableOpacity style={st.import_confirm_btn} onPress={importWallet}>
+            <AnimPressable style={st.import_confirm_btn} onPress={importWallet}>
               <Text style={st.green_btn_txt}>Importer maintenant</Text>
-            </TouchableOpacity>
+            </AnimPressable>
           </View>
         )}
 
@@ -1068,10 +1091,10 @@ export default function App() {
             <Text style={st.send_info_line}>Réseau: {activeNetwork.label} • validation directe</Text>
           </View>
 
-          <TouchableOpacity style={[st.green_btn, { opacity: sendLoading ? 0.7 : 1, marginTop: 24 }]}
+          <AnimPressable style={[st.green_btn, { opacity: sendLoading ? 0.7 : 1, marginTop: 24 }]}
             onPress={handleSend} disabled={sendLoading}>
             {sendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>✅ Confirmer</Text>}
-          </TouchableOpacity>
+          </AnimPressable>
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -1099,9 +1122,9 @@ export default function App() {
           <View style={st.receive_addr_box}>
             <Text style={st.receive_addr} selectable>{walletAddr}</Text>
           </View>
-          <TouchableOpacity style={st.green_btn} onPress={() => Alert.alert('✓ Copié!', walletAddr)}>
+          <AnimPressable style={st.green_btn} onPress={() => Alert.alert('✓ Copié!', walletAddr)}>
             <Text style={st.green_btn_txt}>📋 Copier</Text>
-          </TouchableOpacity>
+          </AnimPressable>
           <View style={st.warning_box}>
             <Text style={st.warning_txt}>⚠️ Réseau réel principal. Les transactions sont diffusées sur la blockchain.</Text>
           </View>
@@ -1196,7 +1219,12 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      <View style={st.balance_wrap}>
+      <LinearGradient
+        colors={[T.card2, T.card, T.bg]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={st.balance_wrap}
+      >
         <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
           <Text style={{ color: todayChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
@@ -1204,7 +1232,7 @@ export default function App() {
           </Text>
           <Text style={{ color: T.text2, fontSize: 12, marginLeft: 6 }}>24h</Text>
         </View>
-      </View>
+      </LinearGradient>
 
       <View style={st.quick_actions}>
         {[
@@ -1213,12 +1241,12 @@ export default function App() {
           { icon: '+', label: 'Recevoir',bg: T.card2, onPress: () => setShowReceive(true) },
           { icon: '📊',label: 'Marché', bg: T.card2, onPress: () => setTab('markets') },
         ].map(a => (
-          <TouchableOpacity key={a.label} style={st.quick_btn} onPress={a.onPress}>
+          <AnimPressable key={a.label} style={st.quick_btn} onPress={a.onPress}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
               <Text style={[st.quick_icon_txt, { color: a.bg === T.green ? '#000' : T.text }]}>{a.icon}</Text>
             </View>
             <Text style={st.quick_lbl}>{a.label}</Text>
-          </TouchableOpacity>
+          </AnimPressable>
         ))}
       </View>
 
@@ -1230,7 +1258,7 @@ export default function App() {
         const val = (t.balance || 0) * (t.price || 0);
         const pos = (t.change24h || 0) >= 0;
         return (
-          <TouchableOpacity key={sym} style={st.token_row} onPress={() => setSelectedToken(sym)}>
+          <AnimPressable key={sym} style={st.token_row} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
             <CoinLogo logo={t.logo} icon={t.icon} size={44} />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={st.token_name}>{t.name}</Text>
@@ -1245,7 +1273,7 @@ export default function App() {
               <Text style={st.token_val}>{fmt(val)}</Text>
               <Text style={st.token_bal}>{(t.balance || 0).toFixed(4)} {sym}</Text>
             </View>
-          </TouchableOpacity>
+          </AnimPressable>
         );
       })}
 
@@ -1342,7 +1370,7 @@ export default function App() {
           </ScrollView>
         </View>
 
-        <TouchableOpacity style={[st.green_btn, { marginTop: 16 }]}
+        <AnimPressable style={[st.green_btn, { marginTop: 16 }]}
           onPress={() => {
             if (!swapAmt || parseFloat(swapAmt) <= 0) { Alert.alert('Montant invalide'); return; }
             const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
@@ -1356,7 +1384,7 @@ export default function App() {
           }}
         >
           <Text style={st.green_btn_txt}>Confirmer</Text>
-        </TouchableOpacity>
+        </AnimPressable>
         <View style={{ height: 40 }} />
       </ScrollView>
     );
@@ -1397,10 +1425,10 @@ export default function App() {
             <Text style={st.send_info_line}>Paiement sécurisé par carte (MoonPay)</Text>
           </View>
 
-          <TouchableOpacity style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 24 }]}
+          <AnimPressable style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 24 }]}
             onPress={handleBuyNow} disabled={buyLoading}>
             {buyLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Payer avec carte</Text>}
-          </TouchableOpacity>
+          </AnimPressable>
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -1429,7 +1457,7 @@ export default function App() {
           { id: 'markets',  icon: '📊', label: 'Marché'   },
           { id: 'swap',     icon: '⇄',  label: 'Swap', big: true },
         ].map(n => (
-          <TouchableOpacity key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} onPress={() => setTab(n.id)}>
+          <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
             {n.big ? (
               <View style={[st.nav_big_btn, { backgroundColor: tab === n.id ? T.green : T.card2 }]}>
                 <Text style={{ fontSize: 20, color: tab === n.id ? '#000' : T.text2 }}>{n.icon}</Text>
@@ -1440,7 +1468,7 @@ export default function App() {
                 <Text style={[st.nav_lbl, tab === n.id && st.nav_lbl_on]}>{n.label}</Text>
               </>
             )}
-          </TouchableOpacity>
+          </AnimPressable>
         ))}
       </View>
       {!!selectedToken && renderTokenDetail()}
@@ -1521,18 +1549,25 @@ const st = StyleSheet.create({
   home_account:  { color: T.text, fontSize: 16, fontWeight: 'bold' },
   home_addr:     { color: T.text2, fontSize: 12, marginTop: 2 },
   icon_btn:      { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  balance_wrap:  { alignItems: 'center', paddingVertical: 20, paddingHorizontal: 16 },
+  balance_wrap:  { alignItems: 'center', paddingVertical: 26, paddingHorizontal: 16, marginHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: T.border },
   balance_amount:{ color: T.text, fontSize: 40, fontWeight: 'bold' },
 
-  quick_actions: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 10, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: T.border, marginBottom: 16 },
+  quick_actions: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 10, paddingVertical: 14, marginTop: 16, marginBottom: 16 },
   quick_btn:     { alignItems: 'center', minWidth: 54 },
-  quick_icon_wrap:{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  quick_icon_wrap:{
+    width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 6,
+  },
   quick_icon_txt:{ fontSize: 18, fontWeight: 'bold' },
   quick_lbl:     { color: T.text2, fontSize: 11 },
 
   section_hdr:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8 },
   section_title: { color: T.text, fontSize: 15, fontWeight: 'bold' },
-  token_row:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: T.border + '66' },
+  token_row:     {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 14,
+    marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
+  },
   token_name:    { color: T.text, fontSize: 14, fontWeight: '600' },
   token_price_txt:{ color: T.text2, fontSize: 12, marginTop: 2 },
   token_val:     { color: T.text, fontSize: 14, fontWeight: '600' },
@@ -1564,7 +1599,10 @@ const st = StyleSheet.create({
   tok_chip_txt:  { color: T.text2, fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
   send_info_box: { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
   send_info_line:{ color: T.text2, fontSize: 12, marginBottom: 4 },
-  green_btn:     { backgroundColor: T.green, borderRadius: 14, padding: 16, alignItems: 'center' },
+  green_btn:     {
+    backgroundColor: T.green, borderRadius: 14, padding: 16, alignItems: 'center',
+    shadowColor: T.green, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
+  },
   green_btn_txt: { color: '#000', fontWeight: 'bold', fontSize: 15 },
 
   qr_wrap:         { backgroundColor: T.card, padding: 20, borderRadius: 20, marginBottom: 24, borderWidth: 1, borderColor: T.border },
@@ -1587,7 +1625,10 @@ const st = StyleSheet.create({
   bottom_nav:  { flexDirection: 'row', height: 64, backgroundColor: T.card, borderTopWidth: 1, borderTopColor: T.border, alignItems: 'center', justifyContent: 'space-around', paddingBottom: 4 },
   nav_item:    { flex: 1, alignItems: 'center', justifyContent: 'center', height: '100%' },
   nav_item_big:{ flex: 1.2 },
-  nav_big_btn: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  nav_big_btn: {
+    width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center',
+    shadowColor: T.green, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.45, shadowRadius: 8, elevation: 6,
+  },
   nav_lbl:     { color: T.text2, fontSize: 10, marginTop: 3 },
   nav_lbl_on:  { color: T.green, fontWeight: 'bold' },
 });
