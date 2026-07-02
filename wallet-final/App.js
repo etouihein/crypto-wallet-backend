@@ -70,16 +70,20 @@ const COIN_LOGOS = {
   'usd-coin':    'https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png',
 };
 
-// Seuls les tokens que ce wallet peut RÉELLEMENT recevoir/envoyer (une seule
-// adresse Ethereum/EVM — pas d'adresse Bitcoin ni Solana dérivée). En afficher
-// d'autres avec un solde à 0 donnerait l'illusion qu'ils sont actifs alors
-// qu'ils ne le sont pas. Les autres cryptos restent visibles en lecture seule
-// dans l'onglet Marché (prix réels), juste pas comme "tokens du wallet".
+// Tokens affichés dans "Mes Tokens" à l'accueil, avec prix réels CoinGecko.
+// ETH/BNB/USDT/USDC sont entièrement actifs (solde réel, envoi, réception,
+// achat) — ce wallet n'a qu'une adresse Ethereum/EVM. BTC/SOL/ADA/MATIC sont
+// affichés pour la vue d'ensemble (prix réels, style Trust Wallet) mais ne
+// sont pas envoyables depuis ce wallet ("Token non supporté" à l'envoi/achat).
 const WALLET_TOKENS = {
   ETH:  { name: 'Ethereum', cgId: 'ethereum',      balance: 0,   icon: '🔷', color: '#5B8DEF', logo: COIN_LOGOS.ethereum },
+  BTC:  { name: 'Bitcoin',  cgId: 'bitcoin',       balance: 0,   icon: '🟠', color: '#F7931A', logo: COIN_LOGOS.bitcoin, readOnly: true },
   BNB:  { name: 'BNB',      cgId: 'binancecoin',   balance: 0,   icon: '🟡', color: '#F3BA2F', logo: COIN_LOGOS.binancecoin },
+  SOL:  { name: 'Solana',   cgId: 'solana',        balance: 0,   icon: '🟣', color: '#9945FF', logo: COIN_LOGOS.solana, readOnly: true },
   USDT: { name: 'Tether',   cgId: 'tether',        balance: 0,   icon: '💚', color: '#26A17B', logo: COIN_LOGOS.tether },
   USDC: { name: 'USD Coin', cgId: 'usd-coin',      balance: 0,   icon: '🟦', color: '#2775CA', logo: COIN_LOGOS['usd-coin'] },
+  ADA:  { name: 'Cardano',  cgId: 'cardano',       balance: 0,   icon: '🔵', color: '#0033AD', logo: COIN_LOGOS.cardano, readOnly: true },
+  MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,   icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'], readOnly: true },
 };
 
 // Le wallet n'a qu'une seule adresse EVM (0x...) : on ne propose l'achat MoonPay
@@ -1571,9 +1575,14 @@ export default function App() {
           <AnimPressable key={sym} style={st.token_row} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
             <CoinLogo logo={t.logo} icon={t.icon} size={44} />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={st.token_name}>{t.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={st.token_name}>{t.name}</Text>
+                {t.readOnly && (
+                  <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
+                )}
+              </View>
               <Text style={st.token_price_txt}>
-                {fmt(t.price, t.price < 1 ? 4 : 2)} 
+                {fmt(t.price, t.price < 1 ? 4 : 2)}
                 <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
                   {' '}{pos ? '+' : ''}{(t.change24h || 0).toFixed(2)}%
                 </Text>
@@ -1952,6 +1961,8 @@ const st = StyleSheet.create({
   token_price_txt:{ color: T.text2, fontSize: 12, marginTop: 2 },
   token_val:     { color: T.text, fontSize: 14, fontWeight: '600' },
   token_bal:     { color: T.text2, fontSize: 11, marginTop: 2 },
+  readonly_badge:    { marginLeft: 8, backgroundColor: T.card2, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  readonly_badge_txt:{ color: T.text3, fontSize: 9, fontWeight: '600' },
 
   search_wrap:    { margin: 14, backgroundColor: T.card, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, borderWidth: 1, borderColor: T.border },
   search_input:   { flex: 1, color: T.text, fontSize: 14, paddingVertical: 12 },
