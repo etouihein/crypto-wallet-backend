@@ -70,15 +70,16 @@ const COIN_LOGOS = {
   'usd-coin':    'https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png',
 };
 
+// Seuls les tokens que ce wallet peut RÉELLEMENT recevoir/envoyer (une seule
+// adresse Ethereum/EVM — pas d'adresse Bitcoin ni Solana dérivée). En afficher
+// d'autres avec un solde à 0 donnerait l'illusion qu'ils sont actifs alors
+// qu'ils ne le sont pas. Les autres cryptos restent visibles en lecture seule
+// dans l'onglet Marché (prix réels), juste pas comme "tokens du wallet".
 const WALLET_TOKENS = {
   ETH:  { name: 'Ethereum', cgId: 'ethereum',      balance: 0,   icon: '🔷', color: '#5B8DEF', logo: COIN_LOGOS.ethereum },
-  BTC:  { name: 'Bitcoin',  cgId: 'bitcoin',       balance: 0,   icon: '🟠', color: '#F7931A', logo: COIN_LOGOS.bitcoin },
   BNB:  { name: 'BNB',      cgId: 'binancecoin',   balance: 0,   icon: '🟡', color: '#F3BA2F', logo: COIN_LOGOS.binancecoin },
-  SOL:  { name: 'Solana',   cgId: 'solana',        balance: 0,   icon: '🟣', color: '#9945FF', logo: COIN_LOGOS.solana },
   USDT: { name: 'Tether',   cgId: 'tether',        balance: 0,   icon: '💚', color: '#26A17B', logo: COIN_LOGOS.tether },
   USDC: { name: 'USD Coin', cgId: 'usd-coin',      balance: 0,   icon: '🟦', color: '#2775CA', logo: COIN_LOGOS['usd-coin'] },
-  ADA:  { name: 'Cardano',  cgId: 'cardano',       balance: 0,   icon: '🔵', color: '#0033AD', logo: COIN_LOGOS.cardano },
-  MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,    icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'] },
 };
 
 // Le wallet n'a qu'une seule adresse EVM (0x...) : on ne propose l'achat MoonPay
@@ -500,6 +501,10 @@ export default function App() {
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
   const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
   const [newsItems, setNewsItems]         = useState([]);
+  // Phrase de récupération à faire sauvegarder par l'utilisateur juste après
+  // la création d'un wallet — sans ça, il n'a AUCUN moyen de récupérer ses
+  // fonds s'il perd son appareil ou vide son navigateur.
+  const [pendingMnemonic, setPendingMnemonic] = useState(null);
 
   // Token de session du wallet actif côté serveur (isole ce wallet de celui
   // des autres clients — voir requireSession dans crypto-wallet/src/routes/wallet.js).
@@ -534,7 +539,7 @@ export default function App() {
       setApiError(null);
       setRefreshing(true);
 
-      const res = await axios.get(`${API_BASE}/market`, { timeout: 12000 });
+      const res = await axios.get(`${API_BASE}/market`, { headers: API_HEADERS, timeout: 12000 });
       if (!res.data?.success || !Array.isArray(res.data.tokens)) {
         throw new Error(res.data?.error || 'Backend market failed');
       }
@@ -597,6 +602,21 @@ export default function App() {
           });
           return next;
         });
+
+        // Même en secours, on alimente la grille Marché (sinon "0 cryptos" affiché
+        // indéfiniment alors qu'on a bien des prix à montrer).
+        const fallbackCoins = Object.entries(WALLET_TOKENS)
+          .map(([sym, t]) => {
+            const d = priceRes.data?.[t.cgId];
+            if (!d) return null;
+            return {
+              id: t.cgId, symbol: sym, name: t.name,
+              current_price: d.usd, market_cap: d.usd_market_cap,
+              price_change_percentage_24h: d.usd_24h_change, image: t.logo,
+            };
+          })
+          .filter(Boolean);
+        if (fallbackCoins.length) setMarketCoins(fallbackCoins);
       } catch (fallbackErr) {
         console.error('Fallback market error:', fallbackErr.message);
       }
@@ -668,6 +688,7 @@ export default function App() {
       setWalletBalance(res.data.balance || '0');
       setWalletCreated(true);
       setBackendReady(true);
+      if (res.data.mnemonic) setPendingMnemonic(res.data.mnemonic);
       await refreshPortfolio(network, res.data.sessionToken);
       return true;
     } catch (err) {
@@ -758,7 +779,7 @@ export default function App() {
   useEffect(() => {
     initWallet();
     fetchMarket();
-    const id = setInterval(fetchMarket, 10000);
+    const id = setInterval(fetchMarket, 30000);
     return () => clearInterval(id);
   }, [fetchMarket, initWallet]);
 
@@ -1093,6 +1114,41 @@ export default function App() {
   };
 
   // ════════════════════════════════════════════════════════
+  //  SAUVEGARDE OBLIGATOIRE DE LA PHRASE DE RÉCUPÉRATION
+  // ════════════════════════════════════════════════════════
+  const renderMnemonicBackup = () => {
+    if (!pendingMnemonic) return null;
+    const words = pendingMnemonic.trim().split(/\s+/);
+    return (
+      <Modal visible animationType="fade" transparent>
+        <SafeAreaView style={st.modal_bg}>
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <Text style={{ fontSize: 40, textAlign: 'center', marginBottom: 8 }}>🔑</Text>
+            <Text style={st.modal_title_lg}>Ta phrase de récupération</Text>
+            <View style={st.warning_box}>
+              <Text style={st.warning_txt}>
+                ⚠️ Ces 12 mots sont les SEULS moyens de récupérer ton wallet. Note-les sur papier,
+                jamais dans une capture d'écran ou un email. Personne ne pourra te les redonner.
+              </Text>
+            </View>
+            <View style={st.mnemonic_grid}>
+              {words.map((w, i) => (
+                <View key={i} style={st.mnemonic_chip}>
+                  <Text style={st.mnemonic_idx}>{i + 1}</Text>
+                  <Text style={st.mnemonic_word}>{w}</Text>
+                </View>
+              ))}
+            </View>
+            <AnimPressable style={[st.green_btn, { marginTop: 24 }]} onPress={() => setPendingMnemonic(null)}>
+              <Text style={st.green_btn_txt}>✅ Je l'ai notée en lieu sûr</Text>
+            </AnimPressable>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════
   //  ÉCRAN PIN
   // ════════════════════════════════════════════════════════
   if (!isUnlocked) {
@@ -1180,6 +1236,7 @@ export default function App() {
           </TouchableOpacity>
           <View style={st.pin_key} />
         </View>
+        {renderMnemonicBackup()}
       </SafeAreaView>
     );
   }
@@ -1404,6 +1461,29 @@ export default function App() {
             </View>
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.green }]} />}
           </TouchableOpacity>
+
+          {!!walletSession?.mnemonic && (
+            <>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
+              <AnimPressable
+                style={st.settings_row}
+                onPress={() => showAlert(
+                  '⚠️ Attention',
+                  'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
+                  [
+                    { text: 'Annuler', style: 'cancel' },
+                    { text: 'Afficher', onPress: () => setPendingMnemonic(walletSession.mnemonic) },
+                  ]
+                )}
+              >
+                <Text style={{ fontSize: 22 }}>🔑</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Afficher ma phrase de récupération</Text>
+                  <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                </View>
+              </AnimPressable>
+            </>
+          )}
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>📋 Info</Text>
           <View style={st.settings_row}>
@@ -1719,8 +1799,8 @@ export default function App() {
       {renderBuy()}
       <View style={st.bottom_nav}>
         {[
-          { id: 'home',     icon: '🏠', label: 'Accueil'  },
-          { id: 'markets',  icon: '📊', label: 'Marché'   },
+          { id: 'home',     icon: '🏡', label: 'Accueil'  },
+          { id: 'markets',  icon: '💹', label: 'Marché'   },
           { id: 'swap',     icon: '⇄',  label: 'Swap', big: true },
         ].map(n => (
           <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
@@ -1730,7 +1810,9 @@ export default function App() {
               </View>
             ) : (
               <>
-                <Text style={{ fontSize: 18 }}>{n.icon}</Text>
+                <View style={[st.nav_icon_wrap, tab === n.id && st.nav_icon_wrap_on]}>
+                  <Text style={{ fontSize: 18 }}>{n.icon}</Text>
+                </View>
                 <Text style={[st.nav_lbl, tab === n.id && st.nav_lbl_on]}>{n.label}</Text>
               </>
             )}
@@ -1741,6 +1823,7 @@ export default function App() {
       {renderSend()}
       {renderReceive()}
       {renderSettings()}
+      {renderMnemonicBackup()}
     </SafeAreaView>
   );
 }
@@ -1789,7 +1872,13 @@ const st = StyleSheet.create({
   modal_bg:    { flex: 1, backgroundColor: T.bg },
   modal_hdr:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border },
   modal_title: { color: T.text, fontSize: 18, fontWeight: 'bold' },
+  modal_title_lg: { color: T.text, fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
   modal_sub:   { color: T.text2, fontSize: 12, marginTop: 2 },
+
+  mnemonic_grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: 20 },
+  mnemonic_chip: { width: '31%', flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 10, borderWidth: 1, borderColor: T.border, paddingHorizontal: 8, paddingVertical: 10, marginBottom: 10 },
+  mnemonic_idx:  { color: T.text3, fontSize: 10, width: 16 },
+  mnemonic_word: { color: T.text, fontSize: 13, fontWeight: '600' },
   back_btn:    { width: 40, height: 40, alignItems: 'flex-start', justifyContent: 'center' },
   live_badge:  { flexDirection: 'row', alignItems: 'center', backgroundColor: T.greenBg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginLeft: 10 },
   live_txt:    { color: T.green, fontSize: 10, fontWeight: 'bold', marginLeft: 4 },
@@ -1922,4 +2011,9 @@ const st = StyleSheet.create({
   },
   nav_lbl:     { color: T.text2, fontSize: 10, marginTop: 3 },
   nav_lbl_on:  { color: T.green, fontWeight: 'bold' },
+  nav_icon_wrap: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  nav_icon_wrap_on: {
+    backgroundColor: T.greenBg,
+    shadowColor: T.green, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 5, elevation: 3,
+  },
 });

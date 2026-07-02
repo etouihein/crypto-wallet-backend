@@ -180,29 +180,46 @@ function coingeckoHeaders() {
   return process.env.COINGECKO_API_KEY ? { 'x-api-key': process.env.COINGECKO_API_KEY } : {};
 }
 
+// Cache mémoire partagé entre TOUS les appelants — sans lui, chaque client qui
+// rafraîchit sa page (et chaque utilisateur une fois public) déclenche son
+// propre appel CoinGecko, ce qui épuise très vite le quota gratuit (429 Too
+// Many Requests, déjà observé en test). Un cache de quelques dizaines de
+// secondes suffit largement pour des prix crypto affichés côté wallet.
+const geckoCache = new Map(); // key -> { data, expiresAt }
+
+async function cachedFetch(key, ttlMs, loader) {
+  const hit = geckoCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  const data = await loader();
+  geckoCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  return data;
+}
+
 // Top N cryptos par capitalisation — alimente l'onglet Marché avec un vrai
 // marché large (façon Trust Wallet), pas juste les quelques tokens du wallet.
 // Les tokens du wallet (WALLET_TOKENS) sont de toute façon dans ce top N,
 // donc l'écran d'accueil continue de trouver ses prix dans la même réponse.
 async function fetchCoinGeckoMarket(limit = 50) {
-  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h`;
-  try {
-    const response = await fetch(url, { headers: coingeckoHeaders() });
-    if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
-    const data = await response.json();
-    return data.map(item => ({
-      id: item.id,
-      symbol: item.symbol?.toUpperCase(),
-      name: item.name,
-      current_price: item.current_price,
-      market_cap: item.market_cap,
-      price_change_percentage_24h: item.price_change_percentage_24h,
-      image: item.image,
-    }));
-  } catch (error) {
-    console.warn('CoinGecko unavailable, using fallback market data:', error.message);
-    return FALLBACK_MARKET_DATA;
-  }
+  return cachedFetch(`market:${limit}`, 30_000, async () => {
+    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h`;
+    try {
+      const response = await fetch(url, { headers: coingeckoHeaders() });
+      if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
+      const data = await response.json();
+      return data.map(item => ({
+        id: item.id,
+        symbol: item.symbol?.toUpperCase(),
+        name: item.name,
+        current_price: item.current_price,
+        market_cap: item.market_cap,
+        price_change_percentage_24h: item.price_change_percentage_24h,
+        image: item.image,
+      }));
+    } catch (error) {
+      console.warn('CoinGecko unavailable, using fallback market data:', error.message);
+      return FALLBACK_MARKET_DATA;
+    }
+  });
 }
 
 // Jours d'historique demandés à CoinGecko selon le zoom choisi dans l'app —
@@ -210,15 +227,21 @@ async function fetchCoinGeckoMarket(limit = 50) {
 const CANDLE_DAYS_BY_TIMEFRAME = { '1H': 1, '1J': 7, '1S': 90, '1M': 180 };
 
 async function fetchCoinOhlc(cgId, timeframe) {
-  const days = CANDLE_DAYS_BY_TIMEFRAME[timeframe] || 7;
-  const url = `https://api.coingecko.com/api/v3/coins/${cgId}/ohlc?vs_currency=usd&days=${days}`;
-  const response = await fetch(url, { headers: coingeckoHeaders() });
-  if (!response.ok) throw new Error(`CoinGecko OHLC error ${response.status}`);
-  const raw = await response.json(); // [ [time, open, high, low, close], ... ]
-  return raw.map(([time, o, h, l, c]) => ({ time, o, h, l, c }));
+  return cachedFetch(`ohlc:${cgId}:${timeframe}`, 60_000, async () => {
+    const days = CANDLE_DAYS_BY_TIMEFRAME[timeframe] || 7;
+    const url = `https://api.coingecko.com/api/v3/coins/${cgId}/ohlc?vs_currency=usd&days=${days}`;
+    const response = await fetch(url, { headers: coingeckoHeaders() });
+    if (!response.ok) throw new Error(`CoinGecko OHLC error ${response.status}`);
+    const raw = await response.json(); // [ [time, open, high, low, close], ... ]
+    return raw.map(([time, o, h, l, c]) => ({ time, o, h, l, c }));
+  });
 }
 
 async function fetchCoinDetail(cgId) {
+  return cachedFetch(`coin:${cgId}`, 120_000, () => fetchCoinDetailUncached(cgId));
+}
+
+async function fetchCoinDetailUncached(cgId) {
   const url = `https://api.coingecko.com/api/v3/coins/${cgId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
   const response = await fetch(url, { headers: coingeckoHeaders() });
   if (!response.ok) throw new Error(`CoinGecko coin error ${response.status}`);
@@ -410,6 +433,12 @@ router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) =>
   try {
     const contract = getErc20Contract(token.address, network).connect(connectedWallet);
     const value = ethers.utils.parseUnits(amount.toString(), token.decimals);
+
+    const currentBalance = await contract.balanceOf(connectedWallet.address);
+    if (currentBalance.lt(value)) {
+      return res.status(400).json({ success: false, error: `Fonds ${token.symbol} insuffisants sur le wallet.` });
+    }
+
     const tx = await contract.transfer(to, value);
     await tx.wait();
 
@@ -421,7 +450,7 @@ router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) =>
     });
   } catch (error) {
     console.error('ERC20 send error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Erreur ERC20.' });
+    res.status(400).json({ success: false, error: 'Transfert ERC20 impossible (fonds insuffisants, gas, ou erreur réseau).' });
   }
 });
 
@@ -455,6 +484,10 @@ router.get('/coin/:cgId/candles', async (req, res) => {
 
 // News crypto — flux RSS CoinDesk, public et gratuit, pas de clé requise.
 async function fetchCryptoNews() {
+  return cachedFetch('news', 5 * 60_000, fetchCryptoNewsUncached);
+}
+
+async function fetchCryptoNewsUncached() {
   const response = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss/');
   if (!response.ok) throw new Error(`RSS error ${response.status}`);
   const xml = await response.text();
