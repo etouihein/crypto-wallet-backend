@@ -376,23 +376,28 @@ function showAlert(title, message, buttons) {
 // ═══════════════════════════════════════════════════════════
 //  BOUTON AVEC RETOUR TACTILE (scale au toucher)
 // ═══════════════════════════════════════════════════════════
+// Pressable animable directement (pas de View imbriquée en plus) : le style
+// complet (largeur, flexDirection, padding...) s'applique en une seule fois
+// sur le même élément qui reçoit le geste tactile — évite tout problème de
+// résolution de largeur en pourcentage (Safari) ET garde la mise en page
+// interne (icône | texte | valeur sur une ligne) intacte.
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
   const scale = useRef(new Animated.Value(1)).current;
   const animateTo = (toValue) => {
     Animated.spring(scale, { toValue, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
   };
   return (
-    <Pressable
-      style={style}
+    <AnimatedPressable
+      style={[style, { transform: [{ scale }] }]}
       onPress={onPress}
       disabled={disabled}
       onPressIn={() => animateTo(scaleTo)}
       onPressOut={() => animateTo(1)}
     >
-      <Animated.View style={{ width: '100%', transform: [{ scale }] }}>
-        {children}
-      </Animated.View>
-    </Pressable>
+      {children}
+    </AnimatedPressable>
   );
 }
 
