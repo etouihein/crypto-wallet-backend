@@ -98,6 +98,9 @@ const TF_CONFIG = {
 };
 const TF_KEYS = ['5M', '15M', '1H', '1J', '1S', '1M'];
 
+// En dev sur le LAN, l'app doit joindre le backend par IP locale. En prod
+// (déploiement public), le backend vit sur un vrai domaine HTTPS et cette IP
+// n'a plus aucun sens — EXPO_PUBLIC_API_BASE_URL prend le dessus dans ce cas.
 const HOST_OVERRIDE = '192.168.1.2';
 
 const getExpoHost = () => {
@@ -107,7 +110,7 @@ const getExpoHost = () => {
 };
 
 const LOCAL_API_HOST = `${getExpoHost()}:3000`;
-const API_BASE = `http://${LOCAL_API_HOST}/wallet`;
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || `http://${LOCAL_API_HOST}/wallet`;
 const APP_API_KEY = process.env.EXPO_PUBLIC_APP_API_KEY || 'wallet-pro-dev-key-2026-7f3a9b2c';
 const API_HEADERS = { 'x-api-key': APP_API_KEY };
 const WALLET_STORAGE_KEY = 'wallet-pro-session-v1';
@@ -384,6 +387,59 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
         {children}
       </Animated.View>
     </Pressable>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  APPARITION EN FONDU + GLISSEMENT (pour les fiches crypto)
+// ═══════════════════════════════════════════════════════════
+function FadeInView({ children, style, deps = [] }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    anim.setValue(0);
+    Animated.timing(anim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: anim,
+          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+        },
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  BARRE D'OFFRE EN CIRCULATION (dégradé animé + petite fusée)
+// ═══════════════════════════════════════════════════════════
+function SupplyBar({ circulating, max, color }) {
+  const pct = max ? Math.min(100, (circulating / max) * 100) : 100;
+  const width = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(width, { toValue: pct, duration: 900, useNativeDriver: false }).start();
+  }, [pct]);
+  const widthPct = width.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] });
+  return (
+    <View style={st.supply_wrap}>
+      <View style={st.supply_track}>
+        <Animated.View style={{ width: widthPct, height: '100%' }}>
+          <LinearGradient
+            colors={[color, T.green]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={{ flex: 1, borderRadius: 8 }}
+          />
+        </Animated.View>
+      </View>
+      <Text style={st.supply_lbl}>
+        {max ? `${pct.toFixed(1)}% de l'offre max en circulation 🚀` : 'Offre illimitée ♾️'}
+      </Text>
+    </View>
   );
 }
 
@@ -860,7 +916,7 @@ export default function App() {
       );
     }
     return (
-      <View style={st.about_box}>
+      <FadeInView style={st.about_box} deps={[symbol]}>
         <Text style={st.about_title}>À propos de {info.name}</Text>
         {!!info.description && <Text style={st.about_text}>{info.description}</Text>}
         {!!info.categories?.length && (
@@ -870,6 +926,11 @@ export default function App() {
             ))}
           </View>
         )}
+
+        {(info.circulatingSupply != null) && (
+          <SupplyBar circulating={info.circulatingSupply} max={info.maxSupply} color={tokens[symbol]?.color || T.blue} />
+        )}
+
         <View style={st.detail_grid}>
           {[
             { label: 'Rang marché',       val: info.marketCapRank ? `#${info.marketCapRank}` : '—' },
@@ -878,13 +939,13 @@ export default function App() {
             { label: 'Valo. diluée',      val: info.fullyDilutedValuation ? `$${fmtCompactNumber(info.fullyDilutedValuation)}` : '—' },
             { label: 'Offre en circulation', val: info.circulatingSupply ? fmtCompactNumber(info.circulatingSupply) : '—' },
             { label: 'Offre max',         val: info.maxSupply ? fmtCompactNumber(info.maxSupply) : 'Illimitée' },
-            { label: 'Plus haut historique', val: info.ath ? `$${fmtCompactNumber(info.ath)}` : '—' },
-            { label: 'Création',          val: info.genesisDate || '—' },
-          ].map(item => (
-            <View key={item.label} style={st.detail_stat}>
+            { label: '🏆 Plus haut historique', val: info.ath ? `$${fmtCompactNumber(info.ath)}` : '—' },
+            { label: '📅 Création',       val: info.genesisDate || '—' },
+          ].map((item, i) => (
+            <FadeInView key={item.label} style={st.detail_stat} deps={[symbol]}>
               <Text style={st.detail_stat_lbl}>{item.label}</Text>
               <Text style={st.detail_stat_val}>{item.val}</Text>
-            </View>
+            </FadeInView>
           ))}
         </View>
         {!!info.homepage && (
@@ -892,7 +953,7 @@ export default function App() {
             <Text style={st.about_link_txt}>🔗 Site officiel</Text>
           </AnimPressable>
         )}
-      </View>
+      </FadeInView>
     );
   };
 
@@ -1731,6 +1792,10 @@ const st = StyleSheet.create({
   about_tag_txt:  { color: T.blue, fontSize: 10, fontWeight: '600' },
   about_link_btn: { alignSelf: 'center', marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border },
   about_link_txt: { color: T.text, fontSize: 13, fontWeight: '600' },
+
+  supply_wrap:  { marginTop: 14, marginBottom: 4 },
+  supply_track: { height: 10, borderRadius: 8, backgroundColor: T.card2, overflow: 'hidden' },
+  supply_lbl:   { color: T.text2, fontSize: 11, marginTop: 6, textAlign: 'center' },
 
   tf_row:    { flexDirection: 'row', backgroundColor: T.card, borderRadius: 10, padding: 3, marginBottom: 4 },
   tf_btn:    { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },

@@ -45,6 +45,17 @@ function corsOriginCheck(origin, callback) {
   return callback(new Error(`Origine non autorisée par CORS : ${origin}`));
 }
 
+// Filet de sécurité HTTPS : sur Render/Railway/Fly, le TLS est terminé par la
+// plateforme puis relayé en HTTP interne — `trust proxy` fait que req.secure
+// reflète le X-Forwarded-Proto envoyé par cette plateforme. Si jamais une
+// requête arrive quand même en clair, on redirige plutôt que de la traiter.
+if (ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.secure || req.method === 'OPTIONS') return next();
+    res.redirect(308, `https://${req.headers.host}${req.originalUrl}`);
+  });
+}
+
 // Configuration des Middlewares globaux
 app.use(cors({ origin: corsOriginCheck }));
 app.use(express.json({

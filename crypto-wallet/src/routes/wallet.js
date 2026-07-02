@@ -3,6 +3,7 @@ const router = express.Router();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
 const Stripe = require('stripe');
+const rateLimit = require('express-rate-limit');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:8083';
@@ -13,6 +14,18 @@ const APP_API_KEYS = new Set(
     .map(k => k.trim())
     .filter(Boolean)
 );
+
+// Limite plus stricte sur les routes sensibles (création/import/envoi/paiement) —
+// le rate-limit global de server.js (100/15min) est trop permissif pour ces
+// actions-là une fois le serveur exposé publiquement (spam de wallets, essais
+// répétés de clé privée, abus du flux d'achat).
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.SENSITIVE_RATE_LIMIT_MAX, 10) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Trop de requêtes sensibles depuis cette IP — réessaie dans quelques minutes.' },
+});
 
 // MoonPay — achat de crypto par carte, livré directement à l'adresse du wallet.
 // Le wallet de cette app n'a qu'UNE adresse EVM (0x...) : on ne propose donc
@@ -316,7 +329,7 @@ router.post('/webhooks/moonpay', (req, res) => {
 });
 
 // 1. ROUTE DE CRÉATION DE WALLET (Génération d'une vraie Seed Phrase à 12 mots)
-router.post('/create', async (req, res) => {
+router.post('/create', sensitiveLimiter, async (req, res) => {
   try {
     const { network = 'ethereum' } = req.body;
     const wallet = ethers.Wallet.createRandom();
@@ -337,7 +350,7 @@ router.post('/create', async (req, res) => {
   }
 });
 
-router.post('/import', async (req, res) => {
+router.post('/import', sensitiveLimiter, async (req, res) => {
   try {
     const { mnemonic, privateKey, network = 'ethereum' } = req.body;
     if (!mnemonic && !privateKey) {
@@ -388,7 +401,7 @@ router.get('/erc20/balance/:symbol', requireSession, async (req, res) => {
   }
 });
 
-router.post('/erc20/send', requireSession, async (req, res) => {
+router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) => {
   const { to, amount, symbol, network = 'ethereum' } = req.body;
   const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
   if (!to || !amount || !symbol) return res.status(400).json({ success: false, error: 'Paramètres manquants.' });
@@ -475,7 +488,7 @@ router.get('/news', async (req, res) => {
   }
 });
 
-router.post('/payments/create-checkout-session', requireSession, async (req, res) => {
+router.post('/payments/create-checkout-session', sensitiveLimiter, requireSession, async (req, res) => {
   try {
     const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl } = req.body;
     if (!amountUsd || !tokenSymbol) {
@@ -483,8 +496,8 @@ router.post('/payments/create-checkout-session', requireSession, async (req, res
     }
 
     const intAmount = Math.round(parseFloat(amountUsd) * 100);
-    if (!Number.isFinite(intAmount) || intAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    if (!Number.isFinite(intAmount) || intAmount <= 0 || intAmount > 5_000_00) {
+      return res.status(400).json({ success: false, error: 'Montant invalide (entre 1 et 5000 USD).' });
     }
 
     const frontendBase = (() => {
@@ -642,11 +655,11 @@ async function sendNative(req, res, network = 'ethereum') {
   }
 }
 
-router.post('/send', requireSession, async (req, res) => {
+router.post('/send', sensitiveLimiter, requireSession, async (req, res) => {
   return sendNative(req, res, 'ethereum');
 });
 
-router.post('/bsc/send', requireSession, async (req, res) => {
+router.post('/bsc/send', sensitiveLimiter, requireSession, async (req, res) => {
   return sendNative(req, res, 'bsc');
 });
 
