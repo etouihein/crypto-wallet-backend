@@ -14,6 +14,37 @@ const APP_API_KEYS = new Set(
     .filter(Boolean)
 );
 
+// MoonPay — achat de crypto par carte, livré directement à l'adresse du wallet.
+// Le wallet de cette app n'a qu'UNE adresse EVM (0x...) : on ne propose donc
+// MoonPay que pour les tokens qui peuvent réellement arriver dessus. Acheter
+// du BTC/SOL/ADA vers une adresse 0x perdrait les fonds — pas question.
+const MOONPAY_API_KEY = process.env.MOONPAY_API_KEY || '';
+const MOONPAY_SECRET_KEY = process.env.MOONPAY_SECRET_KEY || '';
+const MOONPAY_BASE_URL = process.env.MOONPAY_ENV === 'production'
+  ? 'https://buy.moonpay.com'
+  : 'https://buy-sandbox.moonpay.com';
+const MOONPAY_CURRENCY_CODES = {
+  ethereum: { ETH: 'eth', USDT: 'usdt_eth', USDC: 'usdc_eth' },
+  bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
+};
+
+function buildMoonPaySignedUrl({ currencyCode, walletAddress, baseCurrencyAmount, redirectURL }) {
+  const params = new URLSearchParams({
+    apiKey: MOONPAY_API_KEY,
+    currencyCode,
+    walletAddress,
+    baseCurrencyCode: 'usd',
+    baseCurrencyAmount: String(baseCurrencyAmount),
+    redirectURL,
+  });
+  const url = `${MOONPAY_BASE_URL}?${params.toString()}`;
+  const signature = crypto
+    .createHmac('sha256', MOONPAY_SECRET_KEY)
+    .update(new URL(url).search)
+    .digest('base64');
+  return `${url}&signature=${encodeURIComponent(signature)}`;
+}
+
 const NETWORKS = {
   ethereum: {
     chainId: 1,
@@ -310,7 +341,7 @@ router.get('/market', async (req, res) => {
   }
 });
 
-router.post('/payments/create-checkout-session', async (req, res) => {
+router.post('/payments/create-checkout-session', requireSession, async (req, res) => {
   try {
     const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl } = req.body;
     if (!amountUsd || !tokenSymbol) {
@@ -340,6 +371,23 @@ router.post('/payments/create-checkout-session', async (req, res) => {
       return FRONTEND_URL;
     })();
 
+    if (PAYMENT_PROVIDER === 'moonpay') {
+      if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
+        return res.status(503).json({ success: false, error: 'MoonPay non configuré (MOONPAY_API_KEY / MOONPAY_SECRET_KEY manquants dans .env).' });
+      }
+      const currencyCode = MOONPAY_CURRENCY_CODES[normalizeNetwork(network)]?.[tokenSymbol.toUpperCase()];
+      if (!currencyCode) {
+        return res.status(400).json({ success: false, error: `Achat de ${tokenSymbol} non supporté sur ce wallet (une seule adresse EVM) — choisis ETH, BNB, USDT ou USDC.` });
+      }
+      const url = buildMoonPaySignedUrl({
+        currencyCode,
+        walletAddress: req.walletSession.wallet.address,
+        baseCurrencyAmount: (intAmount / 100).toFixed(2),
+        redirectURL: frontendBase,
+      });
+      return res.json({ success: true, provider: 'moonpay', url });
+    }
+
     if (!stripe || PAYMENT_PROVIDER !== 'stripe') {
       const demoUrl = `${frontendBase}?payment=demo&token=${encodeURIComponent(tokenSymbol)}&amount=${encodeURIComponent(amountUsd)}`;
       return res.json({
@@ -347,7 +395,7 @@ router.post('/payments/create-checkout-session', async (req, res) => {
         provider: 'demo',
         demo: true,
         url: demoUrl,
-        message: 'Flux d’achat prêt en mode test. Branche Stripe/MonPay pour un paiement réel.',
+        message: 'Flux d’achat prêt en mode test. Branche Stripe/MoonPay pour un paiement réel.',
       });
     }
 

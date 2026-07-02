@@ -80,6 +80,13 @@ const WALLET_TOKENS = {
   MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,    icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'] },
 };
 
+// Le wallet n'a qu'une seule adresse EVM (0x...) : on ne propose l'achat MoonPay
+// que pour les tokens qui peuvent réellement y arriver, selon le réseau actif.
+const BUYABLE_TOKENS = {
+  ethereum: ['ETH', 'USDT', 'USDC'],
+  bsc: ['BNB', 'USDT', 'USDC'],
+};
+
 const TF_CONFIG = {
   '5M':  { bucketMs: 30_000,        numCandles: 12, live: true  },
   '15M': { bucketMs: 90_000,        numCandles: 12, live: true  },
@@ -661,6 +668,7 @@ export default function App() {
     setSendToken(network === 'bsc' ? 'BNB' : 'ETH');
     setSwapFrom(network === 'bsc' ? 'BNB' : 'ETH');
     setSwapTo('USDT');
+    setBuyToken(network === 'bsc' ? 'BNB' : 'ETH');
   }, [network]);
 
   // ── CALCUL SWAP ──
@@ -751,7 +759,7 @@ export default function App() {
         tokenSymbol: buyToken,
         network,
         returnUrl: Platform.OS === 'web' ? window.location.origin : `exp://${HOST_OVERRIDE}:8087`,
-      }, { timeout: 20000, headers: API_HEADERS });
+      }, { timeout: 20000, headers: authHeaders() });
 
       if (!res.data?.success || !res.data.url) {
         throw new Error(res.data?.error || 'Impossible de créer la session de paiement.');
@@ -1365,14 +1373,18 @@ export default function App() {
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ padding: 16 }}>
-          <Text style={st.form_label}>Token</Text>
+          <Text style={st.form_label}>Token ({activeNetwork.label})</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
-            {Object.entries(tokens).map(([sym, t]) => (
-              <TouchableOpacity key={sym} style={[st.tok_chip, buyToken === sym && st.tok_chip_on]} onPress={() => setBuyToken(sym)}>
-                <CoinLogo logo={t.logo} icon={t.icon} size={24} />
-                <Text style={[st.tok_chip_txt, buyToken === sym && { color: T.text }]}>{sym}</Text>
-              </TouchableOpacity>
-            ))}
+            {(BUYABLE_TOKENS[network] || []).map((sym) => {
+              const t = tokens[sym];
+              if (!t) return null;
+              return (
+                <TouchableOpacity key={sym} style={[st.tok_chip, buyToken === sym && st.tok_chip_on]} onPress={() => setBuyToken(sym)}>
+                  <CoinLogo logo={t.logo} icon={t.icon} size={24} />
+                  <Text style={[st.tok_chip_txt, buyToken === sym && { color: T.text }]}>{sym}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
 
           <Text style={st.form_label}>Montant USD</Text>
@@ -1382,7 +1394,7 @@ export default function App() {
           <View style={st.send_info_box}>
             <Text style={st.send_info_line}>≈ {fmt((parseFloat(buyAmount) || 0) / (tokens[buyToken]?.price || 1))} {buyToken}</Text>
             <Text style={st.send_info_line}>Réseau: {activeNetwork.label}</Text>
-            <Text style={st.send_info_line}>Paiement sécurisé Stripe</Text>
+            <Text style={st.send_info_line}>Paiement sécurisé par carte (MoonPay)</Text>
           </View>
 
           <TouchableOpacity style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 24 }]}
