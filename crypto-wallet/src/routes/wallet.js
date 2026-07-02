@@ -136,16 +136,6 @@ function getNetworkConfig(network = 'ethereum') {
   return NETWORKS[normalizeNetwork(network)] || NETWORKS.ethereum;
 }
 
-const TOKENS = [
-  { symbol: 'ETH', cgId: 'ethereum', name: 'Ethereum' },
-  { symbol: 'BTC', cgId: 'bitcoin', name: 'Bitcoin' },
-  { symbol: 'BNB', cgId: 'binancecoin', name: 'BNB' },
-  { symbol: 'SOL', cgId: 'solana', name: 'Solana' },
-  { symbol: 'USDT', cgId: 'tether', name: 'Tether' },
-  { symbol: 'ADA', cgId: 'cardano', name: 'Cardano' },
-  { symbol: 'MATIC', cgId: 'matic-network', name: 'Polygon' },
-];
-
 const ERC20_TOKENS = {
   USDC: {
     symbol: 'USDC',
@@ -190,9 +180,12 @@ function coingeckoHeaders() {
   return process.env.COINGECKO_API_KEY ? { 'x-api-key': process.env.COINGECKO_API_KEY } : {};
 }
 
-async function fetchCoinGeckoMarket() {
-  const ids = TOKENS.map(t => t.cgId).join(',');
-  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&sparkline=false&price_change_percentage=24h`;
+// Top N cryptos par capitalisation — alimente l'onglet Marché avec un vrai
+// marché large (façon Trust Wallet), pas juste les quelques tokens du wallet.
+// Les tokens du wallet (WALLET_TOKENS) sont de toute façon dans ce top N,
+// donc l'écran d'accueil continue de trouver ses prix dans la même réponse.
+async function fetchCoinGeckoMarket(limit = 50) {
+  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h`;
   try {
     const response = await fetch(url, { headers: coingeckoHeaders() });
     if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
@@ -465,10 +458,12 @@ async function fetchCryptoNews() {
   const response = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss/');
   if (!response.ok) throw new Error(`RSS error ${response.status}`);
   const xml = await response.text();
+  const decodeEntities = (s) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
   const pick = (block, tag) => {
     const m = block.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`));
-    return m ? m[1].trim() : '';
+    return m ? decodeEntities(m[1].trim()) : '';
   };
+  const pickImage = (block) => decodeEntities(block.match(/<media:content url="([^"]+)"/)?.[1] || '');
   return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
     .slice(0, 20)
     .map(([, block]) => ({
@@ -476,6 +471,7 @@ async function fetchCryptoNews() {
       link: pick(block, 'link'),
       pubDate: pick(block, 'pubDate'),
       description: pick(block, 'description').replace(/<[^>]+>/g, '').slice(0, 220),
+      image: pickImage(block),
     }));
 }
 

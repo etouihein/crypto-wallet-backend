@@ -1520,43 +1520,64 @@ export default function App() {
       </View>
       <ScrollView showsVerticalScrollIndicator={false}>
         {!!newsItems.length && (
-          <View style={{ marginBottom: 18 }}>
+          <View style={{ marginBottom: 20 }}>
             <View style={st.section_hdr}>
               <Text style={st.section_title}>📰 Actu crypto en direct</Text>
+              <Text style={st.section_sub}>MAJ / 5 min</Text>
             </View>
-            {newsItems.slice(0, 6).map((item, i) => (
-              <AnimPressable key={i} style={st.news_card} scaleTo={0.98} onPress={() => item.link && Linking.openURL(item.link)}>
-                <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
-                {!!item.description && <Text style={st.news_desc} numberOfLines={2}>{item.description}</Text>}
-                <Text style={st.news_date}>{item.pubDate ? new Date(item.pubDate).toLocaleString('fr-FR') : ''}</Text>
-              </AnimPressable>
-            ))}
-            <View style={st.section_hdr}>
-              <Text style={st.section_title}>Tous les cours</Text>
-            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
+              {newsItems.slice(0, 10).map((item, i) => (
+                <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+                  {item.image ? (
+                    <Image source={{ uri: item.image }} style={st.news_img} />
+                  ) : (
+                    <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ fontSize: 30 }}>📰</Text>
+                    </View>
+                  )}
+                  <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
+                  <Text style={st.news_date}>
+                    {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                  </Text>
+                </AnimPressable>
+              ))}
+            </ScrollView>
           </View>
         )}
-        {filteredCoins.map((coin, idx) => {
-          const pos = (coin.price_change_percentage_24h || 0) >= 0;
-          const logo = COIN_LOGOS[coin.id];
-          const p = coin.current_price || 0;
-          return (
-            <View key={coin.id} style={st.market_row}>
-              <Text style={st.market_rank}>#{idx + 1}</Text>
-              <CoinLogo logo={logo} icon="🪙" size={36} />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={st.market_sym}>{coin.symbol?.toUpperCase()}</Text>
-                <Text style={st.market_name}>{coin.name}</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={st.market_price}>{fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}</Text>
-                <Text style={[{ fontSize: 12, fontWeight: '600' }, { color: pos ? T.green : T.red }]}>
-                  {pos ? '+' : ''}{(coin.price_change_percentage_24h || 0).toFixed(2)}%
-                </Text>
-              </View>
-            </View>
-          );
-        })}
+
+        <View style={st.section_hdr}>
+          <Text style={st.section_title}>💹 Tous les cours</Text>
+          <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
+        </View>
+        <View style={st.market_grid}>
+          {filteredCoins.map((coin) => {
+            const pos = (coin.price_change_percentage_24h || 0) >= 0;
+            const p = coin.current_price || 0;
+            const known = WALLET_TOKENS[coin.symbol?.toUpperCase()];
+            return (
+              <AnimPressable
+                key={coin.id}
+                style={st.market_card}
+                scaleTo={0.95}
+                onPress={() => known && setSelectedToken(coin.symbol.toUpperCase())}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <CoinLogo logo={coin.image} icon="🪙" size={30} />
+                  <View style={{ marginLeft: 8, flex: 1 }}>
+                    <Text style={st.market_card_sym} numberOfLines={1}>{coin.symbol?.toUpperCase()}</Text>
+                    <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
+                  </View>
+                </View>
+                <Text style={st.market_card_price}>{fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}</Text>
+                <View style={[st.market_card_badge, { backgroundColor: pos ? T.greenBg : T.redBg }]}>
+                  <Text style={{ color: pos ? T.green : T.red, fontSize: 11, fontWeight: 'bold' }}>
+                    {pos ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                  </Text>
+                </View>
+              </AnimPressable>
+            );
+          })}
+        </View>
         <View style={{ height: 30 }} />
       </ScrollView>
     </View>
@@ -1832,16 +1853,24 @@ const st = StyleSheet.create({
 
   search_wrap:    { margin: 14, backgroundColor: T.card, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, borderWidth: 1, borderColor: T.border },
   search_input:   { flex: 1, color: T.text, fontSize: 14, paddingVertical: 12 },
-  market_row:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.border + '55' },
-  market_rank:    { color: T.text3, fontSize: 11, width: 22 },
-  market_sym:     { color: T.text, fontSize: 13, fontWeight: '700' },
-  market_name:    { color: T.text2, fontSize: 11, marginTop: 1 },
-  market_price:   { color: T.text, fontSize: 13, fontWeight: '600' },
+  section_sub:    { color: T.text3, fontSize: 11 },
 
-  news_card:  { marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 5, elevation: 2 },
-  news_title: { color: T.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  news_card:  { width: 220, marginRight: 12, backgroundColor: T.card, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 3 },
+  news_img:   { width: '100%', height: 100, borderRadius: 10, marginBottom: 8, backgroundColor: T.card2 },
+  news_title: { color: T.text, fontSize: 13, fontWeight: '700', marginBottom: 4, minHeight: 34 },
   news_desc:  { color: T.text2, fontSize: 12, lineHeight: 17, marginBottom: 6 },
   news_date:  { color: T.text3, fontSize: 10 },
+
+  market_grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 14 },
+  market_card: {
+    width: '48%', backgroundColor: T.card, borderRadius: 16, padding: 12, marginBottom: 12,
+    borderWidth: 1, borderColor: T.border,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
+  },
+  market_card_sym:  { color: T.text, fontSize: 13, fontWeight: '700' },
+  market_card_name: { color: T.text2, fontSize: 10, marginTop: 1 },
+  market_card_price:{ color: T.text, fontSize: 16, fontWeight: 'bold', marginTop: 10 },
+  market_card_badge:{ alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3, marginTop: 6 },
 
   tab_title:          { color: T.text, fontSize: 22, fontWeight: 'bold', marginBottom: 4 },
   swap_card:          { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.border },
