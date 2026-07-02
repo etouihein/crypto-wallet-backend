@@ -18,22 +18,22 @@ const NETWORKS = {
   ethereum: {
     chainId: 1,
     nativeSymbol: 'ETH',
-    rpcUrl: process.env.ETHEREUM_RPC_URL || process.env.RPC_URL || 'https://eth.llamarpc.com',
+    rpcUrl: process.env.ETHEREUM_RPC_URL || process.env.RPC_URL || 'https://ethereum-rpc.publicnode.com',
   },
   sepolia: {
     chainId: 11155111,
     nativeSymbol: 'ETH',
-    rpcUrl: process.env.SEPOLIA_RPC_URL || 'https://rpc.ankr.com/eth_sepolia',
+    rpcUrl: process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com',
   },
   bsc: {
     chainId: 56,
     nativeSymbol: 'BNB',
-    rpcUrl: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org/',
+    rpcUrl: process.env.BSC_RPC_URL || 'https://bsc-rpc.publicnode.com',
   },
   polygon: {
     chainId: 137,
     nativeSymbol: 'MATIC',
-    rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com/',
+    rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
   },
 };
 
