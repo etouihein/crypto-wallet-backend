@@ -30,8 +30,23 @@ if (ENV === 'production') {
   }
 }
 
+// Origines autorisées en CORS. En dev, Expo change souvent de port (web sur
+// 8081, parfois 8083, IP LAN pour le téléphone...) — plutôt que de se faire
+// bloquer silencieusement à chaque changement, on accepte tout localhost/IP
+// privée en dev. En production, seule la liste explicite FRONTEND_URLS compte.
+const FRONTEND_URLS = (process.env.FRONTEND_URLS || FRONTEND_URL)
+  .split(',').map(s => s.trim()).filter(Boolean);
+const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
+
+function corsOriginCheck(origin, callback) {
+  if (!origin) return callback(null, true); // apps natives / requêtes serveur à serveur : pas d'en-tête Origin
+  if (FRONTEND_URLS.includes(origin)) return callback(null, true);
+  if (ENV !== 'production' && LOCAL_ORIGIN_RE.test(origin)) return callback(null, true);
+  return callback(new Error(`Origine non autorisée par CORS : ${origin}`));
+}
+
 // Configuration des Middlewares globaux
-app.use(cors({ origin: FRONTEND_URL }));
+app.use(cors({ origin: corsOriginCheck }));
 app.use(express.json({
   // Garde le corps brut pour vérifier la signature des webhooks MoonPay
   // (le HMAC se calcule sur les octets exacts reçus, pas sur du JSON re-sérialisé).
@@ -70,6 +85,14 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', network: 'mainnet-ready', timestamp: new Date().toISOString() });
+});
+
+// Erreur CORS (origine refusée) → 403 propre, jamais de stack trace exposée.
+app.use((err, req, res, next) => {
+  if (err && /CORS/.test(err.message || '')) {
+    return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
+  }
+  next(err);
 });
 
 // Démarrage du serveur

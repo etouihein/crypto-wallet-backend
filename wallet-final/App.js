@@ -344,6 +344,28 @@ function CoinLogo({ logo, icon, size = 44 }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  ALERTES CROSS-PLATFORM
+//  Alert.alert de react-native-web est un no-op total (voir
+//  node_modules/react-native-web/dist/exports/Alert) : rien ne s'affiche
+//  jamais sur le web. On bascule sur window.alert/confirm dans ce cas.
+// ═══════════════════════════════════════════════════════════
+function showAlert(title, message, buttons) {
+  if (Platform.OS === 'web') {
+    const text = message ? `${title}\n\n${message}` : title;
+    if (Array.isArray(buttons) && buttons.length > 1) {
+      const confirmed = window.confirm(text);
+      const chosen = buttons.find(b => (confirmed ? b.style !== 'cancel' : b.style === 'cancel'));
+      chosen?.onPress?.();
+    } else {
+      window.alert(text);
+      buttons?.[0]?.onPress?.();
+    }
+    return;
+  }
+  Alert.alert(title, message, buttons);
+}
+
+// ═══════════════════════════════════════════════════════════
 //  BOUTON AVEC RETOUR TACTILE (scale au toucher)
 // ═══════════════════════════════════════════════════════════
 function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
@@ -701,11 +723,11 @@ export default function App() {
 
     if (status) {
       const label = { completed: '✅ Achat confirmé', pending: '⏳ Achat en cours', failed: '❌ Achat échoué' }[status] || `Statut MoonPay : ${status}`;
-      Alert.alert(label, status === 'failed'
+      showAlert(label, status === 'failed'
         ? 'La transaction MoonPay n\'a pas abouti.'
         : 'Ton solde se met à jour dès que la transaction est confirmée sur la blockchain — vérification automatique en cours.');
     } else {
-      Alert.alert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure MoonPay pour un achat réel.');
+      showAlert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure MoonPay pour un achat réel.');
     }
 
     window.history.replaceState({}, '', window.location.pathname);
@@ -902,14 +924,14 @@ export default function App() {
     setPinCode(n);
     if (n === '123456') { setIsUnlocked(true); return; }
     if (n.length === 6) {
-      setTimeout(() => { Alert.alert('Code incorrect', 'PIN par défaut: 123456'); setPinCode(''); }, 100);
+      setTimeout(() => { showAlert('Code incorrect', 'PIN par défaut: 123456'); setPinCode(''); }, 100);
     }
   };
 
   // ── ACHAT / PAIEMENT STRIPE ──
   const handleBuyNow = async () => {
     if (!buyAmount || isNaN(Number(buyAmount)) || Number(buyAmount) <= 0) {
-      Alert.alert('Montant invalide', 'Entre un montant en USD.');
+      showAlert('Montant invalide', 'Entre un montant en USD.');
       return;
     }
     setBuyLoading(true);
@@ -927,7 +949,7 @@ export default function App() {
 
       setShowBuy(false);
       if (res.data?.demo) {
-        Alert.alert('✅ Achat prêt', res.data?.message || 'Le flux d’achat est lancé en mode test.');
+        showAlert('✅ Achat prêt', res.data?.message || 'Le flux d’achat est lancé en mode test.');
       } else if (Platform.OS === 'web') {
         // window.open() est bloqué par les navigateurs quand il arrive après un
         // appel réseau (hors du geste de clic direct) — on navigue dans le même
@@ -937,7 +959,7 @@ export default function App() {
         await Linking.openURL(res.data.url);
       }
     } catch (err) {
-      Alert.alert('Erreur paiement', err.message || 'Impossible de lancer le paiement.');
+      showAlert('Erreur paiement', err.message || 'Impossible de lancer le paiement.');
     } finally {
       setBuyLoading(false);
     }
@@ -945,24 +967,24 @@ export default function App() {
 
   // ── ENVOI SÉCURISÉ (Validation sur réseau réel) ──
   const handleSend = async () => {
-    if (!sendAddress || !sendAmount) { Alert.alert('Champs manquants'); return; }
+    if (!sendAddress || !sendAmount) { showAlert('Champs manquants'); return; }
     
     // Validation adresse
     if (!sendAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      Alert.alert('Adresse invalide', 'Doit commencer par 0x et avoir 40 hex chars');
+      showAlert('Adresse invalide', 'Doit commencer par 0x et avoir 40 hex chars');
       return;
     }
 
     const amt = parseFloat(sendAmount);
-    if (isNaN(amt) || amt <= 0) { Alert.alert('Montant invalide'); return; }
+    if (isNaN(amt) || amt <= 0) { showAlert('Montant invalide'); return; }
     const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
     const bal = (sendToken === nativeSymbol) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0);
-    if (amt > bal) { Alert.alert('Solde insuffisant', `Tu as ${bal.toFixed(6)} ${sendToken}`); return; }
+    if (amt > bal) { showAlert('Solde insuffisant', `Tu as ${bal.toFixed(6)} ${sendToken}`); return; }
 
     const isErc20 = sendToken === 'USDC' || sendToken === 'USDT';
     const isNative = sendToken === nativeSymbol;
     if (!isNative && !isErc20) {
-      Alert.alert('Token non supporté', `L'envoi de ${sendToken} n'est pas encore supporté.`);
+      showAlert('Token non supporté', `L'envoi de ${sendToken} n'est pas encore supporté.`);
       return;
     }
 
@@ -986,11 +1008,11 @@ export default function App() {
       }
 
       const txHash = response.data.txHash || response.data.hash;
-      Alert.alert(
+      showAlert(
         '✅ Transaction Soumise!',
         `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
         [
-          { text: 'Copier Hash', onPress: () => Alert.alert('✓ Copié'), style: 'default' },
+          { text: 'Copier Hash', onPress: () => showAlert('✓ Copié'), style: 'default' },
           { text: 'OK' }
         ]
       );
@@ -1004,7 +1026,7 @@ export default function App() {
       setSendAmount('');
       fetchMarket();
     } catch (e) {
-      Alert.alert('❌ Erreur', e.message || 'Transaction échouée');
+      showAlert('❌ Erreur', e.message || 'Transaction échouée');
     }
     setSendLoading(false);
   };
@@ -1267,7 +1289,7 @@ export default function App() {
           <View style={st.receive_addr_box}>
             <Text style={st.receive_addr} selectable>{walletAddr}</Text>
           </View>
-          <AnimPressable style={st.green_btn} onPress={() => Alert.alert('✓ Copié!', walletAddr)}>
+          <AnimPressable style={st.green_btn} onPress={() => showAlert('✓ Copié!', walletAddr)}>
             <Text style={st.green_btn_txt}>📋 Copier</Text>
           </AnimPressable>
           <View style={st.warning_box}>
@@ -1534,14 +1556,14 @@ export default function App() {
 
         <AnimPressable style={[st.green_btn, { marginTop: 16 }]}
           onPress={() => {
-            if (!swapAmt || parseFloat(swapAmt) <= 0) { Alert.alert('Montant invalide'); return; }
+            if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
             const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
             const available = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
             if (parseFloat(swapAmt) > available) {
-              Alert.alert('Solde insuffisant', `Tu n’as pas assez de ${swapFrom} pour cette opération.`);
+              showAlert('Solde insuffisant', `Tu n’as pas assez de ${swapFrom} pour cette opération.`);
               return;
             }
-            Alert.alert('Opération prête', `${swapAmt} ${swapFrom} → ${parseFloat(swapRes).toFixed(8)} ${swapTo}\nLe solde réel sera vérifié sur la blockchain.`);
+            showAlert('Opération prête', `${swapAmt} ${swapFrom} → ${parseFloat(swapRes).toFixed(8)} ${swapTo}\nLe solde réel sera vérifié sur la blockchain.`);
             setSwapAmt('');
           }}
         >
