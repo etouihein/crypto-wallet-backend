@@ -15,6 +15,21 @@ const PORT = process.env.PORT || 3000;
 const ENV  = process.env.NODE_ENV || 'development';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:8083';
 
+if (ENV === 'production') {
+  // Nécessaire pour que express-rate-limit voie la vraie IP du client
+  // quand le serveur est derrière un reverse proxy (Caddy/Nginx/Cloudflare).
+  app.set('trust proxy', 1);
+  if (!process.env.HTTPS_TERMINATED_BY_PROXY) {
+    console.warn(
+      '⚠️  NODE_ENV=production sans HTTPS_TERMINATED_BY_PROXY=1 : ' +
+      'ce serveur transmet mnémoniques, clés privées et tokens de session. ' +
+      'Ne l\'expose JAMAIS publiquement en HTTP brut — mets un reverse proxy ' +
+      '(Caddy, Nginx, Cloudflare Tunnel...) qui termine le HTTPS devant lui, ' +
+      'puis fixe HTTPS_TERMINATED_BY_PROXY=1 dans .env pour faire taire cet avertissement.'
+    );
+  }
+}
+
 // Configuration des Middlewares globaux
 app.use(cors({ origin: FRONTEND_URL }));
 app.use(express.json()); // Permet au serveur de lire les formulaires envoyés par l'application
