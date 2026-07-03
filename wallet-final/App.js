@@ -403,6 +403,53 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  LOGO ANIMÉ (halo qui pulse + badge qui respire) — écran d'accueil
+// ═══════════════════════════════════════════════════════════
+function AnimatedLogo({ size = 92, icon = '🛡️' }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 1900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  const glowScale   = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.3] });
+  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.05] });
+  const badgeScale  = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.045] });
+
+  return (
+    <View style={{ width: size * 1.9, height: size * 1.9, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View
+        style={{
+          position: 'absolute', width: size * 1.9, height: size * 1.9, borderRadius: size,
+          backgroundColor: T.green, opacity: glowOpacity, transform: [{ scale: glowScale }],
+        }}
+      />
+      <Animated.View style={{ transform: [{ scale: badgeScale }] }}>
+        <LinearGradient
+          colors={[T.card2, T.card, T.bg]}
+          start={{ x: 0.1, y: 0 }}
+          end={{ x: 0.9, y: 1 }}
+          style={{
+            width: size, height: size, borderRadius: size / 2,
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: T.border,
+            shadowColor: T.green, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14, elevation: 8,
+          }}
+        >
+          <Text style={{ fontSize: size * 0.42 }}>{icon}</Text>
+        </LinearGradient>
+      </Animated.View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  APPARITION EN FONDU + GLISSEMENT (pour les fiches crypto)
 // ═══════════════════════════════════════════════════════════
 function FadeInView({ children, style, deps = [] }) {
@@ -742,14 +789,16 @@ export default function App() {
         return;
       }
 
-      await createWallet();
+      // Aucun wallet sauvegardé : on ne crée plus rien automatiquement — c'est
+      // à l'utilisateur de choisir "Créer" ou "Importer" sur l'écran d'accueil.
+      setBackendReady(true);
     } catch (err) {
       console.error('Init wallet échouée:', err.message);
       setBackendError('Impossible de charger le wallet local.');
     } finally {
       setSessionLoaded(true);
     }
-  }, [createWallet, network, refreshPortfolio]);
+  }, [network, refreshPortfolio]);
 
   // Efface le wallet de cet appareil (clé privée comprise). Irréversible sans
   // la phrase de récupération — d'où la double confirmation appuyée.
@@ -1146,39 +1195,46 @@ export default function App() {
   };
 
   // ════════════════════════════════════════════════════════
-  //  ÉCRAN PIN
+  //  CHARGEMENT INITIAL (le temps de lire le stockage local)
   // ════════════════════════════════════════════════════════
-  if (!isUnlocked) {
+  if (!sessionLoaded) {
+    return (
+      <SafeAreaView style={[st.pin_screen, { justifyContent: 'center' }]}>
+        <StatusBar barStyle="light-content" />
+        <ActivityIndicator color={T.green} size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  ACCUEIL PUBLIC (pas encore de wallet sur cet appareil)
+  // ════════════════════════════════════════════════════════
+  if (!walletCreated) {
     return (
       <SafeAreaView style={st.pin_screen}>
         <StatusBar barStyle="light-content" />
-        <View style={st.pin_logo_wrap}>
-          <View style={st.pin_logo_circle}>
-            <Text style={{ fontSize: 48 }}>🔐</Text>
-          </View>
-          <Text style={st.pin_app_name}>Trust Wallet Pro</Text>
-          <Text style={st.pin_sub}>Connexion sécurisée</Text>
-        </View>
+        <FadeInView style={st.pin_logo_wrap} deps={[]}>
+          <AnimatedLogo />
+          <Text style={[st.pin_app_name, { marginTop: 18 }]}>NexiaWallet</Text>
+          <Text style={st.pin_sub}>Tes clés. Ton contrôle. Rien d'autre.</Text>
+        </FadeInView>
 
-        {backendError ? (
-          <Text style={st.auth_error}>{backendError}</Text>
-        ) : (
-          <Text style={st.auth_status}>{backendReady ? 'Backend connecté • wallet sauvegardé localement' : 'Connexion serveur...'}</Text>
-        )}
+        {backendError ? <Text style={st.auth_error}>{backendError}</Text> : null}
 
-        <View style={st.auth_card}>
-          <Text style={st.auth_card_title}>Sécurité & réseau</Text>
+        <LinearGradient
+          colors={[T.card2, T.card]}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={st.auth_card}
+        >
           <Text style={st.auth_card_text}>
-            Créer un wallet, l'importer, puis déverrouiller avec le PIN 123456.{' '}
-            {Platform.OS === 'web'
-              ? 'Ce wallet ne quitte jamais cet appareil — mais sur navigateur web, le stockage n\'est pas protégé par le matériel comme sur mobile.'
-              : 'Ce wallet ne quitte jamais cet appareil : clé stockée dans le coffre sécurisé du téléphone.'}
+            Wallet non-custodial : ta clé privée est générée sur cet appareil et n'en sort jamais.
+            Ethereum et BNB Smart Chain, en direct.
           </Text>
           {Platform.OS === 'web' && (
             <View style={[st.warning_box, { marginTop: 12 }]}>
               <Text style={st.warning_txt}>
-                ⚠️ Version web = démo/pratique. Pour de vrais fonds, préfère l'app mobile (stockage protégé par le matériel).
-                Un navigateur compromis (extension malveillante, faille XSS) pourrait accéder à ta clé.
+                ⚠️ Sur navigateur web, le stockage n'est pas protégé par le matériel comme sur mobile.
+                Pratique pour découvrir — préfère l'app native pour de vrais fonds.
               </Text>
             </View>
           )}
@@ -1190,14 +1246,14 @@ export default function App() {
               <Text style={[st.network_chip_txt, network === 'bsc' && { color: T.text }]}>BNB Smart Chain</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </LinearGradient>
 
         <View style={st.auth_actions}>
           <AnimPressable style={st.auth_btn} onPress={createWallet}>
             <Text style={st.auth_btn_txt}>Créer un wallet</Text>
           </AnimPressable>
           <AnimPressable style={st.auth_btn} onPress={() => { setImportMode(true); setImportError(null); }}>
-            <Text style={st.auth_btn_txt}>Importer wallet</Text>
+            <Text style={st.auth_btn_txt}>J'ai déjà un wallet</Text>
           </AnimPressable>
         </View>
 
@@ -1226,6 +1282,25 @@ export default function App() {
             </AnimPressable>
           </View>
         )}
+        {renderMnemonicBackup()}
+      </SafeAreaView>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  ÉCRAN PIN (le wallet existe déjà sur cet appareil)
+  // ════════════════════════════════════════════════════════
+  if (!isUnlocked) {
+    return (
+      <SafeAreaView style={st.pin_screen}>
+        <StatusBar barStyle="light-content" />
+        <View style={st.pin_logo_wrap}>
+          <View style={st.pin_logo_circle}>
+            <Text style={{ fontSize: 48 }}>🔐</Text>
+          </View>
+          <Text style={st.pin_app_name}>NexiaWallet</Text>
+          <Text style={st.pin_sub}>Déverrouille ton wallet</Text>
+        </View>
 
         <View style={st.pin_dots}>
           {[...Array(6)].map((_, i) => (
@@ -1508,8 +1583,8 @@ export default function App() {
           <View style={st.settings_row}>
             <Text style={{ fontSize: 22 }}>📱</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Trust Wallet Pro</Text>
-              <Text style={st.settings_row_sub}>CoinGecko Live • Ethereum + BSC • SecureStore</Text>
+              <Text style={st.settings_row_title}>NexiaWallet</Text>
+              <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • Ethereum + BSC</Text>
             </View>
           </View>
 
@@ -1866,13 +1941,19 @@ export default function App() {
 // ════════════════════════════════════════════════════════
 //  STYLES
 // ════════════════════════════════════════════════════════
+// Sur navigateur desktop, une largeur illimitée étire tout de façon absurde
+// (boutons pleine largeur, PIN géant...) — l'app a été pensée pour un écran
+// de téléphone. On plafonne donc la largeur et on centre sur le web ; aucun
+// effet sur natif (Platform.OS !== 'web' → objet vide).
+const webFrame = Platform.OS === 'web' ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : {};
+
 const st = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: T.bg },
+  container:    { flex: 1, backgroundColor: T.bg, ...webFrame },
   live_bar:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 6, backgroundColor: T.card, borderBottomWidth: 1, borderBottomColor: T.border },
   live_bar_txt: { color: T.text2, fontSize: 11, marginLeft: 6 },
   live_dot:     { width: 7, height: 7, borderRadius: 4, backgroundColor: T.green },
 
-  pin_screen:      { flex: 1, backgroundColor: T.bg, justifyContent: 'center', alignItems: 'center' },
+  pin_screen:      { flex: 1, backgroundColor: T.bg, justifyContent: 'center', alignItems: 'center', ...webFrame },
   pin_logo_wrap:   { alignItems: 'center', marginBottom: 50 },
   pin_logo_circle: { width: 80, height: 80, borderRadius: 40, backgroundColor: T.greenBg, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   pin_app_name:    { color: T.text, fontSize: 24, fontWeight: 'bold', marginBottom: 6 },
@@ -1904,7 +1985,7 @@ const st = StyleSheet.create({
   import_error:    { color: T.red, fontSize: 12, marginBottom: 10 },
   import_confirm_btn:{ backgroundColor: T.green, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
 
-  modal_bg:    { flex: 1, backgroundColor: T.bg },
+  modal_bg:    { flex: 1, backgroundColor: T.bg, ...webFrame },
   modal_hdr:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border },
   modal_title: { color: T.text, fontSize: 18, fontWeight: 'bold' },
   modal_title_lg: { color: T.text, fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
