@@ -528,6 +528,9 @@ export default function App() {
   const [showSend, setShowSend]           = useState(false);
   const [showBuy, setShowBuy]             = useState(false);
   const [showReceive, setShowReceive]     = useState(false);
+  const [showHistory, setShowHistory]     = useState(false);
+  const [historyItems, setHistoryItems]   = useState(null); // null = pas encore chargé, [] = chargé et vide
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
@@ -702,6 +705,30 @@ export default function App() {
       console.warn('refreshPortfolio error', err.message);
     }
   }, [network, walletAddr]);
+
+  // Historique — données publiques de la blockchain (Etherscan), aucune clé
+  // impliquée. Chargé à la demande, à l'ouverture de la modale "Activité".
+  const fetchHistory = useCallback(async () => {
+    if (!walletAddr) return;
+    setHistoryLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/tx/history`, {
+        params: { address: walletAddr, network },
+        headers: API_HEADERS,
+        timeout: 20000,
+      });
+      setHistoryItems(res.data?.success ? res.data.items : []);
+    } catch (err) {
+      console.warn('fetchHistory error', err.message);
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [walletAddr, network]);
+
+  useEffect(() => {
+    if (showHistory) fetchHistory();
+  }, [showHistory, fetchHistory]);
 
   // Wallet 100% non-custodial : génération/import/restauration se font en
   // local avec `lib/wallet.js` — la clé privée et la mnémonique ne quittent
@@ -1504,6 +1531,72 @@ export default function App() {
   );
 
   // ════════════════════════════════════════════════════════
+  //  MODAL: ACTIVITÉ (historique — données publiques Etherscan)
+  // ════════════════════════════════════════════════════════
+  const renderHistory = () => (
+    <Modal visible={showHistory} animationType="slide" transparent>
+      <SafeAreaView style={st.modal_bg}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => setShowHistory(false)} style={st.back_btn}>
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Activité</Text>
+          <TouchableOpacity onPress={fetchHistory} style={st.back_btn}>
+            <Text style={{ color: T.text, fontSize: 18 }}>↻</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={{ padding: 16 }}>
+          {historyLoading && (
+            <View style={{ alignItems: 'center', marginTop: 40 }}>
+              <ActivityIndicator color={T.green} size="large" />
+              <Text style={{ color: T.text2, fontSize: 12, marginTop: 10 }}>Chargement depuis {activeNetwork.explorer}…</Text>
+            </View>
+          )}
+
+          {!historyLoading && historyItems?.length === 0 && (
+            <View style={{ alignItems: 'center', marginTop: 40 }}>
+              <Text style={{ fontSize: 40, marginBottom: 10 }}>🕐</Text>
+              <Text style={{ color: T.text2, fontSize: 13, textAlign: 'center' }}>
+                Aucune transaction pour l'instant sur {activeNetwork.label}.
+              </Text>
+            </View>
+          )}
+
+          {!historyLoading && historyItems?.map((item, i) => {
+            const isOut = item.direction === 'out';
+            return (
+              <FadeInView key={item.hash + i} deps={[item.hash]}>
+                <AnimPressable
+                  style={st.history_row}
+                  scaleTo={0.98}
+                  onPress={() => Linking.openURL(`${activeNetwork.explorer}/tx/${item.hash}`)}
+                >
+                  <View style={[st.history_icon, { backgroundColor: isOut ? T.redBg : T.greenBg }]}>
+                    <Text style={{ fontSize: 18, color: isOut ? T.red : T.green }}>{isOut ? '↑' : '↓'}</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={st.history_title}>
+                      {isOut ? 'Envoyé' : 'Reçu'} {item.failed ? '(échoué)' : ''}
+                    </Text>
+                    <Text style={st.history_sub}>
+                      {new Date(item.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {' • '}{(isOut ? item.to : item.from)?.slice(0, 6)}…{(isOut ? item.to : item.from)?.slice(-4)}
+                    </Text>
+                  </View>
+                  <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.red : T.green) }]}>
+                    {isOut ? '-' : '+'}{parseFloat(item.amount).toFixed(5)} {item.symbol}
+                  </Text>
+                </AnimPressable>
+              </FadeInView>
+            );
+          })}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  // ════════════════════════════════════════════════════════
   //  MODAL: PARAMÈTRES
   // ════════════════════════════════════════════════════════
   const renderSettings = () => (
@@ -1641,6 +1734,7 @@ export default function App() {
           { icon: '↑', label: 'Envoyer', bg: T.card2, onPress: () => setShowSend(true) },
           { icon: '💳', label: 'Acheter', bg: T.green, onPress: () => setShowBuy(true) },
           { icon: '+', label: 'Recevoir',bg: T.card2, onPress: () => setShowReceive(true) },
+          { icon: '🕐', label: 'Activité', bg: T.card2, onPress: () => setShowHistory(true) },
           { icon: '📊',label: 'Marché', bg: T.card2, onPress: () => setTab('markets') },
         ].map(a => (
           <AnimPressable key={a.label} style={st.quick_btn} onPress={a.onPress}>
@@ -1932,6 +2026,7 @@ export default function App() {
       {!!selectedToken && renderTokenDetail()}
       {renderSend()}
       {renderReceive()}
+      {renderHistory()}
       {renderSettings()}
       {renderMnemonicBackup()}
     </SafeAreaView>
@@ -2109,6 +2204,12 @@ const st = StyleSheet.create({
   receive_addr:    { color: T.green, fontSize: 12, fontFamily: 'monospace', textAlign: 'center' },
   warning_box:     { backgroundColor: T.redBg, borderRadius: 12, padding: 14, marginTop: 20, width: '100%', borderWidth: 1, borderColor: T.red + '44' },
   warning_txt:     { color: T.text2, fontSize: 12, lineHeight: 18 },
+
+  history_row:    { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: T.border },
+  history_icon:   { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  history_title:  { color: T.text, fontSize: 13, fontWeight: '700' },
+  history_sub:    { color: T.text3, fontSize: 11, marginTop: 2 },
+  history_amount: { fontSize: 13, fontWeight: '700' },
 
   error_box:       { backgroundColor: T.redBg, borderRadius: 12, padding: 12, marginTop: 16, borderWidth: 1, borderColor: T.red + '44' },
   network_badge:   { backgroundColor: T.orangeBg, borderRadius: 8, padding: 8, marginBottom: 16, borderWidth: 1, borderColor: T.orange + '44' },

@@ -523,6 +523,79 @@ router.get('/news', async (req, res) => {
   }
 });
 
+// Historique des transactions — Etherscan API v2 (une seule clé couvre
+// Ethereum ET BSC depuis leur unification multichain). Clé côté serveur
+// uniquement : jamais exposée au client, comme pour CoinGecko/MoonPay.
+const ETHERSCAN_CHAIN_IDS = { ethereum: 1, bsc: 56 };
+
+async function fetchEtherscan(params) {
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+  if (!apiKey) throw new Error('ETHERSCAN_API_KEY manquante dans .env');
+  const qs = new URLSearchParams({ ...params, apikey: apiKey }).toString();
+  const response = await fetch(`https://api.etherscan.io/v2/api?${qs}`);
+  if (!response.ok) throw new Error(`Etherscan error ${response.status}`);
+  const data = await response.json();
+  // Etherscan répond status="0" + message="No transactions found" pour une
+  // adresse neuve — ce n'est pas une erreur, juste une liste vide.
+  if (data.status === '0' && data.message !== 'No transactions found') {
+    throw new Error(data.result || data.message || 'Erreur Etherscan');
+  }
+  return Array.isArray(data.result) ? data.result : [];
+}
+
+async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
+  return cachedFetch(`txhistory:${network}:${address.toLowerCase()}`, 20_000, async () => {
+    const chainid = ETHERSCAN_CHAIN_IDS[normalizeNetwork(network)] || ETHERSCAN_CHAIN_IDS.ethereum;
+    const base = { chainid, address, startblock: 0, endblock: 99999999, page: 1, offset: limit, sort: 'desc' };
+
+    const [native, tokens] = await Promise.all([
+      fetchEtherscan({ ...base, module: 'account', action: 'txlist' }),
+      fetchEtherscan({ ...base, module: 'account', action: 'tokentx' }),
+    ]);
+
+    const addrLower = address.toLowerCase();
+    const nativeItems = native.map(tx => ({
+      hash: tx.hash,
+      type: 'native',
+      symbol: normalizeNetwork(network) === 'bsc' ? 'BNB' : 'ETH',
+      direction: tx.from?.toLowerCase() === addrLower ? 'out' : 'in',
+      amount: ethers.utils.formatEther(tx.value || '0'),
+      timestamp: Number(tx.timeStamp) * 1000,
+      from: tx.from,
+      to: tx.to,
+      failed: tx.isError === '1',
+    }));
+    const tokenItems = tokens.map(tx => ({
+      hash: tx.hash,
+      type: 'erc20',
+      symbol: tx.tokenSymbol,
+      direction: tx.from?.toLowerCase() === addrLower ? 'out' : 'in',
+      amount: ethers.utils.formatUnits(tx.value || '0', Number(tx.tokenDecimal) || 18),
+      timestamp: Number(tx.timeStamp) * 1000,
+      from: tx.from,
+      to: tx.to,
+      failed: false,
+    }));
+
+    return [...nativeItems, ...tokenItems]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
+  });
+}
+
+router.get('/tx/history', async (req, res) => {
+  try {
+    const { address, network = 'ethereum' } = req.query;
+    if (!address || !ethers.utils.isAddress(address)) {
+      return res.status(400).json({ success: false, error: 'Adresse invalide.' });
+    }
+    const items = await fetchTxHistory(address, network, 25);
+    res.json({ success: true, items });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, res) => {
   try {
     const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
