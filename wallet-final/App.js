@@ -20,6 +20,7 @@ import QRCodeSVG from 'react-native-qrcode-svg';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as localWallet from './lib/wallet';
 
 const { width } = Dimensions.get('window');
 
@@ -516,16 +517,6 @@ export default function App() {
   // fonds s'il perd son appareil ou vide son navigateur.
   const [pendingMnemonic, setPendingMnemonic] = useState(null);
 
-  // Token de session du wallet actif côté serveur (isole ce wallet de celui
-  // des autres clients — voir requireSession dans crypto-wallet/src/routes/wallet.js).
-  // Un ref (et pas juste le state walletSession) pour être lisible immédiatement
-  // dans les callbacks appelés juste après création/import, avant le re-render.
-  const sessionTokenRef = useRef(null);
-  const authHeaders = useCallback((tokenOverride) => {
-    const token = tokenOverride || sessionTokenRef.current;
-    return token ? { ...API_HEADERS, 'x-session-token': token } : API_HEADERS;
-  }, []);
-
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
   const activeNetwork = network === 'bsc'
@@ -635,39 +626,27 @@ export default function App() {
     }
   }, []);
 
-  const refreshPortfolio = useCallback(async (selectedNetwork = network, tokenOverride) => {
+  // Lecture directe des RPC publics — aucune clé nécessaire pour consulter un
+  // solde (donnée publique de la blockchain), donc aucun appel backend ici.
+  const refreshPortfolio = useCallback(async (selectedNetwork = network) => {
     if (!walletAddr) return;
     try {
-      const endpoint = selectedNetwork === 'bsc' ? `${API_BASE}/bsc/info` : `${API_BASE}/info`;
-      const res = await axios.get(endpoint, {
-        timeout: 15000,
-        headers: { ...authHeaders(tokenOverride), 'x-network': selectedNetwork },
-        params: { network: selectedNetwork },
-      });
-      if (!res.data?.success) return;
-
       const nativeSymbol = selectedNetwork === 'bsc' ? 'BNB' : 'ETH';
-      const nativeBalance = parseFloat(res.data.balance || '0');
-      setWalletBalance(res.data.balance || '0');
+      const nativeBalance = await localWallet.getNativeBalance(walletAddr, selectedNetwork);
+      setWalletBalance(nativeBalance);
       setTokens(prev => ({
         ...prev,
-        [nativeSymbol]: { ...prev[nativeSymbol], balance: nativeBalance },
+        [nativeSymbol]: { ...prev[nativeSymbol], balance: parseFloat(nativeBalance) },
       }));
 
       const tokenSymbols = ['USDT', 'USDC'];
       await Promise.all(tokenSymbols.map(async (sym) => {
         try {
-          const tokenRes = await axios.get(`${API_BASE}/erc20/balance/${sym}`, {
-            timeout: 12000,
-            headers: { ...authHeaders(tokenOverride), 'x-network': selectedNetwork },
-            params: { network: selectedNetwork },
-          });
-          if (tokenRes.data?.success) {
-            setTokens(prev => ({
-              ...prev,
-              [sym]: { ...prev[sym], balance: parseFloat(tokenRes.data.balance || '0') },
-            }));
-          }
+          const balance = await localWallet.getErc20Balance(walletAddr, sym, selectedNetwork);
+          setTokens(prev => ({
+            ...prev,
+            [sym]: { ...prev[sym], balance: parseFloat(balance) },
+          }));
         } catch (err) {
           console.warn(`Balance ${sym} failed`, err.message);
         }
@@ -675,35 +654,35 @@ export default function App() {
     } catch (err) {
       console.warn('refreshPortfolio error', err.message);
     }
-  }, [network, walletAddr, authHeaders]);
+  }, [network, walletAddr]);
 
+  // Wallet 100% non-custodial : génération/import/restauration se font en
+  // local avec `lib/wallet.js` — la clé privée et la mnémonique ne quittent
+  // jamais l'appareil, aucun appel réseau vers le backend n'est nécessaire ici.
   const createWallet = useCallback(async () => {
     try {
       setBackendError(null);
-      const res = await axios.post(`${API_BASE}/create`, { network }, { timeout: 15000, headers: API_HEADERS });
-      if (!res.data?.success) throw new Error(res.data?.error || 'Impossible de créer le wallet');
-      sessionTokenRef.current = res.data.sessionToken;
+      const created = localWallet.createLocalWallet();
       const nextSession = {
-        address: res.data.address,
-        mnemonic: res.data.mnemonic,
-        privateKey: res.data.privateKey,
-        sessionToken: res.data.sessionToken,
-        balance: res.data.balance || '0',
+        address: created.address,
+        mnemonic: created.mnemonic,
+        privateKey: created.privateKey,
+        balance: '0',
         network,
         createdAt: Date.now(),
       };
       await saveWalletSession(nextSession);
       setWalletSession(nextSession);
-      setWalletAddr(res.data.address);
-      setWalletBalance(res.data.balance || '0');
+      setWalletAddr(created.address);
+      setWalletBalance('0');
       setWalletCreated(true);
       setBackendReady(true);
-      if (res.data.mnemonic) setPendingMnemonic(res.data.mnemonic);
-      await refreshPortfolio(network, res.data.sessionToken);
+      setPendingMnemonic(created.mnemonic);
+      await refreshPortfolio(network);
       return true;
     } catch (err) {
-      console.error('Backend create failed:', err.message);
-      setBackendError('Impossible de créer le wallet sur le serveur.');
+      console.error('Création wallet locale échouée:', err.message);
+      setBackendError('Impossible de créer le wallet.');
       return false;
     }
   }, [network, refreshPortfolio]);
@@ -716,38 +695,28 @@ export default function App() {
         return false;
       }
 
-      const payload = importType === 'privateKey'
-        ? { privateKey: importValue.trim(), network }
-        : { mnemonic: importValue.trim(), network };
-
-      const res = await axios.post(`${API_BASE}/import`, payload, { timeout: 15000, headers: API_HEADERS });
-      if (!res.data?.success) {
-        throw new Error(res.data?.error || 'Import impossible');
-      }
-
-      sessionTokenRef.current = res.data.sessionToken;
+      const imported = localWallet.importLocalWallet(importValue, importType);
       const nextSession = {
-        address: res.data.address,
-        mnemonic: importType === 'mnemonic' ? importValue.trim() : null,
-        privateKey: importType === 'privateKey' ? importValue.trim() : null,
-        sessionToken: res.data.sessionToken,
-        balance: res.data.balance || '0',
+        address: imported.address,
+        mnemonic: imported.mnemonic,
+        privateKey: imported.privateKey,
+        balance: '0',
         network,
         createdAt: Date.now(),
       };
       await saveWalletSession(nextSession);
       setWalletSession(nextSession);
-      setWalletAddr(res.data.address);
-      setWalletBalance(res.data.balance || '0');
+      setWalletAddr(imported.address);
+      setWalletBalance('0');
       setWalletCreated(true);
       setBackendReady(true);
-      await refreshPortfolio(network, res.data.sessionToken);
+      await refreshPortfolio(network);
       setImportMode(false);
       setImportValue('');
       return true;
     } catch (err) {
-      console.error('Import failed:', err.message);
-      setImportError(err.message || 'Impossible d\'importer le wallet.');
+      console.error('Import local échoué:', err.message);
+      setImportError(err.message || 'Mnémonique ou clé privée invalide.');
       return false;
     }
   }, [importType, importValue, network, refreshPortfolio]);
@@ -756,35 +725,57 @@ export default function App() {
     try {
       setBackendError(null);
       const saved = await loadWalletSession();
-      if (saved?.address && (saved.privateKey || saved.mnemonic)) {
+      if (saved?.address && saved.privateKey) {
+        // Sanity check : la clé privée sauvegardée doit bien redonner la même
+        // adresse (détecte une corruption de stockage plutôt que de signer
+        // silencieusement avec la mauvaise clé).
+        const wallet = localWallet.walletFromPrivateKey(saved.privateKey);
+        if (wallet.address !== saved.address) {
+          throw new Error('Session locale corrompue (adresse incohérente).');
+        }
         setWalletSession(saved);
         setWalletAddr(saved.address);
         setWalletBalance(saved.balance || '0');
-        setBackendReady(true);
-        // Le serveur ne garde les wallets qu'en mémoire (perdus à son redémarrage) :
-        // on réimporte systématiquement pour obtenir une session fraîche.
-        const payload = saved.privateKey ? { privateKey: saved.privateKey, network } : { mnemonic: saved.mnemonic, network };
-        const res = await axios.post(`${API_BASE}/import`, payload, { timeout: 15000, headers: API_HEADERS });
-        if (!res.data?.success) throw new Error(res.data?.error || 'Impossible de restaurer le wallet');
-        sessionTokenRef.current = res.data.sessionToken;
-        const nextSession = { ...saved, sessionToken: res.data.sessionToken, balance: res.data.balance || '0' };
-        await saveWalletSession(nextSession);
-        setWalletSession(nextSession);
-        setWalletAddr(res.data.address);
-        setWalletBalance(res.data.balance || '0');
         setWalletCreated(true);
-        await refreshPortfolio(network, res.data.sessionToken);
+        setBackendReady(true);
+        await refreshPortfolio(network);
         return;
       }
 
       await createWallet();
     } catch (err) {
-      console.error('Backend init failed:', err.message);
-      setBackendError('Impossible de joindre le backend wallet.');
+      console.error('Init wallet échouée:', err.message);
+      setBackendError('Impossible de charger le wallet local.');
     } finally {
       setSessionLoaded(true);
     }
   }, [createWallet, network, refreshPortfolio]);
+
+  // Efface le wallet de cet appareil (clé privée comprise). Irréversible sans
+  // la phrase de récupération — d'où la double confirmation appuyée.
+  const handleLogout = useCallback(() => {
+    showAlert(
+      '⚠️ Déconnexion',
+      'Ça efface le wallet de cet appareil. Sans ta phrase de récupération notée ailleurs, tu ne pourras PAS le récupérer.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Déconnecter',
+          onPress: async () => {
+            await clearWalletSession();
+            setWalletSession(null);
+            setWalletAddr('');
+            setWalletBalance('0');
+            setWalletCreated(false);
+            setBackendReady(false);
+            setIsUnlocked(false);
+            setShowSettings(false);
+            setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
+          },
+        },
+      ]
+    );
+  }, []);
 
   useEffect(() => {
     initWallet();
@@ -1033,8 +1024,9 @@ export default function App() {
         amountUsd: Number(buyAmount),
         tokenSymbol: buyToken,
         network,
+        walletAddress: walletAddr,
         returnUrl: Platform.OS === 'web' ? window.location.origin : `exp://${HOST_OVERRIDE}:8087`,
-      }, { timeout: 20000, headers: authHeaders() });
+      }, { timeout: 20000, headers: API_HEADERS });
 
       if (!res.data?.success || !res.data.url) {
         throw new Error(res.data?.error || 'Impossible de créer la session de paiement.');
@@ -1083,24 +1075,21 @@ export default function App() {
 
     setSendLoading(true);
     try {
-      const path = network === 'bsc'
-        ? `${API_BASE}/bsc/send`
-        : (isNative ? `${API_BASE}/send` : `${API_BASE}/erc20/send`);
-      const body = network === 'bsc'
-        ? { to: sendAddress, amount: sendAmount, network }
-        : (isNative ? { to: sendAddress, amount: sendAmount, network } : {
-            to: sendAddress,
-            amount: sendAmount,
-            symbol: sendToken,
-            network,
-          });
+      // Signature 100% locale — la clé privée ne quitte jamais l'appareil.
+      // Le backend ne reçoit que la transaction déjà signée pour la relayer
+      // au réseau (voir POST /wallet/tx/broadcast), même chemin quel que
+      // soit le réseau (corrige l'ancien bug où USDT/USDC sur BSC étaient
+      // silencieusement envoyés comme du BNB natif).
+      const { rawTx } = isNative
+        ? await localWallet.signNativeTx({ privateKey: walletSession.privateKey, to: sendAddress, amount: sendAmount, network })
+        : await localWallet.signErc20Tx({ privateKey: walletSession.privateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network });
 
-      const response = await axios.post(path, body, { timeout: 25000, headers: authHeaders() });
+      const response = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network }, { timeout: 25000, headers: API_HEADERS });
       if (!response.data?.success) {
         throw new Error(response.data?.error || 'Échec du transfert');
       }
 
-      const txHash = response.data.txHash || response.data.hash;
+      const txHash = response.data.txHash;
       showAlert(
         '✅ Transaction Soumise!',
         `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
@@ -1110,9 +1099,6 @@ export default function App() {
         ]
       );
 
-      if (isNative) {
-        setWalletBalance(response.data.newBalance || walletBalance);
-      }
       await refreshPortfolio(network);
       setShowSend(false);
       setSendAddress('');
@@ -1182,7 +1168,20 @@ export default function App() {
 
         <View style={st.auth_card}>
           <Text style={st.auth_card_title}>Sécurité & réseau</Text>
-          <Text style={st.auth_card_text}>Créer un wallet, l’importer, puis déverrouiller avec le PIN 123456. Les données sont stockées localement et protégées.</Text>
+          <Text style={st.auth_card_text}>
+            Créer un wallet, l'importer, puis déverrouiller avec le PIN 123456.{' '}
+            {Platform.OS === 'web'
+              ? 'Ce wallet ne quitte jamais cet appareil — mais sur navigateur web, le stockage n\'est pas protégé par le matériel comme sur mobile.'
+              : 'Ce wallet ne quitte jamais cet appareil : clé stockée dans le coffre sécurisé du téléphone.'}
+          </Text>
+          {Platform.OS === 'web' && (
+            <View style={[st.warning_box, { marginTop: 12 }]}>
+              <Text style={st.warning_txt}>
+                ⚠️ Version web = démo/pratique. Pour de vrais fonds, préfère l'app mobile (stockage protégé par le matériel).
+                Un navigateur compromis (extension malveillante, faille XSS) pourrait accéder à ta clé.
+              </Text>
+            </View>
+          )}
           <View style={st.network_switch}>
             <TouchableOpacity style={[st.network_chip, network === 'ethereum' && st.network_chip_on]} onPress={() => setNetwork('ethereum')}>
               <Text style={[st.network_chip_txt, network === 'ethereum' && { color: T.text }]}>Ethereum</Text>
@@ -1473,24 +1472,33 @@ export default function App() {
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.green }]} />}
           </TouchableOpacity>
 
-          {!!walletSession?.mnemonic && (
+          {!!walletSession && (
             <>
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
-              <AnimPressable
-                style={st.settings_row}
-                onPress={() => showAlert(
-                  '⚠️ Attention',
-                  'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
-                  [
-                    { text: 'Annuler', style: 'cancel' },
-                    { text: 'Afficher', onPress: () => setPendingMnemonic(walletSession.mnemonic) },
-                  ]
-                )}
-              >
-                <Text style={{ fontSize: 22 }}>🔑</Text>
+              {!!walletSession.mnemonic && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => showAlert(
+                    '⚠️ Attention',
+                    'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
+                    [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Afficher', onPress: () => setPendingMnemonic(walletSession.mnemonic) },
+                    ]
+                  )}
+                >
+                  <Text style={{ fontSize: 22 }}>🔑</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Afficher ma phrase de récupération</Text>
+                    <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                  </View>
+                </AnimPressable>
+              )}
+              <AnimPressable style={st.settings_row} onPress={handleLogout}>
+                <Text style={{ fontSize: 22 }}>🚪</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={st.settings_row_title}>Afficher ma phrase de récupération</Text>
-                  <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                  <Text style={[st.settings_row_title, { color: T.red }]}>Déconnexion</Text>
+                  <Text style={st.settings_row_sub}>Efface le wallet de cet appareil</Text>
                 </View>
               </AnimPressable>
             </>

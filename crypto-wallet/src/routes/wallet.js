@@ -136,18 +136,24 @@ function getNetworkConfig(network = 'ethereum') {
   return NETWORKS[normalizeNetwork(network)] || NETWORKS.ethereum;
 }
 
+// Adresses vérifiées sur Etherscan/BscScan — une seule adresse par (réseau,
+// token). Ne jamais modifier sans revérifier sur l'explorateur officiel :
+// une erreur ici fait perdre des fonds. Même config que côté client
+// (wallet-final/lib/wallet.js), gardée synchronisée à la main.
 const ERC20_TOKENS = {
-  USDC: {
-    symbol: 'USDC',
-    address: process.env.USDC_CONTRACT_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    decimals: 6,
+  ethereum: {
+    USDC: { symbol: 'USDC', address: process.env.USDC_CONTRACT_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+    USDT: { symbol: 'USDT', address: process.env.USDT_CONTRACT_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
   },
-  USDT: {
-    symbol: 'USDT',
-    address: process.env.USDT_CONTRACT_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-    decimals: 6,
+  bsc: {
+    USDC: { symbol: 'USDC', address: process.env.USDC_BSC_CONTRACT_ADDRESS || '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 },
+    USDT: { symbol: 'USDT', address: process.env.USDT_BSC_CONTRACT_ADDRESS || '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
   },
 };
+
+function getErc20Token(symbol, network = 'ethereum') {
+  return ERC20_TOKENS[normalizeNetwork(network)]?.[symbol?.toUpperCase()] || null;
+}
 
 const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
@@ -401,7 +407,7 @@ router.post('/import', sensitiveLimiter, async (req, res) => {
 router.get('/erc20/balance/:symbol', requireSession, async (req, res) => {
   try {
     const network = (req.query.network || 'sepolia').toLowerCase();
-    const token = ERC20_TOKENS[req.params.symbol?.toUpperCase()];
+    const token = getErc20Token(req.params.symbol, network);
     if (!token?.address) {
       return res.status(400).json({ success: false, error: 'Token ERC20 non configuré.' });
     }
@@ -422,7 +428,7 @@ router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) =>
   const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
   if (!to || !amount || !symbol) return res.status(400).json({ success: false, error: 'Paramètres manquants.' });
 
-  const token = ERC20_TOKENS[symbol.toUpperCase()];
+  const token = getErc20Token(symbol, network);
   if (!token?.address) {
     return res.status(400).json({ success: false, error: 'Token ERC20 non configuré pour l\'envoi.' });
   }
@@ -517,11 +523,14 @@ router.get('/news', async (req, res) => {
   }
 });
 
-router.post('/payments/create-checkout-session', sensitiveLimiter, requireSession, async (req, res) => {
+router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, res) => {
   try {
-    const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl } = req.body;
+    const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
     if (!amountUsd || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
+    }
+    if (PAYMENT_PROVIDER === 'moonpay' && !ethers.utils.isAddress(walletAddress || '')) {
+      return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
     }
 
     const intAmount = Math.round(parseFloat(amountUsd) * 100);
@@ -557,7 +566,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, requireSessio
       }
       const url = buildMoonPayUrl({
         currencyCode,
-        walletAddress: req.walletSession.wallet.address,
+        walletAddress,
         baseCurrencyAmount: (intAmount / 100).toFixed(2),
         redirectURL: frontendBase,
       });
@@ -690,6 +699,24 @@ router.post('/send', sensitiveLimiter, requireSession, async (req, res) => {
 
 router.post('/bsc/send', sensitiveLimiter, requireSession, async (req, res) => {
   return sendNative(req, res, 'bsc');
+});
+
+// Relais de diffusion — wallet non-custodial : reçoit une transaction DÉJÀ
+// signée côté client (jamais de clé privée ici) et la relaie telle quelle au
+// réseau. Cette route ne construit ni ne signe rien ; une transaction signée
+// est de toute façon une donnée publique dès l'instant où elle est diffusée.
+router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
+  try {
+    const { rawTx, network = 'ethereum' } = req.body;
+    if (!rawTx || typeof rawTx !== 'string') {
+      return res.status(400).json({ success: false, error: 'Transaction signée (rawTx) requise.' });
+    }
+    const transactionResponse = await getProvider(network).sendTransaction(rawTx);
+    res.json({ success: true, txHash: transactionResponse.hash, network });
+  } catch (error) {
+    console.error('Broadcast error:', error);
+    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction impossible.' });
+  }
 });
 
 module.exports = router;
