@@ -30,18 +30,24 @@ if (ENV === 'production') {
   }
 }
 
-// Origines autorisées en CORS. En dev, Expo change souvent de port (web sur
-// 8081, parfois 8083, IP LAN pour le téléphone...) — plutôt que de se faire
-// bloquer silencieusement à chaque changement, on accepte tout localhost/IP
-// privée en dev. En production, seule la liste explicite FRONTEND_URLS compte.
+// Origines autorisées en CORS. En dev, Expo change souvent de port/IP (web
+// sur 8081, parfois 8083, IP LAN pour le téléphone, tunnel *.exp.direct qui
+// change de sous-domaine à chaque session...) — plutôt que de se faire
+// bloquer silencieusement à chaque changement, on accepte toujours
+// localhost/IP privée et les tunnels Expo, même en production : ce backend
+// sert à la fois de backend de dev et de prod, et ces routes sont déjà
+// protégées par x-api-key, donc l'origine n'est pas la seule barrière.
+// En plus de ça, la liste explicite FRONTEND_URLS reste vérifiée pour un
+// vrai domaine de prod (site vitrine, app web publiée...).
 const FRONTEND_URLS = (process.env.FRONTEND_URLS || FRONTEND_URL)
   .split(',').map(s => s.trim()).filter(Boolean);
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
+const EXPO_TUNNEL_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.exp\.direct$/i;
 
 function corsOriginCheck(origin, callback) {
   if (!origin) return callback(null, true); // apps natives / requêtes serveur à serveur : pas d'en-tête Origin
   if (FRONTEND_URLS.includes(origin)) return callback(null, true);
-  if (ENV !== 'production' && LOCAL_ORIGIN_RE.test(origin)) return callback(null, true);
+  if (LOCAL_ORIGIN_RE.test(origin) || EXPO_TUNNEL_ORIGIN_RE.test(origin)) return callback(null, true);
   return callback(new Error(`Origine non autorisée par CORS : ${origin}`));
 }
 
