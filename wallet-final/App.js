@@ -1919,6 +1919,8 @@ export default function App() {
     setFavorites(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]);
   }, []);
 
+  const clearAllFavorites = useCallback(() => setFavorites([]), []);
+
   // Vérifie une seule fois au montage si un PIN biométrique est déjà
   // enregistré sur cet appareil (natif uniquement).
   useEffect(() => {
@@ -3785,6 +3787,29 @@ export default function App() {
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.green }]} />}
           </TouchableOpacity>
 
+          {!!favorites.length && (
+            <>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>⭐ Favoris</Text>
+              <AnimPressable
+                style={st.settings_row}
+                onPress={() => showAlert(
+                  'Vider les favoris ?',
+                  `Retire ${favorites.length} crypto${favorites.length > 1 ? 's' : ''} de tes favoris.`,
+                  [
+                    { text: 'Annuler', style: 'cancel' },
+                    { text: 'Vider', style: 'destructive', onPress: clearAllFavorites },
+                  ]
+                )}
+              >
+                <Text style={{ fontSize: 22 }}>🗑️</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Vider mes favoris</Text>
+                  <Text style={st.settings_row_sub}>{favorites.length} crypto{favorites.length > 1 ? 's' : ''} épinglée{favorites.length > 1 ? 's' : ''}</Text>
+                </View>
+              </AnimPressable>
+            </>
+          )}
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 Tokens</Text>
           {customTokens.filter(t => t.network === network).map(t => (
             <View key={t.address} style={[st.settings_row, { justifyContent: 'space-between' }]}>
@@ -4153,7 +4178,9 @@ export default function App() {
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.market_filter_row}>
         <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
-          <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>⭐ Favoris</Text>
+          <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>
+            ⭐ Favoris{favorites.length ? ` (${favorites.length})` : ''}
+          </Text>
         </TouchableOpacity>
         <View style={st.market_filter_sep} />
         {[
