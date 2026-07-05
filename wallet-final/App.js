@@ -144,6 +144,16 @@ Pour toute question, un formulaire ou une adresse de contact sera ajouté procha
   },
 };
 
+// Mini-onboarding affiché une seule fois, juste après qu'un NOUVEAU wallet
+// (pas un import) a confirmé avoir noté sa phrase de récupération — le
+// moment où l'utilisateur vient de tout mettre en place et est le plus
+// réceptif avant de découvrir l'app par lui-même.
+const ONBOARDING_SLIDES = [
+  { icon: '🔐', title: 'Tes clés, tes cryptos', desc: "Ta clé privée est chiffrée uniquement sur cet appareil. Personne d'autre — pas même nous — n'y a accès." },
+  { icon: '📤', title: 'Envoie et reçois', desc: 'Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum et BNB Smart Chain.' },
+  { icon: '💳', title: 'Achète et échange', desc: "Achète par carte via MoonPay, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app." },
+];
+
 // FAQ affichée sur la landing — questions réellement posées par les
 // premiers testeurs (phrase de récupération, non-custodial, réseaux).
 const LANDING_FAQ = [
@@ -1222,6 +1232,9 @@ export default function App() {
   const [labelInput, setLabelInput]             = useState('');
   const [calcAmount, setCalcAmount]             = useState(''); // calculatrice rapide sur la fiche Marché
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [showOnboarding, setShowOnboarding]     = useState(false);
+  const [onboardingStep, setOnboardingStep]     = useState(0);
+  const [isFirstTimeMnemonicBackup, setIsFirstTimeMnemonicBackup] = useState(false);
   // Scan QR : natif uniquement (caméra). Sur web, on propose "Coller" à la
   // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
   // pur serait un chantier à part, hors scope de ce passage).
@@ -1535,6 +1548,7 @@ export default function App() {
       setIsUnlocked(true);
       if (!pendingWalletForPin.isImport && !pendingWalletForPin.isMigration) {
         setPendingMnemonic(pendingWalletForPin.mnemonic);
+        setIsFirstTimeMnemonicBackup(true);
       }
       if (pendingWalletForPin.isImport) { setImportMode(false); setImportValue(''); }
       await refreshPortfolio(network);
@@ -2506,7 +2520,17 @@ export default function App() {
                 </View>
               ))}
             </View>
-            <AnimPressable style={[st.green_btn, { marginTop: 24 }]} onPress={() => setPendingMnemonic(null)}>
+            <AnimPressable
+              style={[st.green_btn, { marginTop: 24 }]}
+              onPress={() => {
+                setPendingMnemonic(null);
+                if (isFirstTimeMnemonicBackup) {
+                  setIsFirstTimeMnemonicBackup(false);
+                  setOnboardingStep(0);
+                  setShowOnboarding(true);
+                }
+              }}
+            >
               <Text style={st.green_btn_txt}>✅ Je l'ai notée en lieu sûr</Text>
             </AnimPressable>
           </ScrollView>
@@ -3531,6 +3555,42 @@ export default function App() {
   };
 
   // ════════════════════════════════════════════════════════
+  //  MODAL: ONBOARDING (3 écrans, une seule fois après création)
+  // ════════════════════════════════════════════════════════
+  const renderOnboarding = () => {
+    if (!showOnboarding) return null;
+    const slide = ONBOARDING_SLIDES[onboardingStep];
+    const isLast = onboardingStep === ONBOARDING_SLIDES.length - 1;
+    return (
+      <Modal visible transparent animationType="fade">
+        <View style={st.onboarding_overlay}>
+          <View style={st.onboarding_card}>
+            <Text style={st.onboarding_icon}>{slide.icon}</Text>
+            <Text style={st.onboarding_title}>{slide.title}</Text>
+            <Text style={st.onboarding_desc}>{slide.desc}</Text>
+            <View style={st.onboarding_dots}>
+              {ONBOARDING_SLIDES.map((_, i) => (
+                <View key={i} style={[st.onboarding_dot, i === onboardingStep && st.onboarding_dot_on]} />
+              ))}
+            </View>
+            <AnimPressable
+              style={[st.green_btn, { marginTop: 20, width: '100%' }]}
+              onPress={() => (isLast ? setShowOnboarding(false) : setOnboardingStep(s => s + 1))}
+            >
+              <Text style={st.green_btn_txt}>{isLast ? 'Commencer' : 'Suivant'}</Text>
+            </AnimPressable>
+            {!isLast && (
+              <TouchableOpacity onPress={() => setShowOnboarding(false)} style={{ marginTop: 14 }}>
+                <Text style={{ color: T.text3, fontSize: 13 }}>Passer</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════
   //  MODAL: PARAMÈTRES
   // ════════════════════════════════════════════════════════
   const renderSettings = () => (
@@ -3631,7 +3691,7 @@ export default function App() {
                     'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
                     [
                       { text: 'Annuler', style: 'cancel' },
-                      { text: 'Afficher', onPress: () => setPendingMnemonic(unlockedMnemonic) },
+                      { text: 'Afficher', onPress: () => { setIsFirstTimeMnemonicBackup(false); setPendingMnemonic(unlockedMnemonic); } },
                     ]
                   )}
                 >
@@ -4235,6 +4295,7 @@ export default function App() {
       {renderSettings()}
       {renderLegal()}
       {renderMnemonicBackup()}
+      {renderOnboarding()}
       <ToastBanner toast={toast} />
     </SafeAreaView>
   );
@@ -4606,6 +4667,14 @@ const st = StyleSheet.create({
   land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
   land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
 
+  onboarding_overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  onboarding_card:    { backgroundColor: T.card, borderRadius: 20, borderWidth: 1, borderColor: T.border, padding: 28, width: '100%', maxWidth: 380, alignItems: 'center' },
+  onboarding_icon:    { fontSize: 48, marginBottom: 16 },
+  onboarding_title:   { color: T.text, fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 10 },
+  onboarding_desc:    { color: T.text2, fontSize: 14, lineHeight: 21, textAlign: 'center' },
+  onboarding_dots:    { flexDirection: 'row', marginTop: 20, gap: 6 },
+  onboarding_dot:     { width: 6, height: 6, borderRadius: 3, backgroundColor: T.border },
+  onboarding_dot_on:  { backgroundColor: T.green, width: 18 },
   calc_card:      { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 16, marginBottom: 20 },
   calc_sym:       { color: T.text2, fontWeight: 'bold', fontSize: 13, marginLeft: 10 },
   calc_result:    { color: T.green, fontSize: 18, fontWeight: 'bold', marginTop: 10 },
