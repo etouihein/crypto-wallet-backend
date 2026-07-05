@@ -2324,7 +2324,7 @@ export default function App() {
     if (!sendAddress || !sendAmount) { showAlert('Champs manquants'); return; }
 
     if (!sendAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-      showAlert('Adresse invalide', 'Doit commencer par 0x et avoir 40 hex chars');
+      showAlert('Adresse invalide', 'Doit commencer par 0x et contenir 40 caractères hexadécimaux.');
       return;
     }
 
