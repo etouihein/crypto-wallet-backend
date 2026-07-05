@@ -3865,6 +3865,16 @@ export default function App() {
         </View>
       )}
 
+      {favoritesLoaded && !favorites.length && (
+        <TouchableOpacity style={st.favorites_hint} onPress={() => setTab('markets')} activeOpacity={0.8}>
+          <Text style={st.favorites_hint_icon}>⭐</Text>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={st.favorites_hint_title}>Épingle tes cryptos préférées</Text>
+            <Text style={st.favorites_hint_desc}>Va dans Marché et appuie sur l'étoile pour les retrouver ici.</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+
       {!!favoriteMarketCoins.length && (
         <>
           <View style={st.section_hdr}>
@@ -4548,6 +4558,10 @@ const st = StyleSheet.create({
   warning_box:     { backgroundColor: T.redBg, borderRadius: 12, padding: 14, marginTop: 20, width: '100%', borderWidth: 1, borderColor: T.red + '44' },
   warning_txt:     { color: T.text2, fontSize: 12, lineHeight: 18 },
   diversif_card:   { backgroundColor: T.orangeBg, borderRadius: 12, padding: 14, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderColor: T.orange + '44' },
+  favorites_hint:      { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 16, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: T.border },
+  favorites_hint_icon: { fontSize: 26 },
+  favorites_hint_title:{ color: T.text, fontSize: 13, fontWeight: '700' },
+  favorites_hint_desc: { color: T.text2, fontSize: 12, marginTop: 3 },
   diversif_txt:    { color: T.text2, fontSize: 12, lineHeight: 18 },
 
   history_row:    { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: T.border },
