@@ -401,6 +401,24 @@ const savePortfolioHistory = async (list) => {
   try { await AsyncStorage.setItem(PORTFOLIO_HISTORY_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
 
+// Étiquettes locales sur les transactions (Perso/Pro/Cadeau) — juste un
+// classement personnel affiché et exporté en CSV, aucune donnée envoyée
+// nulle part (la transaction elle-même est déjà publique sur la blockchain).
+const TX_TAGS_KEY = 'wallet-pro-tx-tags-v1';
+const TX_TAG_OPTIONS = ['Perso', 'Pro', 'Cadeau'];
+
+const loadTxTags = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(TX_TAGS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+};
+
+const saveTxTags = async (map) => {
+  try { await AsyncStorage.setItem(TX_TAGS_KEY, JSON.stringify(map)); } catch { /* rien à faire */ }
+};
+
 // Vibration au déclenchement d'une alerte de prix — activée par défaut,
 // désactivable dans Paramètres. `Vibration.vibrate` de react-native-web ne
 // fait rien si `navigator.vibrate` est absent (desktop), donc pas besoin de
@@ -1224,6 +1242,9 @@ export default function App() {
   const [showBuy, setShowBuy]             = useState(false);
   const [showReceive, setShowReceive]     = useState(false);
   const [showHistory, setShowHistory]     = useState(false);
+  const [showStats, setShowStats]         = useState(false);
+  const [showImportData, setShowImportData] = useState(false);
+  const [importDataText, setImportDataText] = useState('');
   const [historyItems, setHistoryItems]   = useState(null); // null = pas encore chargé, [] = chargé et vide
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilterSymbol, setHistoryFilterSymbol] = useState('ALL');
@@ -1235,6 +1256,10 @@ export default function App() {
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
   const [sendAmount, setSendAmount]       = useState('');
+  const [sendAmountMode, setSendAmountMode] = useState('crypto'); // 'crypto' | 'fiat' — sendAmount (en crypto) reste la seule source de vérité pour l'envoi
+  const [sendAmountFiatInput, setSendAmountFiatInput] = useState('');
+  const [receiveAmount, setReceiveAmount]       = useState(''); // demande de paiement (en token natif) sur l'écran Recevoir
+  const [txTags, setTxTags]                     = useState({}); // { [hash]: 'Perso' | 'Pro' | 'Cadeau' }
   const [sendLoading, setSendLoading]     = useState(false);
   const [swapFrom, setSwapFrom]           = useState('ETH');
   const [swapTo, setSwapTo]               = useState('USDT');
@@ -1327,6 +1352,37 @@ export default function App() {
       await copyToClipboard(shareUrl, 'Lien copié dans le presse-papiers');
     }
   }, [copyToClipboard]);
+
+  // Bip succès/échec via Web Audio API — web uniquement. Sur natif, la
+  // vibration déjà en place (voir toggle "Sons et vibrations" dans
+  // Paramètres) sert le même rôle de feedback ; ajouter une vraie lib audio
+  // (expo-av) juste pour deux bips serait disproportionné. Reste silencieux
+  // sans lever d'erreur si l'API n'existe pas (vieux navigateur, SSR...).
+  const playTone = useCallback((type) => {
+    if (!vibrationEnabled || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (type === 'success') {
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.exponentialRampToValueAtTime(1320, now + 0.15);
+      } else {
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.exponentialRampToValueAtTime(140, now + 0.25);
+      }
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (type === 'success' ? 0.25 : 0.35));
+      osc.start(now);
+      osc.stop(now + (type === 'success' ? 0.26 : 0.36));
+      osc.onended = () => ctx.close();
+    } catch { /* pas grave, retour silencieux */ }
+  }, [vibrationEnabled]);
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
@@ -1533,6 +1589,10 @@ export default function App() {
     }
   }, [showHistory, fetchHistory]);
 
+  useEffect(() => {
+    if (showStats && historyItems === null) fetchHistory();
+  }, [showStats, historyItems, fetchHistory]);
+
   // Export CSV via presse-papier plutôt qu'un vrai fichier — expo-file-system
   // n'est pas installé et rajouter une dépendance juste pour ça serait
   // disproportionné ; coller dans Excel/Sheets marche très bien avec du texte
@@ -1540,7 +1600,7 @@ export default function App() {
   const exportHistoryCsv = useCallback(async (items) => {
     if (!items.length) return;
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['Date', 'Type', 'Direction', 'Montant', 'Symbole', 'De', 'Vers', 'Hash', 'Statut'].map(esc).join(',');
+    const header = ['Date', 'Type', 'Direction', 'Montant', 'Symbole', 'De', 'Vers', 'Hash', 'Statut', 'Catégorie'].map(esc).join(',');
     const rows = items.map(item => [
       new Date(item.timestamp).toISOString(),
       item.type,
@@ -1551,9 +1611,44 @@ export default function App() {
       item.to,
       item.hash,
       item.failed ? 'Échoué' : 'Réussi',
+      txTags[item.hash] || '',
     ].map(esc).join(','));
     await copyToClipboard([header, ...rows].join('\n'), `${items.length} transaction(s) copiées en CSV`);
-  }, [copyToClipboard]);
+  }, [copyToClipboard, txTags]);
+
+  // Migration entre appareils : favoris, carnet d'adresses, alertes de prix
+  // et étiquettes -- rien de sensible (aucune clé, aucune donnée privée),
+  // copié en JSON via le presse-papier plutôt qu'un vrai fichier (même choix
+  // que l'export CSV, pas de expo-file-system installé).
+  const exportUserData = useCallback(async () => {
+    const payload = { version: 1, favorites, recentAddresses, priceAlerts, txTags };
+    await copyToClipboard(JSON.stringify(payload), 'Données copiées — colle-les sur le nouvel appareil');
+  }, [favorites, recentAddresses, priceAlerts, txTags, copyToClipboard]);
+
+  const importUserData = useCallback((text) => {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { showToast('JSON invalide', 'error'); return false; }
+    if (!parsed || typeof parsed !== 'object') { showToast('JSON invalide', 'error'); return false; }
+    if (Array.isArray(parsed.favorites)) { setFavorites(parsed.favorites); saveFavorites(parsed.favorites); }
+    if (Array.isArray(parsed.recentAddresses)) { setRecentAddresses(parsed.recentAddresses); saveRecentAddresses(parsed.recentAddresses); }
+    if (Array.isArray(parsed.priceAlerts)) { setPriceAlerts(parsed.priceAlerts); savePriceAlerts(parsed.priceAlerts); }
+    if (parsed.txTags && typeof parsed.txTags === 'object') { setTxTags(parsed.txTags); saveTxTags(parsed.txTags); }
+    showToast('✓ Données importées', 'success');
+    return true;
+  }, [showToast]);
+
+  // Cycle Perso -> Pro -> Cadeau -> (aucune) à chaque tap, pour rester une
+  // interaction en un geste plutôt qu'un picker à ouvrir/fermer.
+  const cycleTxTag = useCallback((hash) => {
+    setTxTags(prev => {
+      const idx = TX_TAG_OPTIONS.indexOf(prev[hash]);
+      const next = idx === -1 ? TX_TAG_OPTIONS[0] : (idx === TX_TAG_OPTIONS.length - 1 ? null : TX_TAG_OPTIONS[idx + 1]);
+      const updated = { ...prev };
+      if (next) updated[hash] = next; else delete updated[hash];
+      saveTxTags(updated);
+      return updated;
+    });
+  }, []);
 
   // Wallet 100% non-custodial : génération/import/restauration se font en
   // local avec `lib/wallet.js` — la clé privée et la mnémonique ne quittent
@@ -1771,6 +1866,7 @@ export default function App() {
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
     loadPortfolioHistory().then(list => { setPortfolioHistory(list); setPortfolioHistoryLoaded(true); });
+    loadTxTags().then(setTxTags);
     loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
   }, []);
 
@@ -2470,6 +2566,7 @@ export default function App() {
       }
 
       const txHash = response.data.txHash;
+      playTone('success');
       showAlert(
         '✅ Transaction Soumise!',
         `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
@@ -2488,6 +2585,7 @@ export default function App() {
       setSendFeeEstimate(null);
       fetchMarket();
     } catch (e) {
+      playTone('error');
       showAlert('❌ Erreur', e.message || 'Transaction échouée');
     }
     setSendLoading(false);
@@ -2577,6 +2675,7 @@ export default function App() {
       }
 
       const txHash = swapResp.data.txHash;
+      playTone('success');
       showAlert(
         '✅ Swap Soumis !',
         `${swapAmt} ${swapFrom} → ${swapTo}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
@@ -2587,6 +2686,7 @@ export default function App() {
       setSwapAmt('');
       fetchMarket();
     } catch (e) {
+      playTone('error');
       showAlert('❌ Erreur', e.message || 'Swap échoué');
     }
     setSwapLoading(false);
@@ -3336,7 +3436,36 @@ export default function App() {
     );
   };
 
-  const closeSend = () => { setShowSend(false); setSendStep('form'); setSendFeeEstimate(null); };
+  const closeSend = () => { setShowSend(false); setSendStep('form'); setSendFeeEstimate(null); setSendAmountMode('crypto'); setSendAmountFiatInput(''); };
+
+  // `sendAmount` (en crypto) reste la seule valeur utilisée par prepareSend/
+  // confirmAndSend — le mode "devise" n'est qu'un affichage alternatif de
+  // saisie qui reconvertit immédiatement vers la crypto sous-jacente.
+  const setSendCryptoAmount = (cryptoStr) => {
+    setSendAmount(cryptoStr);
+    if (sendAmountMode === 'fiat') {
+      const price = tokens[sendToken]?.price || 0;
+      const fiatVal = (parseFloat(cryptoStr) || 0) * price * fxRate;
+      setSendAmountFiatInput(fiatVal ? fiatVal.toFixed(2) : '');
+    }
+  };
+  const setSendFiatAmount = (fiatStr) => {
+    setSendAmountFiatInput(fiatStr);
+    const price = tokens[sendToken]?.price || 0;
+    const fiatNum = parseFloat(fiatStr) || 0;
+    const cryptoVal = (price > 0 && fxRate > 0) ? (fiatNum / fxRate) / price : 0;
+    setSendAmount(cryptoVal ? String(cryptoVal) : '');
+  };
+  const toggleSendAmountMode = () => {
+    if (sendAmountMode === 'crypto') {
+      const price = tokens[sendToken]?.price || 0;
+      const fiatVal = (parseFloat(sendAmount) || 0) * price * fxRate;
+      setSendAmountFiatInput(fiatVal ? fiatVal.toFixed(2) : '');
+      setSendAmountMode('fiat');
+    } else {
+      setSendAmountMode('crypto');
+    }
+  };
 
   const renderQrScanner = () => (
     <Modal visible={showQrScanner} animationType="slide">
@@ -3524,14 +3653,29 @@ export default function App() {
               </View>
             )}
 
-            <Text style={st.form_label}>Montant</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={st.form_label}>Montant</Text>
+              <TouchableOpacity onPress={toggleSendAmountMode} accessibilityRole="button" accessibilityLabel="Basculer entre montant en crypto et en devise">
+                <Text style={st.amount_mode_toggle}>
+                  {sendAmountMode === 'crypto' ? `Saisir en ${currency} ⇄` : `Saisir en ${sendToken} ⇄`}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <View style={{ flexDirection: 'row' }}>
-              <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendAmount}
-                placeholder="0.00" placeholderTextColor={T.text3} keyboardType="numeric" />
-              <TouchableOpacity style={st.max_btn} onPress={() => setSendAmount(String(tokens[sendToken]?.balance || 0))}>
+              {sendAmountMode === 'fiat' ? (
+                <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmountFiatInput} onChangeText={setSendFiatAmount}
+                  placeholder={`0.00 ${symC}`} placeholderTextColor={T.text3} keyboardType="numeric" />
+              ) : (
+                <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendCryptoAmount}
+                  placeholder="0.00" placeholderTextColor={T.text3} keyboardType="numeric" />
+              )}
+              <TouchableOpacity style={st.max_btn} onPress={() => setSendCryptoAmount(String(tokens[sendToken]?.balance || 0))}>
                 <Text style={st.max_btn_txt}>MAX</Text>
               </TouchableOpacity>
             </View>
+            {sendAmountMode === 'fiat' && !!sendAmount && (
+              <Text style={{ color: T.text3, fontSize: 11, marginTop: 6 }}>≈ {sendAmount} {sendToken}</Text>
+            )}
             {(() => {
               const sendableBalance = (sendToken === nativeSymbol)
                 ? parseFloat(walletBalance || '0')
@@ -3543,7 +3687,7 @@ export default function App() {
                     <TouchableOpacity
                       key={pct}
                       style={st.quick_pct_btn}
-                      onPress={() => setSendAmount(String(sendableBalance * pct))}
+                      onPress={() => setSendCryptoAmount(String(sendableBalance * pct))}
                     >
                       <Text style={st.quick_pct_txt}>{pct * 100}%</Text>
                     </TouchableOpacity>
@@ -3578,7 +3722,23 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   //  MODAL: RECEVOIR
   // ════════════════════════════════════════════════════════
-  const renderReceive = () => (
+  const renderReceive = () => {
+    // Format EIP-681 (largement reconnu par les wallets Ethereum) : encoder
+    // un montant dans le QR quand renseigné, pour une vraie "demande de
+    // paiement" plutôt que juste l'adresse brute. Montant en token natif
+    // uniquement (ETH/BNB) — encoder un montant de token ERC20 demanderait
+    // un URI beaucoup plus complexe (appel de contrat transfer()).
+    const amt = parseFloat(receiveAmount);
+    let qrValue = walletAddr;
+    let paymentUri = null;
+    if (walletAddr && amt > 0) {
+      try {
+        const wei = ethers.utils.parseEther(receiveAmount).toString();
+        paymentUri = `ethereum:${walletAddr}@${activeNetwork.chainId}?value=${wei}`;
+        qrValue = paymentUri;
+      } catch { /* montant invalide, on garde juste l'adresse */ }
+    }
+    return (
     <Modal visible={showReceive} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
@@ -3592,7 +3752,7 @@ export default function App() {
           <View style={st.network_badge}>
             <Text style={{ color: T.blue, fontSize: 11 }}>EVM Compatible • Ethereum, Polygon, BNB…</Text>
           </View>
-          <View style={st.qr_wrap}><QRCodeMock address={walletAddr} /></View>
+          <View style={st.qr_wrap}><QRCodeMock address={qrValue} /></View>
           <Text style={st.receive_title}>Adresse Publique</Text>
           <View style={st.receive_addr_box}>
             <Text style={st.receive_addr} selectable>{walletAddr}</Text>
@@ -3600,13 +3760,37 @@ export default function App() {
           <AnimPressable style={st.green_btn} onPress={() => copyToClipboard(walletAddr, 'Adresse copiée')}>
             <Text style={st.green_btn_txt}>📋 Copier</Text>
           </AnimPressable>
+
+          <View style={{ width: '100%', marginTop: 20 }}>
+            <Text style={st.form_label}>Demander un montant précis (optionnel)</Text>
+            <TextInput
+              style={st.form_input}
+              value={receiveAmount}
+              onChangeText={setReceiveAmount}
+              placeholder={`0.00 ${nativeSymbol}`}
+              placeholderTextColor={T.text3}
+              keyboardType="numeric"
+            />
+            {!!paymentUri && (
+              <>
+                <Text style={{ color: T.text3, fontSize: 11, marginBottom: 10 }}>
+                  Le QR ci-dessus encode maintenant {receiveAmount} {nativeSymbol} — un wallet compatible (dont NexiaWallet) pré-remplira le montant en scannant.
+                </Text>
+                <AnimPressable style={[st.green_btn, { backgroundColor: T.card2 }]} onPress={() => copyToClipboard(paymentUri, 'Lien de demande copié')}>
+                  <Text style={[st.green_btn_txt, { color: T.text }]}>🔗 Copier le lien de demande</Text>
+                </AnimPressable>
+              </>
+            )}
+          </View>
+
           <View style={st.warning_box}>
             <Text style={st.warning_txt}>⚠️ Réseau réel principal. Les transactions sont diffusées sur la blockchain.</Text>
           </View>
         </ScrollView>
       </SafeAreaView>
     </Modal>
-  );
+    );
+  };
 
   // ════════════════════════════════════════════════════════
   //  MODAL: ACTIVITÉ (historique — données publiques Etherscan)
@@ -3690,6 +3874,15 @@ export default function App() {
                       {new Date(item.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       {' • '}{(isOut ? item.to : item.from)?.slice(0, 6)}…{(isOut ? item.to : item.from)?.slice(-4)}
                     </Text>
+                    <TouchableOpacity
+                      onPress={(e) => { e.stopPropagation?.(); cycleTxTag(item.hash); }}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      style={{ alignSelf: 'flex-start', marginTop: 4 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Changer la catégorie de cette transaction"
+                    >
+                      <Text style={st.tx_tag_chip}>🏷️ {txTags[item.hash] || 'Étiqueter'}</Text>
+                    </TouchableOpacity>
                   </View>
                   <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.red : T.green) }]}>
                     {isOut ? '-' : '+'}{parseFloat(item.amount).toFixed(5)} {item.symbol}
@@ -3708,6 +3901,72 @@ export default function App() {
       </SafeAreaView>
     </Modal>
   );
+
+  // ════════════════════════════════════════════════════════
+  //  MODAL: MES STATS
+  // ════════════════════════════════════════════════════════
+  // Calculées à partir des mêmes données que l'écran Activité (dernières
+  // transactions renvoyées par Etherscan pour le réseau actif) — pas un vrai
+  // total "depuis toujours" toutes chaînes confondues, on le dit clairement
+  // pour ne pas laisser croire à une exhaustivité qu'on n'a pas.
+  const renderStats = () => {
+    const items = historyItems || [];
+    const sentCount = items.filter(i => i.direction === 'out').length;
+    const receivedCount = items.length - sentCount;
+    const totalFeesWei = items
+      .filter(i => i.direction === 'out' && i.feeWei)
+      .reduce((sum, i) => sum + BigInt(i.feeWei), BigInt(0));
+    const totalFeesNative = ethers.utils.formatEther(totalFeesWei.toString());
+    const memberSince = walletSession?.createdAt
+      ? new Date(walletSession.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+      : null;
+
+    return (
+      <Modal visible={showStats} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setShowStats(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Mes stats</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            {!!memberSince && (
+              <View style={st.stats_card}>
+                <Text style={st.stats_card_lbl}>Wallet créé le</Text>
+                <Text style={st.stats_card_val}>{memberSince}</Text>
+              </View>
+            )}
+
+            {historyLoading ? (
+              <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.green} /></View>
+            ) : (
+              <>
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                  <View style={[st.stats_card, { flex: 1 }]}>
+                    <Text style={st.stats_card_lbl}>Envoyées</Text>
+                    <Text style={st.stats_card_val}>{sentCount}</Text>
+                  </View>
+                  <View style={[st.stats_card, { flex: 1 }]}>
+                    <Text style={st.stats_card_lbl}>Reçues</Text>
+                    <Text style={st.stats_card_val}>{receivedCount}</Text>
+                  </View>
+                </View>
+                <View style={[st.stats_card, { marginTop: 12 }]}>
+                  <Text style={st.stats_card_lbl}>Frais de réseau payés</Text>
+                  <Text style={st.stats_card_val}>{parseFloat(totalFeesNative).toFixed(6)} {nativeSymbol}</Text>
+                </View>
+                <Text style={{ color: T.text3, fontSize: 11, marginTop: 16, textAlign: 'center' }}>
+                  Basé sur les {items.length} dernières transactions sur {activeNetwork.label} — pas un historique complet toutes chaînes confondues.
+                </Text>
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
 
   // ════════════════════════════════════════════════════════
   //  MODAL: DOCUMENT LÉGAL (CGU / Confidentialité / Mentions légales)
@@ -3949,8 +4208,8 @@ export default function App() {
           >
             <Text style={{ fontSize: 22 }}>📳</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Vibration sur alerte de prix</Text>
-              <Text style={st.settings_row_sub}>{vibrationEnabled ? 'Activée' : 'Désactivée'}</Text>
+              <Text style={st.settings_row_title}>Sons et vibrations</Text>
+              <Text style={st.settings_row_sub}>Alertes de prix, envois et swaps · {vibrationEnabled ? 'Activés' : 'Désactivés'}</Text>
             </View>
             <View style={[st.status_dot, { backgroundColor: vibrationEnabled ? T.green : T.text3 }]} />
           </AnimPressable>
@@ -3976,6 +4235,52 @@ export default function App() {
               <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
             </View>
           </AnimPressable>
+          <AnimPressable style={st.settings_row} onPress={() => setShowStats(true)}>
+            <Text style={{ fontSize: 22 }}>📊</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Mes stats</Text>
+              <Text style={st.settings_row_sub}>Transactions, frais payés, ancienneté</Text>
+            </View>
+          </AnimPressable>
+          <AnimPressable style={st.settings_row} onPress={exportUserData}>
+            <Text style={{ fontSize: 22 }}>📦</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Exporter mes données</Text>
+              <Text style={st.settings_row_sub}>Favoris, carnet d'adresses, alertes — copiés en JSON</Text>
+            </View>
+          </AnimPressable>
+          {showImportData ? (
+            <View style={st.alert_form}>
+              <Text style={[st.form_label, { marginBottom: 8 }]}>Colle le JSON exporté depuis l'autre appareil</Text>
+              <TextInput
+                style={[st.form_input, { minHeight: 80 }]}
+                value={importDataText}
+                onChangeText={setImportDataText}
+                placeholder='{"version":1,"favorites":[...]}'
+                placeholderTextColor={T.text3}
+                multiline
+              />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <AnimPressable
+                  style={[st.green_btn, { flex: 1 }]}
+                  onPress={() => { if (importUserData(importDataText)) { setShowImportData(false); setImportDataText(''); } }}
+                >
+                  <Text style={st.green_btn_txt}>Importer</Text>
+                </AnimPressable>
+              </View>
+              <TouchableOpacity onPress={() => { setShowImportData(false); setImportDataText(''); }} style={{ marginTop: 10 }}>
+                <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <AnimPressable style={st.settings_row} onPress={() => setShowImportData(true)}>
+              <Text style={{ fontSize: 22 }}>📥</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>Importer mes données</Text>
+                <Text style={st.settings_row_sub}>Depuis un JSON exporté sur un autre appareil</Text>
+              </View>
+            </AnimPressable>
+          )}
           {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
             <AnimPressable key={key} style={st.settings_row} onPress={() => setLegalDoc(key)}>
               <Text style={{ fontSize: 22 }}>📄</Text>
@@ -4533,6 +4838,7 @@ export default function App() {
       {renderReceive()}
       {renderHistory()}
       {renderSettings()}
+      {renderStats()}
       {renderLegal()}
       {renderMnemonicBackup()}
       {renderOnboarding()}
@@ -4748,6 +5054,11 @@ const st = StyleSheet.create({
   max_btn_txt:   { color: T.green, fontWeight: 'bold', fontSize: 13 },
   quick_pct_btn: { flex: 1, backgroundColor: T.card2, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
   quick_pct_txt: { color: T.text2, fontWeight: '600', fontSize: 12 },
+  amount_mode_toggle: { color: T.cyan, fontSize: 12, fontWeight: '600' },
+  tx_tag_chip: { color: T.text3, fontSize: 10, backgroundColor: T.card2, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden' },
+  stats_card:    { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 16 },
+  stats_card_lbl:{ color: T.text2, fontSize: 12 },
+  stats_card_val:{ color: T.text, fontSize: 20, fontWeight: 'bold', marginTop: 6 },
   gas_tier_btn:   { flex: 1, backgroundColor: T.card, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
   gas_tier_btn_on:{ backgroundColor: T.greenBg, borderColor: T.green },
   gas_tier_lbl:   { color: T.text2, fontWeight: 'bold', fontSize: 13 },

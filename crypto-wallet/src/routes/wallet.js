@@ -553,6 +553,14 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
       fetchEtherscan({ ...base, module: 'account', action: 'tokentx' }),
     ]);
 
+    // gasUsed * gasPrice (en wei, natif) -- seul l'expéditeur paie le gas,
+    // donc n'a de sens que pour les tx sortantes ; utilisé côté client pour
+    // la page "Mes stats" (frais totaux payés).
+    const feeWei = (tx) => {
+      try { return ethers.BigNumber.from(tx.gasUsed || '0').mul(ethers.BigNumber.from(tx.gasPrice || '0')).toString(); }
+      catch { return '0'; }
+    };
+
     const addrLower = address.toLowerCase();
     const nativeItems = native.map(tx => ({
       hash: tx.hash,
@@ -564,6 +572,7 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
       from: tx.from,
       to: tx.to,
       failed: tx.isError === '1',
+      feeWei: feeWei(tx),
     }));
     const tokenItems = tokens.map(tx => ({
       hash: tx.hash,
@@ -575,6 +584,7 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
       from: tx.from,
       to: tx.to,
       failed: false,
+      feeWei: feeWei(tx),
     }));
 
     return [...nativeItems, ...tokenItems]
