@@ -49,6 +49,7 @@ const T = {
   text:    '#E8F1FF',
   text2:   '#9CB1CF',
   text3:   '#7584A2',
+  
   yellow:  '#FFD166',
   purple:  '#8B5CF6',
   // Palette "Nexia" — utilisée uniquement pour la landing page publique
@@ -1322,7 +1323,6 @@ export default function App() {
   const [showBuy, setShowBuy]             = useState(false);
   const [showReceive, setShowReceive]     = useState(false);
   const [showHistory, setShowHistory]     = useState(false);
-  const [showStats, setShowStats]         = useState(false);
   const [showImportData, setShowImportData] = useState(false);
   const [importDataText, setImportDataText] = useState('');
   const [historyItems, setHistoryItems]   = useState(null); // null = pas encore chargé, [] = chargé et vide
@@ -1670,8 +1670,8 @@ export default function App() {
   }, [showHistory, fetchHistory]);
 
   useEffect(() => {
-    if (showStats && historyItems === null) fetchHistory();
-  }, [showStats, historyItems, fetchHistory]);
+    if (tab === 'stats' && historyItems === null) fetchHistory();
+  }, [tab, historyItems, fetchHistory]);
 
   // Export CSV via presse-papier plutôt qu'un vrai fichier — expo-file-system
   // n'est pas installé et rajouter une dépendance juste pour ça serait
@@ -3990,7 +3990,7 @@ export default function App() {
   // transactions renvoyées par Etherscan pour le réseau actif) — pas un vrai
   // total "depuis toujours" toutes chaînes confondues, on le dit clairement
   // pour ne pas laisser croire à une exhaustivité qu'on n'a pas.
-  const renderStats = () => {
+  const renderStatsTab = () => {
     const items = historyItems || [];
     const sentCount = items.filter(i => i.direction === 'out').length;
     const receivedCount = items.length - sentCount;
@@ -4003,49 +4003,47 @@ export default function App() {
       : null;
 
     return (
-      <Modal visible={showStats} animationType="slide" transparent>
-        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
-          <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setShowStats(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
-              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
-            </TouchableOpacity>
-            <Text style={st.modal_title}>Mes stats</Text>
-            <View style={{ width: 40 }} />
-          </View>
-          <ScrollView style={{ flex: 1, padding: 16 }}>
-            {!!memberSince && (
-              <View style={st.stats_card}>
-                <Text style={st.stats_card_lbl}>Wallet créé le</Text>
-                <Text style={st.stats_card_val}>{memberSince}</Text>
-              </View>
-            )}
+      <ScrollView
+        style={{ flex: 1, padding: 16 }}
+        contentContainerStyle={isWideWeb ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : undefined}
+        refreshControl={
+          <RefreshControl refreshing={historyLoading} onRefresh={fetchHistory} tintColor={T.green} />
+        }
+      >
+        <Text style={st.tab_title}>📊 Mes stats</Text>
 
-            {historyLoading ? (
-              <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.green} /></View>
-            ) : (
-              <>
-                <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
-                  <View style={[st.stats_card, { flex: 1 }]}>
-                    <Text style={st.stats_card_lbl}>Envoyées</Text>
-                    <Text style={st.stats_card_val}>{sentCount}</Text>
-                  </View>
-                  <View style={[st.stats_card, { flex: 1 }]}>
-                    <Text style={st.stats_card_lbl}>Reçues</Text>
-                    <Text style={st.stats_card_val}>{receivedCount}</Text>
-                  </View>
-                </View>
-                <View style={[st.stats_card, { marginTop: 12 }]}>
-                  <Text style={st.stats_card_lbl}>Frais de réseau payés</Text>
-                  <Text style={st.stats_card_val}>{parseFloat(totalFeesNative).toFixed(6)} {nativeSymbol}</Text>
-                </View>
-                <Text style={{ color: T.text3, fontSize: 11, marginTop: 16, textAlign: 'center' }}>
-                  Basé sur les {items.length} dernières transactions sur {activeNetwork.label} — pas un historique complet toutes chaînes confondues.
-                </Text>
-              </>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+        {!!memberSince && (
+          <View style={st.stats_card}>
+            <Text style={st.stats_card_lbl}>Wallet créé le</Text>
+            <Text style={st.stats_card_val}>{memberSince}</Text>
+          </View>
+        )}
+
+        {historyLoading && !items.length ? (
+          <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.green} /></View>
+        ) : (
+          <>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+              <View style={[st.stats_card, { flex: 1 }]}>
+                <Text style={st.stats_card_lbl}>Envoyées</Text>
+                <Text style={st.stats_card_val}>{sentCount}</Text>
+              </View>
+              <View style={[st.stats_card, { flex: 1 }]}>
+                <Text style={st.stats_card_lbl}>Reçues</Text>
+                <Text style={st.stats_card_val}>{receivedCount}</Text>
+              </View>
+            </View>
+            <View style={[st.stats_card, { marginTop: 12 }]}>
+              <Text style={st.stats_card_lbl}>Frais de réseau payés</Text>
+              <Text style={st.stats_card_val}>{parseFloat(totalFeesNative).toFixed(6)} {nativeSymbol}</Text>
+            </View>
+            <Text style={{ color: T.text3, fontSize: 11, marginTop: 16, textAlign: 'center' }}>
+              Basé sur les {items.length} dernières transactions sur {activeNetwork.label} — pas un historique complet toutes chaînes confondues.
+            </Text>
+          </>
+        )}
+        <View style={{ height: 40 }} />
+      </ScrollView>
     );
   };
 
@@ -4314,13 +4312,6 @@ export default function App() {
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Partager NexiaWallet</Text>
               <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
-            </View>
-          </AnimPressable>
-          <AnimPressable style={st.settings_row} onPress={() => setShowStats(true)}>
-            <Text style={{ fontSize: 22 }}>📊</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Mes stats</Text>
-              <Text style={st.settings_row_sub}>Transactions, frais payés, ancienneté</Text>
             </View>
           </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={exportUserData}>
@@ -4842,6 +4833,7 @@ export default function App() {
   const navItems = [
     { id: 'home',     icon: '🏡', label: 'Accueil'  },
     { id: 'markets',  icon: '💹', label: 'Marché'   },
+    { id: 'stats',    icon: '📊', label: 'Stats'    },
     { id: 'swap',     icon: '⇄',  label: 'Swap', big: true },
   ];
 
@@ -4858,6 +4850,7 @@ export default function App() {
     <FadeInView key={tab} style={{ flex: 1 }} deps={[tab]}>
       {tab === 'home'     && renderHome()}
       {tab === 'markets'  && renderMarkets()}
+      {tab === 'stats'    && renderStatsTab()}
       {tab === 'swap'     && renderSwap()}
     </FadeInView>
   );
@@ -4919,7 +4912,6 @@ export default function App() {
       {renderReceive()}
       {renderHistory()}
       {renderSettings()}
-      {renderStats()}
       {renderLegal()}
       {renderMnemonicBackup()}
       {renderOnboarding()}
