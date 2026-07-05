@@ -1203,6 +1203,7 @@ export default function App() {
   const [recentAddresses, setRecentAddresses]   = useState([]);
   const [labelEditFor, setLabelEditFor]         = useState(null); // adresse en cours de renommage, ou null
   const [labelInput, setLabelInput]             = useState('');
+  const [calcAmount, setCalcAmount]             = useState(''); // calculatrice rapide sur la fiche Marché
   // Scan QR : natif uniquement (caméra). Sur web, on propose "Coller" à la
   // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
   // pur serait un chantier à part, hors scope de ce passage).
@@ -3014,6 +3015,24 @@ export default function App() {
               </View>
             )}
 
+            <View style={[st.calc_card, { marginHorizontal: 16 }]}>
+              <Text style={st.form_label}>Calculatrice rapide</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+                  value={calcAmount}
+                  onChangeText={setCalcAmount}
+                  placeholder={`Montant en ${sym}`}
+                  placeholderTextColor={T.text3}
+                  keyboardType="numeric"
+                />
+                <Text style={st.calc_sym}>{sym}</Text>
+              </View>
+              <Text style={st.calc_result}>
+                ≈ {fmt((parseFloat(calcAmount) || 0) * (coin.current_price || 0))}
+              </Text>
+            </View>
+
             {renderPriceAlertSection(sym, coin.current_price)}
 
             <View style={st.detail_grid}>
@@ -4554,6 +4573,9 @@ const st = StyleSheet.create({
   land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
   land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
 
+  calc_card:      { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 16, marginBottom: 20 },
+  calc_sym:       { color: T.text2, fontWeight: 'bold', fontSize: 13, marginLeft: 10 },
+  calc_result:    { color: T.green, fontSize: 18, fontWeight: 'bold', marginTop: 10 },
   compare_table:  { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 14, marginTop: 8, overflow: 'hidden' },
   compare_row:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.border },
   compare_head:   { color: T.green, fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
