@@ -4275,7 +4275,8 @@ export default function App() {
                   </Text>
                   <View style={[st.market_card_badge, { backgroundColor: pos ? T.greenBg : T.redBg }]}>
                     <Text style={{ color: pos ? T.green : T.red, fontSize: 11, fontWeight: 'bold' }}>
-                      {pos ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                      {Math.abs(coin.price_change_percentage_24h || 0) >= 10 ? '🔥 ' : (pos ? '▲ ' : '▼ ')}
+                      {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
                     </Text>
                   </View>
                 </AnimPressable>
