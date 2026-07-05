@@ -1329,7 +1329,6 @@ export default function App() {
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
-  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
   const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
   const [newsItems, setNewsItems]         = useState([]);
