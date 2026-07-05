@@ -13,7 +13,8 @@ import {
   StyleSheet, Text, View, SafeAreaView, TouchableOpacity,
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
-  FlatList, Linking, Platform, Animated, Pressable,
+  FlatList, Linking, Platform, Animated, Pressable, Easing,
+  useWindowDimensions,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
@@ -21,6 +22,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as localWallet from './lib/wallet';
+import { ethers } from 'ethers';
 
 const { width } = Dimensions.get('window');
 
@@ -45,6 +47,13 @@ const T = {
   text3:   '#7584A2',
   yellow:  '#FFD166',
   purple:  '#8B5CF6',
+  // Palette "Nexia" — utilisée uniquement pour la landing page publique
+  // (écran d'accueil avant création/import de wallet).
+  deepBg:  '#05030e',
+  violet:  '#7c3aed',
+  cyan:    '#22d3ee',
+  magenta: '#e879f9',
+  stroke:  'rgba(139,135,168,0.18)',
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -90,6 +99,14 @@ const WALLET_TOKENS = {
 // Le wallet n'a qu'une seule adresse EVM (0x...) : on ne propose l'achat MoonPay
 // que pour les tokens qui peuvent réellement y arriver, selon le réseau actif.
 const BUYABLE_TOKENS = {
+  ethereum: ['ETH', 'USDT', 'USDC'],
+  bsc: ['BNB', 'USDT', 'USDC'],
+};
+
+// Le swap réel passe par un agrégateur DEX (0x) : on ne propose que les
+// tokens pour lesquels le wallet peut réellement signer/diffuser une
+// transaction (natif + ERC20/BEP20 configurés dans lib/wallet.js).
+const SWAPPABLE_TOKENS = {
   ethereum: ['ETH', 'USDT', 'USDC'],
   bsc: ['BNB', 'USDT', 'USDC'],
 };
@@ -155,6 +172,29 @@ const clearWalletSession = async () => {
     }
   } catch (error) {
     console.warn('clearWalletSession failed', error);
+  }
+};
+
+// Favoris : juste une liste de symboles, aucune donnée sensible — AsyncStorage
+// suffit sur les deux plateformes (pas besoin du stockage chiffré natif).
+const FAVORITES_STORAGE_KEY = 'wallet-pro-favorites-v1';
+
+const loadFavorites = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(FAVORITES_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('loadFavorites failed', error);
+    return [];
+  }
+};
+
+const saveFavorites = async (list) => {
+  try {
+    await AsyncStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(list));
+  } catch (error) {
+    console.warn('saveFavorites failed', error);
   }
 };
 
@@ -427,24 +467,131 @@ function AnimatedLogo({ size = 92, icon = '🛡️' }) {
       <Animated.View
         style={{
           position: 'absolute', width: size * 1.9, height: size * 1.9, borderRadius: size,
-          backgroundColor: T.green, opacity: glowOpacity, transform: [{ scale: glowScale }],
+          backgroundColor: T.cyan, opacity: glowOpacity, transform: [{ scale: glowScale }],
         }}
       />
       <Animated.View style={{ transform: [{ scale: badgeScale }] }}>
         <LinearGradient
-          colors={[T.card2, T.card, T.bg]}
+          colors={[T.violet, T.card2, T.deepBg]}
           start={{ x: 0.1, y: 0 }}
           end={{ x: 0.9, y: 1 }}
           style={{
             width: size, height: size, borderRadius: size / 2,
             alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1, borderColor: T.border,
-            shadowColor: T.green, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14, elevation: 8,
+            borderWidth: 1, borderColor: 'rgba(124,58,237,0.45)',
+            shadowColor: T.violet, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16, elevation: 8,
           }}
         >
           <Text style={{ fontSize: size * 0.42 }}>{icon}</Text>
         </LinearGradient>
       </Animated.View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WALLET — pastille "live" qui pulse (anneau qui s'étend + s'efface en
+//  boucle autour du point plein). Anime en continu, contrairement aux
+//  FadeInView (qui ne jouent qu'une fois à l'apparition) — utilisé partout
+//  où le dashboard affiche "Live" (barre du haut, badge LIVE du graphique).
+// ═══════════════════════════════════════════════════════════
+function PulseDot({ color = T.green, size = 7 }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(anim, { toValue: 1, duration: 1400, easing: Easing.out(Easing.ease), useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [anim]);
+  const scale   = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] });
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] });
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{
+        position: 'absolute', width: size, height: size, borderRadius: size / 2,
+        backgroundColor: color, opacity, transform: [{ scale }],
+      }} />
+      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WALLET — halo qui respire derrière la carte de solde (accueil). Boucle
+//  continue, contrairement aux animations d'entrée des tokens.
+// ═══════════════════════════════════════════════════════════
+function BalanceGlow() {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: 1, duration: 2200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 0, duration: 2200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [anim]);
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.32] });
+  const scale   = anim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.02] });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, {
+        borderRadius: 22, backgroundColor: T.green, opacity, transform: [{ scale }],
+      }]}
+    />
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — visuel section sécurité (anneaux rotatifs + halo qui
+//  pulse). Équivalent RN du torus knot Three.js du fichier de référence,
+//  sans WebGL — juste des View/Animated, donc ça tourne aussi sur mobile.
+// ═══════════════════════════════════════════════════════════
+function SecurityOrb({ size = 220 }) {
+  const rot1 = useRef(new Animated.Value(0)).current;
+  const rot2 = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const l1 = Animated.loop(Animated.timing(rot1, { toValue: 1, duration: 9000, easing: Easing.linear, useNativeDriver: true }));
+    const l2 = Animated.loop(Animated.timing(rot2, { toValue: 1, duration: 14000, easing: Easing.linear, useNativeDriver: true }));
+    const l3 = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    l1.start(); l2.start(); l3.start();
+    return () => { l1.stop(); l2.stop(); l3.stop(); };
+  }, [rot1, rot2, pulse]);
+
+  const spin1 = rot1.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const spin2 = rot2.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
+  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.5] });
+  const glowScale   = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] });
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{
+        position: 'absolute', width: size, height: size, borderRadius: size / 2,
+        borderWidth: 1, borderColor: 'rgba(124,58,237,0.35)', borderStyle: 'dashed',
+        transform: [{ rotate: spin1 }],
+      }} />
+      <Animated.View style={{
+        position: 'absolute', width: size * 0.72, height: size * 0.72, borderRadius: (size * 0.72) / 2,
+        borderWidth: 1, borderColor: 'rgba(34,211,238,0.4)',
+        transform: [{ rotate: spin2 }],
+      }} />
+      <Animated.View style={{
+        position: 'absolute', width: size * 0.5, height: size * 0.5, borderRadius: (size * 0.5) / 2,
+        backgroundColor: T.violet, opacity: glowOpacity, transform: [{ scale: glowScale }],
+      }} />
+      <View style={{
+        width: size * 0.34, height: size * 0.34, borderRadius: (size * 0.34) / 2,
+        alignItems: 'center', justifyContent: 'center', backgroundColor: T.deepBg,
+        borderWidth: 1, borderColor: 'rgba(124,58,237,0.5)',
+      }}>
+        <Text style={{ fontSize: size * 0.15 }}>🛡️</Text>
+      </View>
     </View>
   );
 }
@@ -503,10 +650,234 @@ function SupplyBar({ circulating, max, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — pièce en orbite (halo NEXIA)
+//  Une pièce tourne autour du logo central : conteneur qui pivote en continu
+//  + enfant contre-pivoté à la même vitesse pour que l'icône reste droite
+//  (équivalent RN de l'orbite Three.js de la page vitrine, sans WebGL).
+// ═══════════════════════════════════════════════════════════
+function OrbitCoin({ angle, radius, size, duration, icon, bg }) {
+  const rot = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(rot, { toValue: 1, duration, easing: Easing.linear, useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [rot, duration]);
+
+  const rotate = rot.interpolate({ inputRange: [0, 1], outputRange: [`${angle}deg`, `${angle + 360}deg`] });
+  const counterRotate = rot.interpolate({ inputRange: [0, 1], outputRange: [`${-angle}deg`, `${-angle - 360}deg`] });
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', transform: [{ rotate }] }]}
+    >
+      <Animated.View style={{ transform: [{ translateX: radius }, { rotate: counterRotate }] }}>
+        <View
+          style={{
+            width: size, height: size, borderRadius: size / 2, backgroundColor: bg,
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+            shadowColor: bg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 6, elevation: 4,
+          }}
+        >
+          <Text style={{ fontSize: size * 0.46, color: '#fff', fontWeight: 'bold' }}>{icon}</Text>
+        </View>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+function OrbitHero() {
+  return (
+    <View style={st.land_orbit_wrap}>
+      <View style={st.land_orbit_center}><AnimatedLogo size={78} /></View>
+      <OrbitCoin angle={0}   radius={118} size={40} duration={9000}  icon="₿" bg="#F7931A" />
+      <OrbitCoin angle={140} radius={98}  size={34} duration={12500} icon="Ξ" bg="#627EEA" />
+      <OrbitCoin angle={250} radius={128} size={30} duration={16000} icon="◎" bg="#9945FF" />
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — bandeau de prix défilant (marquee)
+//  Utilise les vraies données `tokens` (déjà chargées via fetchMarket au
+//  montage, même avant création du wallet) plutôt que des chiffres inventés.
+// ═══════════════════════════════════════════════════════════
+function PriceMarquee({ tokens }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const [trackWidth, setTrackWidth] = useState(0);
+  const items = Object.entries(tokens).filter(([, t]) => t.price > 0);
+
+  useEffect(() => {
+    if (!trackWidth) return undefined;
+    translateX.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(translateX, { toValue: -trackWidth / 2, duration: 16000, easing: Easing.linear, useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [trackWidth, translateX]);
+
+  if (!items.length) return null;
+  const doubled = [...items, ...items];
+
+  return (
+    <View style={st.land_marquee}>
+      <Animated.View
+        style={[st.land_marquee_track, { transform: [{ translateX }] }]}
+        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+      >
+        {doubled.map(([sym, t], i) => {
+          const up = (t.change24h || 0) >= 0;
+          return (
+            <View key={`${sym}-${i}`} style={st.land_marquee_item}>
+              <Text style={st.land_marquee_icon}>{t.icon}</Text>
+              <Text style={st.land_marquee_sym}>{sym}</Text>
+              <Text style={[st.land_marquee_chg, { color: up ? T.green : T.red }]}>
+                {up ? '+' : ''}{(t.change24h || 0).toFixed(1)}%
+              </Text>
+            </View>
+          );
+        })}
+      </Animated.View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — compteur animé (stats)
+// ═══════════════════════════════════════════════════════════
+function CountStat({ value, suffix = '', label, decimals = 0, style }) {
+  const [display, setDisplay] = useState(decimals ? (0).toFixed(decimals) : '0');
+  useEffect(() => {
+    let raf;
+    const t0 = Date.now();
+    const dur = 1200;
+    const tick = () => {
+      const p = Math.min((Date.now() - t0) / dur, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      const v = value * ease;
+      setDisplay(decimals ? v.toFixed(decimals) : Math.round(v).toString());
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => raf && cancelAnimationFrame(raf);
+  }, [value, decimals]);
+
+  return (
+    <View style={[st.land_stat, style]}>
+      <Text style={st.land_stat_num}>{display}{suffix}</Text>
+      <Text style={st.land_stat_lbl}>{label}</Text>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — carte fonctionnalité (bascule 3D + lueur au survol,
+//  web uniquement — équivalent léger de l'effet "tilt" du fichier de
+//  référence, sans dépendre de Three.js/WebGL qui ne tourne pas sur mobile).
+// ═══════════════════════════════════════════════════════════
+function FeatureCard({ icon, title, desc, style }) {
+  const [hover, setHover] = useState(null);
+  const webHoverProps = Platform.OS === 'web' ? {
+    onMouseMove: (e) => {
+      const rect = e.currentTarget.getBoundingClientRect?.();
+      if (!rect) return;
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      setHover({ x, y });
+    },
+    onMouseLeave: () => setHover(null),
+  } : {};
+
+  const tiltStyle = hover ? {
+    transform: [
+      { perspective: 900 },
+      { rotateX: `${(0.5 - hover.y) * 8}deg` },
+      { rotateY: `${(hover.x - 0.5) * 8}deg` },
+    ],
+    borderColor: 'rgba(34,211,238,0.45)',
+  } : null;
+
+  return (
+    <View style={[st.land_feature_card, style, tiltStyle]} {...webHoverProps}>
+      {hover && (
+        <View
+          pointerEvents="none"
+          style={[st.land_feature_glare, { left: `${hover.x * 100}%`, top: `${hover.y * 100}%` }]}
+        />
+      )}
+      <View style={st.land_feature_icon}><Text style={{ fontSize: 22 }}>{icon}</Text></View>
+      <Text style={st.land_feature_title}>{title}</Text>
+      <Text style={st.land_feature_desc}>{desc}</Text>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LANDING PUBLIQUE — fond de particules flottantes (équivalent léger du
+//  champ de points Three.js du fichier de référence, en pur RN Animated).
+// ═══════════════════════════════════════════════════════════
+function StarField({ count = 30 }) {
+  const stars = useMemo(() => Array.from({ length: count }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    top: Math.random() * 100,
+    size: 1.5 + Math.random() * 2.5,
+    delay: Math.random() * 2500,
+    duration: 2600 + Math.random() * 2600,
+    color: [T.cyan, T.violet, T.magenta][i % 3],
+  })), [count]);
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {stars.map(s => <Star key={s.id} {...s} />)}
+    </View>
+  );
+}
+
+function Star({ left, top, size, delay, duration, color }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(anim, { toValue: 1, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [anim, delay, duration]);
+
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.85] });
+  const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.5] });
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute', left: `${left}%`, top: `${top}%`,
+        width: size, height: size, borderRadius: size / 2, backgroundColor: color,
+        opacity, transform: [{ scale }],
+      }}
+    />
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  APP PRINCIPALE
 // ═══════════════════════════════════════════════════════════
 export default function App() {
   // ── HOOKS - ORDRE STRICT ──
+  // Mode "bureau" sur le web : au-delà de ce seuil, l'app quitte la mise en
+  // page mobile (colonne unique, plein écran) pour une mise en page de site
+  // desktop (sidebar, grilles multi-colonnes, dialogues centrés).
+  // `useWindowDimensions` (contrairement à `Dimensions.get('window')`, figé
+  // au chargement) se met à jour quand la fenêtre est redimensionnée.
+  const { width: winWidth } = useWindowDimensions();
+  const isWideWeb = Platform.OS === 'web' && winWidth >= 860;
   const [pinCode, setPinCode]         = useState('');
   const [isUnlocked, setIsUnlocked]   = useState(false);
   const [tab, setTab]                 = useState('home');
@@ -540,6 +911,7 @@ export default function App() {
   const [swapTo, setSwapTo]               = useState('USDT');
   const [swapAmt, setSwapAmt]             = useState('');
   const [swapRes, setSwapRes]             = useState('0');
+  const [swapLoading, setSwapLoading]     = useState(false);
   const [buyToken, setBuyToken]           = useState('ETH');
   const [buyAmount, setBuyAmount]         = useState('10');
   const [buyLoading, setBuyLoading]       = useState(false);
@@ -566,6 +938,16 @@ export default function App() {
   // la création d'un wallet — sans ça, il n'a AUCUN moyen de récupérer ses
   // fonds s'il perd son appareil ou vide son navigateur.
   const [pendingMnemonic, setPendingMnemonic] = useState(null);
+
+  // Favoris : liste de symboles (ex. "DOGE") marqués depuis le Marché ou
+  // l'accueil — persistée localement, pas de compte ni de backend impliqué.
+  const [favorites, setFavorites]         = useState([]);
+  const [favoritesLoaded, setFavoritesLoaded] = useState(false);
+  // Fiche "info seule" pour une crypto du Marché qui n'est PAS dans le
+  // wallet (pas de solde/envoi possible — juste prix, capitalisation, desc).
+  const [selectedMarketCoin, setSelectedMarketCoin] = useState(null);
+  const [marketCoinInfo, setMarketCoinInfo]       = useState({}); // id -> fiche CoinGecko
+  const [marketCoinCandles, setMarketCoinCandles] = useState({}); // id -> bougies 1J
 
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
@@ -853,12 +1235,37 @@ export default function App() {
     );
   }, []);
 
+  // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
+  // sans ça, les marges de chaque côté restent d'un blanc par défaut du
+  // navigateur au lieu de suivre le thème sombre.
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.documentElement.style.backgroundColor = T.deepBg;
+      document.body.style.backgroundColor = T.deepBg;
+    }
+  }, []);
+
   useEffect(() => {
     initWallet();
     fetchMarket();
     const id = setInterval(fetchMarket, 30000);
     return () => clearInterval(id);
   }, [fetchMarket, initWallet]);
+
+  useEffect(() => {
+    loadFavorites().then(list => { setFavorites(list); setFavoritesLoaded(true); });
+  }, []);
+
+  // Ne persiste qu'après le chargement initial, sinon le premier render
+  // (liste vide) écraserait les favoris déjà sauvegardés sur le disque.
+  useEffect(() => {
+    if (favoritesLoaded) saveFavorites(favorites);
+  }, [favorites, favoritesLoaded]);
+
+  const toggleFavorite = useCallback((symbol) => {
+    const sym = symbol.toUpperCase();
+    setFavorites(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]);
+  }, []);
 
   useEffect(() => {
     if (walletAddr) {
@@ -983,6 +1390,31 @@ export default function App() {
       .catch(err => console.warn('fiche crypto indisponible:', err.message));
   }, [selectedToken, coinDetails]);
 
+  // Fiche + bougies pour une crypto du Marché qui n'est PAS dans le wallet —
+  // même endpoints que ci-dessus, mais indexés par id CoinGecko (pas de
+  // symbole wallet connu pour ces cryptos-là).
+  useEffect(() => {
+    if (!selectedMarketCoin) return;
+    const id = selectedMarketCoin.id;
+    if (!id || marketCoinInfo[id]) return;
+    axios.get(`${API_BASE}/coin/${id}`, { headers: API_HEADERS, timeout: 15000 })
+      .then(res => {
+        if (res.data?.success) setMarketCoinInfo(prev => ({ ...prev, [id]: res.data.coin }));
+      })
+      .catch(err => console.warn('fiche crypto (marché) indisponible:', err.message));
+  }, [selectedMarketCoin, marketCoinInfo]);
+
+  useEffect(() => {
+    if (!selectedMarketCoin) return;
+    const id = selectedMarketCoin.id;
+    if (!id || marketCoinCandles[id]) return;
+    axios.get(`${API_BASE}/coin/${id}/candles`, {
+      params: { timeframe: '1J' }, headers: API_HEADERS, timeout: 15000,
+    }).then(res => {
+      if (res.data?.success) setMarketCoinCandles(prev => ({ ...prev, [id]: res.data.candles }));
+    }).catch(err => console.warn('bougies (marché) indisponibles:', err.message));
+  }, [selectedMarketCoin, marketCoinCandles]);
+
   const fetchNews = useCallback(() => {
     return axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
       .then(res => { if (res.data?.success) setNewsItems(res.data.items); })
@@ -1004,8 +1436,10 @@ export default function App() {
     return n.toFixed(2);
   }, []);
 
-  const renderCoinAbout = (symbol) => {
-    const info = coinDetails[symbol];
+  // Générique : sert à la fois pour un token du wallet (info via coinDetails)
+  // et pour une crypto du Marché qui n'y est pas (info via marketCoinInfo) —
+  // seule la source de `info` et la couleur d'accent changent chez l'appelant.
+  const renderCoinAbout = (info, keyId, accentColor = T.blue) => {
     if (!info) {
       return (
         <View style={[st.about_box, { alignItems: 'center' }]}>
@@ -1015,7 +1449,7 @@ export default function App() {
       );
     }
     return (
-      <FadeInView style={st.about_box} deps={[symbol]}>
+      <FadeInView style={st.about_box} deps={[keyId]}>
         <Text style={st.about_title}>À propos de {info.name}</Text>
         {!!info.description && <Text style={st.about_text}>{info.description}</Text>}
         {!!info.categories?.length && (
@@ -1027,7 +1461,7 @@ export default function App() {
         )}
 
         {(info.circulatingSupply != null) && (
-          <SupplyBar circulating={info.circulatingSupply} max={info.maxSupply} color={tokens[symbol]?.color || T.blue} />
+          <SupplyBar circulating={info.circulatingSupply} max={info.maxSupply} color={accentColor} />
         )}
 
         <View style={st.detail_grid}>
@@ -1041,7 +1475,7 @@ export default function App() {
             { label: '🏆 Plus haut historique', val: info.ath ? `$${fmtCompactNumber(info.ath)}` : '—' },
             { label: '📅 Création',       val: info.genesisDate || '—' },
           ].map((item, i) => (
-            <FadeInView key={item.label} style={st.detail_stat} deps={[symbol]}>
+            <FadeInView key={item.label} style={st.detail_stat} deps={[keyId]}>
               <Text style={st.detail_stat_lbl}>{item.label}</Text>
               <Text style={st.detail_stat_val}>{item.val}</Text>
             </FadeInView>
@@ -1076,6 +1510,15 @@ export default function App() {
       c.name?.toLowerCase().includes(q) || c.symbol?.toLowerCase().includes(q)
     );
   }, [marketCoins, marketSearch]);
+
+  // Favoris affichés sur l'accueil : uniquement les cryptos du Marché qui ne
+  // sont PAS déjà dans "Mes Tokens" (sinon doublon avec la liste du wallet).
+  const favoriteMarketCoins = useMemo(() =>
+    marketCoins.filter(c => {
+      const sym = c.symbol?.toUpperCase();
+      return sym && favorites.includes(sym) && !WALLET_TOKENS[sym];
+    }),
+  [marketCoins, favorites]);
 
   // ── PIN HANDLER ──
   const handlePin = (d) => {
@@ -1186,6 +1629,106 @@ export default function App() {
     setSendLoading(false);
   };
 
+  const handleSwapConfirm = async () => {
+    if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
+    if (swapFrom === swapTo) { showAlert('Tokens identiques', 'Choisis deux tokens différents.'); return; }
+
+    const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
+    const available = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
+    if (parseFloat(swapAmt) > available) {
+      showAlert('Solde insuffisant', `Tu n'as pas assez de ${swapFrom} pour cette opération.`);
+      return;
+    }
+
+    const resolveTokenAddress = (symbol) => {
+      if (symbol === nativeSymbol) return localWallet.NATIVE_PLACEHOLDER;
+      const cfg = localWallet.ERC20_TOKENS[network]?.[symbol];
+      return cfg?.address || null;
+    };
+    const resolveDecimals = (symbol) => {
+      if (symbol === nativeSymbol) return 18;
+      return localWallet.ERC20_TOKENS[network]?.[symbol]?.decimals ?? 18;
+    };
+
+    const sellAddress = resolveTokenAddress(swapFrom);
+    const buyAddress = resolveTokenAddress(swapTo);
+    if (!sellAddress || !buyAddress) {
+      showAlert('Token non supporté', `Le swap ${swapFrom} → ${swapTo} n'est pas encore supporté sur ${activeNetwork.label}.`);
+      return;
+    }
+
+    setSwapLoading(true);
+    try {
+      const sellAmountUnits = ethers.utils.parseUnits(
+        parseFloat(swapAmt).toFixed(resolveDecimals(swapFrom)),
+        resolveDecimals(swapFrom)
+      ).toString();
+
+      const quoteRes = await axios.get(`${API_BASE}/swap/quote`, {
+        params: {
+          network,
+          sellToken: sellAddress,
+          buyToken: buyAddress,
+          sellAmount: sellAmountUnits,
+          taker: walletAddr,
+        },
+        headers: API_HEADERS,
+        timeout: 20000,
+      });
+      if (!quoteRes.data?.success) {
+        throw new Error(quoteRes.data?.error || 'Devis de swap impossible.');
+      }
+      const quote = quoteRes.data.quote;
+
+      // Si le contrat du swap n'a pas encore l'autorisation de dépenser ce
+      // token ERC20, on signe et diffuse d'abord une approbation, puis on
+      // attend sa confirmation on-chain avant de tenter le swap lui-même.
+      const spender = quote.issues?.allowance?.spender;
+      if (spender) {
+        const { rawTx: approveRawTx } = await localWallet.signApproveTx({
+          privateKey: walletSession.privateKey,
+          tokenAddress: sellAddress,
+          spender,
+          amount: ethers.constants.MaxUint256,
+          network,
+        });
+        const approveResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: approveRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+        if (!approveResp.data?.success) {
+          throw new Error(approveResp.data?.error || "Échec de l'approbation du token.");
+        }
+        await localWallet.waitForTx(approveResp.data.txHash, network);
+      }
+
+      const { rawTx: swapRawTx } = await localWallet.signRawTx({
+        privateKey: walletSession.privateKey,
+        to: quote.transaction.to,
+        data: quote.transaction.data,
+        value: quote.transaction.value || '0',
+        gasLimit: quote.transaction.gas,
+        network,
+      });
+
+      const swapResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: swapRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+      if (!swapResp.data?.success) {
+        throw new Error(swapResp.data?.error || 'Échec du swap.');
+      }
+
+      const txHash = swapResp.data.txHash;
+      showAlert(
+        '✅ Swap Soumis !',
+        `${swapAmt} ${swapFrom} → ${swapTo}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
+        [{ text: 'OK' }]
+      );
+
+      await refreshPortfolio(network);
+      setSwapAmt('');
+      fetchMarket();
+    } catch (e) {
+      showAlert('❌ Erreur', e.message || 'Swap échoué');
+    }
+    setSwapLoading(false);
+  };
+
   // ════════════════════════════════════════════════════════
   //  SAUVEGARDE OBLIGATOIRE DE LA PHRASE DE RÉCUPÉRATION
   // ════════════════════════════════════════════════════════
@@ -1194,8 +1737,8 @@ export default function App() {
     const words = pendingMnemonic.trim().split(/\s+/);
     return (
       <Modal visible animationType="fade" transparent>
-        <SafeAreaView style={st.modal_bg}>
-          <ScrollView contentContainerStyle={{ padding: 20 }}>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
             <Text style={{ fontSize: 40, textAlign: 'center', marginBottom: 8 }}>🔑</Text>
             <Text style={st.modal_title_lg}>Ta phrase de récupération</Text>
             <View style={st.warning_box}>
@@ -1237,78 +1780,209 @@ export default function App() {
   //  ACCUEIL PUBLIC (pas encore de wallet sur cet appareil)
   // ════════════════════════════════════════════════════════
   if (!walletCreated) {
+    const supportedCount = Object.keys(WALLET_TOKENS).length;
+    const heroEyebrow = (
+      <View style={st.land_eyebrow}>
+        <View style={st.land_eyebrow_dot} />
+        <Text style={st.land_eyebrow_txt}>WALLET NOUVELLE GÉNÉRATION</Text>
+      </View>
+    );
+    const heroTitle = (
+      <Text style={[st.land_title, isWideWeb && st.land_title_wide]}>
+        Ta crypto,{'\n'}
+        <Text style={st.land_title_grad}>en orbite totale.</Text>
+      </Text>
+    );
+    const heroSubtitle = (
+      <Text style={[st.land_subtitle, isWideWeb && st.land_subtitle_wide]}>
+        NexiaWallet réunit tes actifs dans une interface pensée pour la vitesse : reçois,
+        envoie et échange en quelques secondes, avec tes clés sous ton seul contrôle.
+      </Text>
+    );
     return (
-      <SafeAreaView style={st.pin_screen}>
+      <SafeAreaView style={[st.land_screen, isWideWeb && st.land_screen_wide]}>
         <StatusBar barStyle="light-content" />
-        <FadeInView style={st.pin_logo_wrap} deps={[]}>
-          <AnimatedLogo />
-          <Text style={[st.pin_app_name, { marginTop: 18 }]}>NexiaWallet</Text>
-          <Text style={st.pin_sub}>Tes clés. Ton contrôle. Rien d'autre.</Text>
-        </FadeInView>
+        <StarField />
+        <ScrollView style={st.land_scroll_flex} contentContainerStyle={st.land_scroll} showsVerticalScrollIndicator={false}>
 
-        {backendError ? <Text style={st.auth_error}>{backendError}</Text> : null}
+          {/* ── HERO ── */}
+          <FadeInView style={[st.land_hero, isWideWeb && st.land_hero_wide]} deps={[]}>
+            {isWideWeb ? (
+              <View style={st.land_hero_row}>
+                <View style={st.land_hero_col_text}>
+                  {heroEyebrow}
+                  {heroTitle}
+                  {heroSubtitle}
+                </View>
+                <View style={st.land_hero_col_visual}>
+                  <OrbitHero />
+                </View>
+              </View>
+            ) : (
+              <>
+                {heroEyebrow}
+                <OrbitHero />
+                {heroTitle}
+                {heroSubtitle}
+              </>
+            )}
+          </FadeInView>
 
-        <LinearGradient
-          colors={[T.card2, T.card]}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={st.auth_card}
-        >
-          <Text style={st.auth_card_text}>
-            Wallet non-custodial : ta clé privée est générée sur cet appareil et n'en sort jamais.
-            Ethereum et BNB Smart Chain, en direct.
-          </Text>
-          {Platform.OS === 'web' && (
-            <View style={[st.warning_box, { marginTop: 12 }]}>
-              <Text style={st.warning_txt}>
-                ⚠️ Sur navigateur web, le stockage n'est pas protégé par le matériel comme sur mobile.
-                Pratique pour découvrir — préfère l'app native pour de vrais fonds.
-              </Text>
+          <PriceMarquee tokens={tokens} />
+
+          {/* ── FONCTIONNALITÉS ── */}
+          <View style={st.land_section}>
+            <Text style={st.land_section_eyebrow}>FONCTIONNALITÉS</Text>
+            <Text style={st.land_section_title}>Tout ton univers crypto,{'\n'}un seul wallet.</Text>
+            <View style={[st.land_features_grid, isWideWeb && st.land_features_grid_wide]}>
+              <FeatureCard
+                icon="⚡"
+                title="Échanges instantanés"
+                desc="Swap ETH, BNB, USDT et USDC directement dans l'app, au meilleur taux, sans quitter ton wallet."
+                style={isWideWeb && st.land_feature_card_wide}
+              />
+              <FeatureCard
+                icon="🛡️"
+                title="Tes clés, tes cryptos"
+                desc="Wallet non-custodial : ta clé privée est chiffrée sur ton appareil. Personne d'autre n'y a accès, pas même nous."
+                style={isWideWeb && st.land_feature_card_wide}
+              />
+              <FeatureCard
+                icon="📈"
+                title="Suivi en temps réel"
+                desc="Visualise ton portefeuille en direct : graphiques, prix à jour et historique complet de tes transactions."
+                style={isWideWeb && st.land_feature_card_wide}
+              />
             </View>
-          )}
-          <View style={st.network_switch}>
-            <TouchableOpacity style={[st.network_chip, network === 'ethereum' && st.network_chip_on]} onPress={() => setNetwork('ethereum')}>
-              <Text style={[st.network_chip_txt, network === 'ethereum' && { color: T.text }]}>Ethereum</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[st.network_chip, network === 'bsc' && st.network_chip_on]} onPress={() => setNetwork('bsc')}>
-              <Text style={[st.network_chip_txt, network === 'bsc' && { color: T.text }]}>BNB Smart Chain</Text>
-            </TouchableOpacity>
           </View>
-        </LinearGradient>
 
-        <View style={st.auth_actions}>
-          <AnimPressable style={st.auth_btn} onPress={createWallet}>
-            <Text style={st.auth_btn_txt}>Créer un wallet</Text>
-          </AnimPressable>
-          <AnimPressable style={st.auth_btn} onPress={() => { setImportMode(true); setImportError(null); }}>
-            <Text style={st.auth_btn_txt}>J'ai déjà un wallet</Text>
-          </AnimPressable>
-        </View>
+          {/* ── SÉCURITÉ ── */}
+          <View style={st.land_section}>
+            <Text style={st.land_section_eyebrow}>SÉCURITÉ</Text>
+            <Text style={st.land_section_title}>Un coffre-fort{'\n'}à toute épreuve.</Text>
+            {(() => {
+              const checklist = (
+                <View style={[st.land_checklist, !isWideWeb && st.land_narrow_wide, isWideWeb && { flex: 1 }]}>
+                  {[
+                    ['Aucune clé transmise', "Ta clé privée et ta phrase de récupération ne quittent jamais cet appareil."],
+                    ['Code PIN à chaque ouverture', 'Chaque déverrouillage et chaque transaction sensible demande ta validation.'],
+                    ['Phrase de récupération', "Restaure ton wallet n'importe où grâce à tes mots secrets — à noter hors ligne."],
+                    ['Aucune donnée collectée', 'Pas de tracking, pas de compte obligatoire, pas de compromis.'],
+                  ].map(([title, desc]) => (
+                    <View key={title} style={st.land_check_row}>
+                      <View style={st.land_check_bullet}><Text style={{ color: T.cyan, fontSize: 12, fontWeight: 'bold' }}>✓</Text></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={st.land_check_title}>{title}</Text>
+                        <Text style={st.land_check_desc}>{desc}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              );
+              return isWideWeb ? (
+                <View style={st.land_security_split}>
+                  {checklist}
+                  <View style={st.land_security_visual}><SecurityOrb size={240} /></View>
+                </View>
+              ) : (
+                <>
+                  <View style={{ alignItems: 'center', marginBottom: 24 }}><SecurityOrb size={160} /></View>
+                  {checklist}
+                </>
+              );
+            })()}
+          </View>
 
-        {importMode && (
-          <View style={st.import_card}>
-            <View style={st.import_switch}>
-              <TouchableOpacity style={[st.import_type_btn, importType === 'mnemonic' && st.import_type_btn_on]} onPress={() => setImportType('mnemonic')}>
-                <Text style={[st.import_type_txt, importType === 'mnemonic' && { color: T.text }]}>{'Mnémotechnique'}</Text>
+          {/* ── STATS ── */}
+          <View style={st.land_stats_wrap}>
+            <CountStat value={supportedCount} label="Cryptos suivies" style={isWideWeb && st.land_stat_wide} />
+            <CountStat value={2} label="Réseaux (ETH + BSC)" style={isWideWeb && st.land_stat_wide} />
+            <CountStat value={100} suffix="%" label="Non-custodial" style={isWideWeb && st.land_stat_wide} />
+            <CountStat value={0} label="Donnée revendue" style={isWideWeb && st.land_stat_wide} />
+          </View>
+
+          {/* ── DÉMARRAGE ── */}
+          <View style={st.land_section}>
+            <Text style={st.land_section_eyebrow}>DÉMARRAGE</Text>
+            <Text style={st.land_section_title}>Prête en 3 étapes.</Text>
+            <View style={isWideWeb && st.land_steps_row_wide}>
+              {[
+                ['01', 'Crée ton wallet', "Génère ton wallet en moins d'une minute. Note ta phrase de récupération et garde-la en lieu sûr."],
+                ['02', 'Ajoute tes cryptos', 'Reçois des fonds via ton adresse ou importe un wallet existant avec tes mots secrets.'],
+                ['03', 'Envoie, échange', 'Transfère et swap tes actifs en quelques secondes, où que tu sois.'],
+              ].map(([num, title, desc]) => (
+                <View key={num} style={[st.land_step, isWideWeb && st.land_step_wide]}>
+                  <Text style={st.land_step_num}>{num}</Text>
+                  <Text style={st.land_step_title}>{title}</Text>
+                  <Text style={st.land_step_desc}>{desc}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* ── CTA ── */}
+          <View style={[st.land_cta, isWideWeb && st.land_narrow_wide]}>
+            <Text style={st.land_section_eyebrow}>REJOINS NEXIA</Text>
+            <Text style={st.land_section_title}>Passe à la{'\n'}vitesse lumière.</Text>
+
+            {backendError ? <Text style={st.auth_error}>{backendError}</Text> : null}
+
+            <View style={st.land_network_switch}>
+              <TouchableOpacity style={[st.network_chip, network === 'ethereum' && st.network_chip_on]} onPress={() => setNetwork('ethereum')}>
+                <Text style={[st.network_chip_txt, network === 'ethereum' && { color: T.text }]}>Ethereum</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[st.import_type_btn, importType === 'privateKey' && st.import_type_btn_on]} onPress={() => setImportType('privateKey')}>
-                <Text style={[st.import_type_txt, importType === 'privateKey' && { color: T.text }]}>{'Clé privée'}</Text>
+              <TouchableOpacity style={[st.network_chip, network === 'bsc' && st.network_chip_on]} onPress={() => setNetwork('bsc')}>
+                <Text style={[st.network_chip_txt, network === 'bsc' && { color: T.text }]}>BNB Smart Chain</Text>
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={st.import_input}
-              value={importValue}
-              onChangeText={setImportValue}
-              placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : '0x... clé privée'}
-              placeholderTextColor={T.text3}
-              multiline={importType === 'mnemonic'}
-              autoCapitalize="none"
-            />
-            {importError ? <Text style={st.import_error}>{importError}</Text> : null}
-            <AnimPressable style={st.import_confirm_btn} onPress={importWallet}>
-              <Text style={st.green_btn_txt}>Importer maintenant</Text>
-            </AnimPressable>
+
+            {Platform.OS === 'web' && (
+              <View style={[st.warning_box, { marginTop: 14, width: '100%' }]}>
+                <Text style={st.warning_txt}>
+                  ⚠️ Sur navigateur web, le stockage n'est pas protégé par le matériel comme sur mobile.
+                  Pratique pour découvrir — préfère l'app native pour de vrais fonds.
+                </Text>
+              </View>
+            )}
+
+            <View style={st.land_cta_actions}>
+              <AnimPressable style={st.land_cta_btn_primary} onPress={createWallet}>
+                <Text style={st.land_cta_btn_primary_txt}>Créer mon wallet</Text>
+              </AnimPressable>
+              <AnimPressable style={st.land_cta_btn_ghost} onPress={() => { setImportMode(true); setImportError(null); }}>
+                <Text style={st.land_cta_btn_ghost_txt}>J'ai déjà un wallet</Text>
+              </AnimPressable>
+            </View>
+
+            {importMode && (
+              <View style={st.import_card}>
+                <View style={st.import_switch}>
+                  <TouchableOpacity style={[st.import_type_btn, importType === 'mnemonic' && st.import_type_btn_on]} onPress={() => setImportType('mnemonic')}>
+                    <Text style={[st.import_type_txt, importType === 'mnemonic' && { color: T.text }]}>{'Mnémotechnique'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[st.import_type_btn, importType === 'privateKey' && st.import_type_btn_on]} onPress={() => setImportType('privateKey')}>
+                    <Text style={[st.import_type_txt, importType === 'privateKey' && { color: T.text }]}>{'Clé privée'}</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={st.import_input}
+                  value={importValue}
+                  onChangeText={setImportValue}
+                  placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : '0x... clé privée'}
+                  placeholderTextColor={T.text3}
+                  multiline={importType === 'mnemonic'}
+                  autoCapitalize="none"
+                />
+                {importError ? <Text style={st.import_error}>{importError}</Text> : null}
+                <AnimPressable style={st.import_confirm_btn} onPress={importWallet}>
+                  <Text style={st.green_btn_txt}>Importer maintenant</Text>
+                </AnimPressable>
+              </View>
+            )}
           </View>
-        )}
+
+          <Text style={st.land_footer}>NEXIA WALLET · Tes clés, tes cryptos.</Text>
+        </ScrollView>
         {renderMnemonicBackup()}
       </SafeAreaView>
     );
@@ -1364,7 +2038,7 @@ export default function App() {
     const isLive   = TF_CONFIG[detailTf]?.live;
     return (
       <Modal visible animationType="slide" transparent>
-        <SafeAreaView style={st.modal_bg}>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
             <TouchableOpacity onPress={() => setSelectedToken(null)} style={st.back_btn}>
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1373,9 +2047,11 @@ export default function App() {
               <Text style={st.modal_title}>{tk.name}</Text>
               <Text style={st.modal_sub}>{selectedToken} / USD</Text>
             </View>
-            <View style={{ width: 40 }} />
+            <TouchableOpacity onPress={() => toggleFavorite(selectedToken)} style={st.back_btn}>
+              <Text style={{ fontSize: 20 }}>{favorites.includes(selectedToken) ? '⭐' : '☆'}</Text>
+            </TouchableOpacity>
           </View>
-          <ScrollView>
+          <ScrollView style={{ flex: 1 }}>
             <View style={st.detail_price_wrap}>
               <Text style={st.detail_price}>{fmt(tk.price, tk.price < 1 ? 6 : 2)}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
@@ -1386,7 +2062,7 @@ export default function App() {
                 </View>
                 {isLive && (
                   <View style={st.live_badge}>
-                    <View style={st.live_dot} />
+                    <PulseDot color={T.green} size={7} />
                     <Text style={st.live_txt}>LIVE</Text>
                   </View>
                 )}
@@ -1432,7 +2108,80 @@ export default function App() {
               ))}
             </View>
 
-            {renderCoinAbout(selectedToken)}
+            {renderCoinAbout(coinDetails[selectedToken], selectedToken, tokens[selectedToken]?.color)}
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════
+  //  MODAL: FICHE INFO — crypto du Marché absente du wallet (lecture seule :
+  //  prix, capitalisation, description — pas de solde/envoi possible puisque
+  //  ce wallet n'a pas d'adresse pour cette chaîne/ce token).
+  // ════════════════════════════════════════════════════════
+  const renderMarketCoinDetail = () => {
+    if (!selectedMarketCoin) return null;
+    const coin = selectedMarketCoin;
+    const sym = coin.symbol?.toUpperCase() || '';
+    const positive = (coin.price_change_percentage_24h || 0) >= 0;
+    const candles = marketCoinCandles[coin.id] || [];
+    const info = marketCoinInfo[coin.id];
+    return (
+      <Modal visible animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setSelectedMarketCoin(null)} style={st.back_btn}>
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <Text style={st.modal_title}>{coin.name}</Text>
+              <Text style={st.modal_sub}>{sym} / USD</Text>
+            </View>
+            <TouchableOpacity onPress={() => toggleFavorite(sym)} style={st.back_btn}>
+              <Text style={{ fontSize: 20 }}>{favorites.includes(sym) ? '⭐' : '☆'}</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1 }}>
+            <View style={st.detail_price_wrap}>
+              <Text style={st.detail_price}>{fmt(coin.current_price, coin.current_price < 1 ? 6 : 2)}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                <View style={[st.change_badge, { backgroundColor: positive ? T.greenBg : T.redBg }]}>
+                  <Text style={{ color: positive ? T.green : T.red, fontWeight: 'bold', fontSize: 13 }}>
+                    {positive ? '▲ +' : '▼ '}{Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}% (24h)
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {candles.length > 0 && (
+              <View style={{ paddingHorizontal: 16 }}>
+                <CandlestickChart candles={candles} />
+              </View>
+            )}
+
+            <View style={st.detail_grid}>
+              {[
+                { label: 'Prix',       val: fmt(coin.current_price, 4) },
+                { label: 'Market Cap', val: fmt(coin.market_cap) },
+              ].map(item => (
+                <View key={item.label} style={st.detail_stat}>
+                  <Text style={st.detail_stat_lbl}>{item.label}</Text>
+                  <Text style={st.detail_stat_val}>{item.val}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={[st.warning_box, { marginHorizontal: 16 }]}>
+              <Text style={st.warning_txt}>
+                ℹ️ Cette crypto n'est pas gérée par ce wallet (pas d'adresse dédiée pour cette chaîne) —
+                lecture seule : prix et infos uniquement, pas d'envoi ni d'achat direct.
+              </Text>
+            </View>
+
+            {renderCoinAbout(info, coin.id, T.violet)}
 
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -1446,7 +2195,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   const renderSend = () => (
     <Modal visible={showSend} animationType="slide" transparent>
-      <SafeAreaView style={st.modal_bg}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
           <TouchableOpacity onPress={() => setShowSend(false)} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1454,7 +2203,7 @@ export default function App() {
           <Text style={st.modal_title}>Envoyer</Text>
           <View style={{ width: 40 }} />
         </View>
-        <ScrollView style={{ padding: 16 }}>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
           <View style={st.network_badge}>
             <Text style={{ color: T.orange, fontSize: 12, fontWeight: 'bold' }}>⛓️ {activeNetwork.label.toUpperCase()} • SOLDE RÉEL</Text>
           </View>
@@ -1502,7 +2251,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   const renderReceive = () => (
     <Modal visible={showReceive} animationType="slide" transparent>
-      <SafeAreaView style={st.modal_bg}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
           <TouchableOpacity onPress={() => setShowReceive(false)} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1510,7 +2259,7 @@ export default function App() {
           <Text style={st.modal_title}>Recevoir</Text>
           <View style={{ width: 40 }} />
         </View>
-        <ScrollView contentContainerStyle={{ alignItems: 'center', padding: 24 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', padding: 24 }}>
           <View style={st.network_badge}>
             <Text style={{ color: T.blue, fontSize: 11 }}>EVM Compatible • Ethereum, Polygon, BNB…</Text>
           </View>
@@ -1535,7 +2284,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   const renderHistory = () => (
     <Modal visible={showHistory} animationType="slide" transparent>
-      <SafeAreaView style={st.modal_bg}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
           <TouchableOpacity onPress={() => setShowHistory(false)} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1545,7 +2294,7 @@ export default function App() {
             <Text style={{ color: T.text, fontSize: 18 }}>↻</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView style={{ padding: 16 }}>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
           {historyLoading && (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <ActivityIndicator color={T.green} size="large" />
@@ -1601,7 +2350,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   const renderSettings = () => (
     <Modal visible={showSettings} animationType="slide" transparent>
-      <SafeAreaView style={st.modal_bg}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
           <TouchableOpacity onPress={() => setShowSettings(false)} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1609,7 +2358,7 @@ export default function App() {
           <Text style={st.modal_title}>Paramètres</Text>
           <View style={{ width: 40 }} />
         </View>
-        <ScrollView style={{ padding: 16 }}>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={st.settings_section}>💱 Devise</Text>
           {Object.entries(CURRENCIES).map(([code, cur]) => (
             <TouchableOpacity key={code} style={[st.settings_row, currency === code && st.settings_row_on]} onPress={() => setCurrency(code)}>
@@ -1698,6 +2447,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   const renderHome = () => (
     <ScrollView
+      style={{ flex: 1 }}
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchMarket(); }} tintColor={T.green} />
@@ -1714,20 +2464,23 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      <LinearGradient
-        colors={[T.card2, T.card, T.bg]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={st.balance_wrap}
-      >
-        <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-          <Text style={{ color: todayChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
-            {todayChange >= 0 ? '+' : ''}{fmt(todayChange)} ({((todayChange / Math.max(totalUSD - todayChange, 1)) * 100).toFixed(2)}%)
-          </Text>
-          <Text style={{ color: T.text2, fontSize: 12, marginLeft: 6 }}>24h</Text>
-        </View>
-      </LinearGradient>
+      <View style={{ position: 'relative', marginHorizontal: 14 }}>
+        <BalanceGlow />
+        <LinearGradient
+          colors={[T.card2, T.card, T.bg]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[st.balance_wrap, { marginHorizontal: 0 }]}
+        >
+          <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <Text style={{ color: todayChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
+              {todayChange >= 0 ? '+' : ''}{fmt(todayChange)} ({((todayChange / Math.max(totalUSD - todayChange, 1)) * 100).toFixed(2)}%)
+            </Text>
+            <Text style={{ color: T.text2, fontSize: 12, marginLeft: 6 }}>24h</Text>
+          </View>
+        </LinearGradient>
+      </View>
 
       <View style={st.quick_actions}>
         {[
@@ -1746,37 +2499,86 @@ export default function App() {
         ))}
       </View>
 
+      {!!favoriteMarketCoins.length && (
+        <>
+          <View style={st.section_hdr}>
+            <Text style={st.section_title}>⭐ Favoris</Text>
+          </View>
+          <View style={isWideWeb && st.token_grid}>
+            {favoriteMarketCoins.map((coin, i) => {
+              const sym = coin.symbol?.toUpperCase() || '';
+              const pos = (coin.price_change_percentage_24h || 0) >= 0;
+              return (
+                <FadeInView key={coin.id} deps={[coin.id]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
+                  <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedMarketCoin(coin)}>
+                    <CoinLogo logo={coin.image} icon="🪙" size={44} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.token_name}>{coin.name}</Text>
+                      <Text style={st.token_price_txt}>
+                        {fmt(coin.current_price, coin.current_price < 1 ? 4 : 2)}
+                        <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
+                          {' '}{pos ? '+' : ''}{(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                        </Text>
+                      </Text>
+                    </View>
+                  </AnimPressable>
+                  <TouchableOpacity
+                    style={st.market_card_fav}
+                    onPress={() => toggleFavorite(sym)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 16 }}>⭐</Text>
+                  </TouchableOpacity>
+                </FadeInView>
+              );
+            })}
+          </View>
+        </>
+      )}
+
       <View style={st.section_hdr}>
         <Text style={st.section_title}>Mes Tokens</Text>
       </View>
 
-      {Object.entries(tokens).map(([sym, t]) => {
-        const val = (t.balance || 0) * (t.price || 0);
-        const pos = (t.change24h || 0) >= 0;
-        return (
-          <AnimPressable key={sym} style={st.token_row} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
-            <CoinLogo logo={t.logo} icon={t.icon} size={44} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={st.token_name}>{t.name}</Text>
-                {t.readOnly && (
-                  <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
-                )}
-              </View>
-              <Text style={st.token_price_txt}>
-                {fmt(t.price, t.price < 1 ? 4 : 2)}
-                <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
-                  {' '}{pos ? '+' : ''}{(t.change24h || 0).toFixed(2)}%
-                </Text>
-              </Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={st.token_val}>{fmt(val)}</Text>
-              <Text style={st.token_bal}>{(t.balance || 0).toFixed(4)} {sym}</Text>
-            </View>
-          </AnimPressable>
-        );
-      })}
+      <View style={isWideWeb && st.token_grid}>
+        {Object.entries(tokens).map(([sym, t], i) => {
+          const val = (t.balance || 0) * (t.price || 0);
+          const pos = (t.change24h || 0) >= 0;
+          const isFav = favorites.includes(sym);
+          return (
+            <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
+              <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
+                <CoinLogo logo={t.logo} icon={t.icon} size={44} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={st.token_name}>{t.name}</Text>
+                    {t.readOnly && (
+                      <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
+                    )}
+                  </View>
+                  <Text style={st.token_price_txt}>
+                    {fmt(t.price, t.price < 1 ? 4 : 2)}
+                    <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
+                      {' '}{pos ? '+' : ''}{(t.change24h || 0).toFixed(2)}%
+                    </Text>
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={st.token_val}>{fmt(val)}</Text>
+                  <Text style={st.token_bal}>{(t.balance || 0).toFixed(4)} {sym}</Text>
+                </View>
+              </AnimPressable>
+              <TouchableOpacity
+                style={st.market_card_fav}
+                onPress={() => toggleFavorite(sym)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={{ fontSize: 16 }}>{isFav ? '⭐' : '☆'}</Text>
+              </TouchableOpacity>
+            </FadeInView>
+          );
+        })}
+      </View>
 
       <View style={{ height: 90 }} />
     </ScrollView>
@@ -1792,6 +2594,7 @@ export default function App() {
           placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
       </View>
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -1832,33 +2635,43 @@ export default function App() {
           <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
         </View>
         <View style={st.market_grid}>
-          {filteredCoins.map((coin) => {
+          {filteredCoins.map((coin, i) => {
             const pos = (coin.price_change_percentage_24h || 0) >= 0;
             const p = coin.current_price || 0;
-            const known = WALLET_TOKENS[coin.symbol?.toUpperCase()];
+            const sym = coin.symbol?.toUpperCase() || '';
+            const known = WALLET_TOKENS[sym];
+            const isFav = favorites.includes(sym);
             return (
-              <AnimPressable
-                key={coin.id}
-                style={st.market_card}
-                scaleTo={0.95}
-                onPress={() => known && setSelectedToken(coin.symbol.toUpperCase())}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <CoinLogo logo={coin.image} icon="🪙" size={30} />
-                  <View style={{ marginLeft: 8, flex: 1 }}>
-                    <Text style={st.market_card_sym} numberOfLines={1}>{coin.symbol?.toUpperCase()}</Text>
-                    <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
+              <FadeInView key={coin.id} deps={[coin.id]} style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
+                <AnimPressable
+                  style={st.market_card}
+                  scaleTo={0.95}
+                  onPress={() => known ? setSelectedToken(sym) : setSelectedMarketCoin(coin)}
+                >
+                  <TouchableOpacity
+                    style={st.market_card_fav}
+                    onPress={(e) => { e.stopPropagation?.(); toggleFavorite(sym); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 14 }}>{isFav ? '⭐' : '☆'}</Text>
+                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <CoinLogo logo={coin.image} icon="🪙" size={30} />
+                    <View style={{ marginLeft: 8, flex: 1 }}>
+                      <Text style={st.market_card_sym} numberOfLines={1}>{sym}</Text>
+                      <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
+                    </View>
                   </View>
-                </View>
-                <Text style={st.market_card_price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
-                  {fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}
-                </Text>
-                <View style={[st.market_card_badge, { backgroundColor: pos ? T.greenBg : T.redBg }]}>
-                  <Text style={{ color: pos ? T.green : T.red, fontSize: 11, fontWeight: 'bold' }}>
-                    {pos ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                  <Text style={st.market_card_price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+                    {fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}
                   </Text>
-                </View>
-              </AnimPressable>
+                  <View style={[st.market_card_badge, { backgroundColor: pos ? T.greenBg : T.redBg }]}>
+                    <Text style={{ color: pos ? T.green : T.red, fontSize: 11, fontWeight: 'bold' }}>
+                      {pos ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                    </Text>
+                  </View>
+                </AnimPressable>
+              </FadeInView>
             );
           })}
         </View>
@@ -1877,7 +2690,10 @@ export default function App() {
     const tprice = tt?.price || 1;
     const rate = tprice > 0 ? fprice / tprice : 0;
     return (
-      <ScrollView style={{ padding: 16 }}>
+      <ScrollView
+        style={{ flex: 1, padding: 16 }}
+        contentContainerStyle={isWideWeb ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : undefined}
+      >
         <Text style={st.tab_title}>⇄ Achat / Vente live</Text>
         <View style={st.swap_card}>
           <Text style={st.swap_lbl}>Tu paies</Text>
@@ -1885,15 +2701,19 @@ export default function App() {
             placeholder="0" placeholderTextColor={T.text3} keyboardType="numeric" />
           <Text style={{ color: T.text2, fontSize: 12, marginBottom: 10 }}>≈ {fmt((parseFloat(swapAmt) || 0) * fprice)}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {Object.entries(tokens).map(([sym, t]) => (
-              <TouchableOpacity key={sym}
-                style={[st.swap_tok_btn, swapFrom === sym && st.swap_tok_btn_on]}
-                onPress={() => setSwapFrom(sym)}
-              >
-                <CoinLogo logo={t.logo} icon={t.icon} size={20} />
-                <Text style={[{ color: T.text2, fontWeight: 'bold', fontSize: 11, marginLeft: 4 }, swapFrom === sym && { color: T.text }]}>{sym}</Text>
-              </TouchableOpacity>
-            ))}
+            {(SWAPPABLE_TOKENS[network] || []).map((sym) => {
+              const t = tokens[sym];
+              if (!t) return null;
+              return (
+                <TouchableOpacity key={sym}
+                  style={[st.swap_tok_btn, swapFrom === sym && st.swap_tok_btn_on]}
+                  onPress={() => setSwapFrom(sym)}
+                >
+                  <CoinLogo logo={t.logo} icon={t.icon} size={20} />
+                  <Text style={[{ color: T.text2, fontWeight: 'bold', fontSize: 11, marginLeft: 4 }, swapFrom === sym && { color: T.text }]}>{sym}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
@@ -1908,32 +2728,33 @@ export default function App() {
           </Text>
           <Text style={{ color: T.text2, fontSize: 12, marginBottom: 10 }}>≈ {fmt((parseFloat(swapRes) || 0) * tprice)}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {Object.entries(tokens).map(([sym, t]) => (
-              <TouchableOpacity key={sym}
-                style={[st.swap_tok_btn, swapTo === sym && st.swap_tok_btn_green]}
-                onPress={() => setSwapTo(sym)}
-              >
-                <CoinLogo logo={t.logo} icon={t.icon} size={20} />
-                <Text style={[{ color: T.text2, fontWeight: 'bold', fontSize: 11, marginLeft: 4 }, swapTo === sym && { color: T.text }]}>{sym}</Text>
-              </TouchableOpacity>
-            ))}
+            {(SWAPPABLE_TOKENS[network] || []).map((sym) => {
+              const t = tokens[sym];
+              if (!t) return null;
+              return (
+                <TouchableOpacity key={sym}
+                  style={[st.swap_tok_btn, swapTo === sym && st.swap_tok_btn_green]}
+                  onPress={() => setSwapTo(sym)}
+                >
+                  <CoinLogo logo={t.logo} icon={t.icon} size={20} />
+                  <Text style={[{ color: T.text2, fontWeight: 'bold', fontSize: 11, marginLeft: 4 }, swapTo === sym && { color: T.text }]}>{sym}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
-        <AnimPressable style={[st.green_btn, { marginTop: 16 }]}
-          onPress={() => {
-            if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
-            const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
-            const available = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
-            if (parseFloat(swapAmt) > available) {
-              showAlert('Solde insuffisant', `Tu n’as pas assez de ${swapFrom} pour cette opération.`);
-              return;
-            }
-            showAlert('Opération prête', `${swapAmt} ${swapFrom} → ${parseFloat(swapRes).toFixed(8)} ${swapTo}\nLe solde réel sera vérifié sur la blockchain.`);
-            setSwapAmt('');
-          }}
+        <Text style={{ color: T.text3, fontSize: 11, marginTop: 4, textAlign: 'center' }}>
+          Swap réel via agrégateur DEX (0x) — la meilleure route est cherchée automatiquement.
+        </Text>
+
+        <AnimPressable style={[st.green_btn, { marginTop: 16 }, swapLoading && { opacity: 0.6 }]}
+          disabled={swapLoading}
+          onPress={handleSwapConfirm}
         >
-          <Text style={st.green_btn_txt}>Confirmer</Text>
+          {swapLoading
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={st.green_btn_txt}>Confirmer</Text>}
         </AnimPressable>
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -1942,7 +2763,7 @@ export default function App() {
 
   const renderBuy = () => (
     <Modal visible={showBuy} animationType="slide" transparent>
-      <SafeAreaView style={st.modal_bg}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
           <TouchableOpacity onPress={() => setShowBuy(false)} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
@@ -1950,7 +2771,7 @@ export default function App() {
           <Text style={st.modal_title}>Acheter des crypto</Text>
           <View style={{ width: 40 }} />
         </View>
-        <ScrollView style={{ padding: 16 }}>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={st.form_label}>Token ({activeNetwork.label})</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
             {(BUYABLE_TOKENS[network] || []).map((sym) => {
@@ -1988,42 +2809,79 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   //  RENDER PRINCIPAL
   // ════════════════════════════════════════════════════════
+  const navItems = [
+    { id: 'home',     icon: '🏡', label: 'Accueil'  },
+    { id: 'markets',  icon: '💹', label: 'Marché'   },
+    { id: 'swap',     icon: '⇄',  label: 'Swap', big: true },
+  ];
+
+  const liveBar = (
+    <View style={st.live_bar}>
+      <PulseDot color={T.green} size={7} />
+      <Text style={st.live_bar_txt}>Live • CoinGecko • {currency}</Text>
+    </View>
+  );
+
+  const tabContent = (
+    <View style={{ flex: 1 }}>
+      {tab === 'home'     && renderHome()}
+      {tab === 'markets'  && renderMarkets()}
+      {tab === 'swap'     && renderSwap()}
+    </View>
+  );
+
   return (
-    <SafeAreaView style={st.container}>
+    <SafeAreaView style={[st.container, isWideWeb && st.container_wide]}>
       <StatusBar barStyle="light-content" backgroundColor={T.bg} />
-      <View style={st.live_bar}>
-        <View style={st.live_dot} />
-        <Text style={st.live_bar_txt}>Live • CoinGecko • {currency}</Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        {tab === 'home'     && renderHome()}
-        {tab === 'markets'  && renderMarkets()}
-        {tab === 'swap'     && renderSwap()}
-      </View>
+      {isWideWeb ? (
+        <View style={st.desktop_shell}>
+          <View style={st.sidebar}>
+            <Text style={st.sidebar_logo}>⬡ NexiaWallet</Text>
+            <View style={{ marginTop: 34, gap: 4 }}>
+              {navItems.map(n => (
+                <AnimPressable key={n.id} style={[st.sidebar_item, tab === n.id && st.sidebar_item_on]} scaleTo={0.97} onPress={() => setTab(n.id)}>
+                  <Text style={st.sidebar_icon}>{n.icon}</Text>
+                  <Text style={[st.sidebar_lbl, tab === n.id && st.sidebar_lbl_on]}>{n.label}</Text>
+                </AnimPressable>
+              ))}
+            </View>
+            <AnimPressable style={[st.sidebar_item, { marginTop: 'auto' }]} scaleTo={0.97} onPress={() => setShowSettings(true)}>
+              <Text style={st.sidebar_icon}>⚙️</Text>
+              <Text style={st.sidebar_lbl}>Paramètres</Text>
+            </AnimPressable>
+          </View>
+          <View style={{ flex: 1 }}>
+            {liveBar}
+            {tabContent}
+          </View>
+        </View>
+      ) : (
+        <>
+          {liveBar}
+          {tabContent}
+          <View style={st.bottom_nav}>
+            {navItems.map(n => (
+              <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
+                {n.big ? (
+                  <View style={[st.nav_big_btn, { backgroundColor: tab === n.id ? T.green : T.card2 }]}>
+                    <Text style={{ fontSize: 20, color: tab === n.id ? '#000' : T.text2 }}>{n.icon}</Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={[st.nav_icon_wrap, tab === n.id && st.nav_icon_wrap_on]}>
+                      <Text style={{ fontSize: 18 }}>{n.icon}</Text>
+                    </View>
+                    <Text style={[st.nav_lbl, tab === n.id && st.nav_lbl_on]}>{n.label}</Text>
+                  </>
+                )}
+              </AnimPressable>
+            ))}
+          </View>
+        </>
+      )}
       {renderBuy()}
-      <View style={st.bottom_nav}>
-        {[
-          { id: 'home',     icon: '🏡', label: 'Accueil'  },
-          { id: 'markets',  icon: '💹', label: 'Marché'   },
-          { id: 'swap',     icon: '⇄',  label: 'Swap', big: true },
-        ].map(n => (
-          <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
-            {n.big ? (
-              <View style={[st.nav_big_btn, { backgroundColor: tab === n.id ? T.green : T.card2 }]}>
-                <Text style={{ fontSize: 20, color: tab === n.id ? '#000' : T.text2 }}>{n.icon}</Text>
-              </View>
-            ) : (
-              <>
-                <View style={[st.nav_icon_wrap, tab === n.id && st.nav_icon_wrap_on]}>
-                  <Text style={{ fontSize: 18 }}>{n.icon}</Text>
-                </View>
-                <Text style={[st.nav_lbl, tab === n.id && st.nav_lbl_on]}>{n.label}</Text>
-              </>
-            )}
-          </AnimPressable>
-        ))}
-      </View>
       {!!selectedToken && renderTokenDetail()}
+      {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
       {renderReceive()}
       {renderHistory()}
@@ -2040,10 +2898,33 @@ export default function App() {
 // (boutons pleine largeur, PIN géant...) — l'app a été pensée pour un écran
 // de téléphone. On plafonne donc la largeur et on centre sur le web ; aucun
 // effet sur natif (Platform.OS !== 'web' → objet vide).
-const webFrame = Platform.OS === 'web' ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : {};
+// `height:'100vh'` est nécessaire ici : le #root d'Expo web est en
+// `flex-direction:row`, ce qui empêche le "stretch" habituel de borner la
+// hauteur de cet écran — sans ça, une ScrollView à l'intérieur grandit à la
+// taille de son contenu au lieu de scroller (le contenu déborde, figé).
+// Pour la même raison (row, pas column), `alignSelf:'center'` centre ici
+// verticalement et non horizontalement — les marges auto restent le seul
+// moyen fiable de centrer horizontalement quel que soit le sens du parent.
+const webFrame = Platform.OS === 'web'
+  ? { maxWidth: 480, width: '100%', marginLeft: 'auto', marginRight: 'auto', height: '100vh' }
+  : {};
 
 const st = StyleSheet.create({
   container:    { flex: 1, backgroundColor: T.bg, ...webFrame },
+  // Mode bureau : le shell mobile (480px) laisse place à une vraie mise en
+  // page de site — sidebar fixe + contenu large, plus de bottom nav.
+  container_wide: { maxWidth: 1180 },
+  desktop_shell:  { flex: 1, flexDirection: 'row' },
+  sidebar: {
+    width: 232, borderRightWidth: 1, borderRightColor: T.border,
+    paddingHorizontal: 18, paddingVertical: 28,
+  },
+  sidebar_logo:   { color: T.text, fontSize: 18, fontWeight: 'bold' },
+  sidebar_item:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12 },
+  sidebar_item_on:{ backgroundColor: T.greenBg },
+  sidebar_icon:   { fontSize: 18, marginRight: 12, width: 22, textAlign: 'center' },
+  sidebar_lbl:    { color: T.text2, fontSize: 14, fontWeight: '600' },
+  sidebar_lbl_on: { color: T.green },
   live_bar:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 6, backgroundColor: T.card, borderBottomWidth: 1, borderBottomColor: T.border },
   live_bar_txt: { color: T.text2, fontSize: 11, marginLeft: 6 },
   live_dot:     { width: 7, height: 7, borderRadius: 4, backgroundColor: T.green },
@@ -2056,22 +2937,15 @@ const st = StyleSheet.create({
   pin_dots:        { flexDirection: 'row', marginBottom: 50 },
   pin_dot:         { width: 13, height: 13, borderRadius: 7, borderWidth: 2, borderColor: T.border, marginHorizontal: 10 },
   pin_dot_on:      { backgroundColor: T.green, borderColor: T.green },
-  pin_pad:         { width: width * 0.76, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  pin_pad:         { width: '76%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   pin_key:         { width: '28%', height: 62, justifyContent: 'center', alignItems: 'center', marginVertical: 6, backgroundColor: T.card, borderRadius: 31, borderWidth: 1, borderColor: T.border },
   pin_key_txt:     { color: T.text, fontSize: 24, fontWeight: '500' },
-  auth_card:       { width: width * 0.86, backgroundColor: T.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
-  auth_card_title: { color: T.text, fontSize: 14, fontWeight: '700', marginBottom: 6 },
-  auth_card_text:  { color: T.text2, fontSize: 12, lineHeight: 18, marginBottom: 10 },
   network_switch:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   network_chip:    { backgroundColor: T.card2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: T.border, marginRight: 6 },
   network_chip_on: { backgroundColor: T.blueBg, borderColor: T.blue },
   network_chip_txt:{ color: T.text2, fontSize: 11, fontWeight: '700' },
-  auth_actions:    { flexDirection: 'row', justifyContent: 'space-between', width: width * 0.82, marginBottom: 20 },
-  auth_btn:        { flex: 1, backgroundColor: T.card, paddingVertical: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, alignItems: 'center', marginHorizontal: 4 },
-  auth_btn_txt:    { color: T.text, fontSize: 13, fontWeight: '700' },
-  auth_status:     { color: T.text2, fontSize: 13, marginBottom: 20 },
-  auth_error:      { color: T.red, fontSize: 12, marginBottom: 16, textAlign: 'center', width: width * 0.84 },
-  import_card:     { width: width * 0.86, backgroundColor: T.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: T.border, marginBottom: 20 },
+  auth_error:      { color: T.red, fontSize: 12, marginBottom: 16, textAlign: 'center', width: '84%' },
+  import_card:     { width: '86%', backgroundColor: T.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: T.border, marginBottom: 20 },
   import_switch:   { flexDirection: 'row', marginBottom: 12, borderRadius: 14, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border },
   import_type_btn: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 14 },
   import_type_btn_on: { backgroundColor: T.blueBg },
@@ -2081,6 +2955,10 @@ const st = StyleSheet.create({
   import_confirm_btn:{ backgroundColor: T.green, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
 
   modal_bg:    { flex: 1, backgroundColor: T.bg, ...webFrame },
+  // Sur grand écran, une fenêtre (Envoyer/Recevoir/Paramètres...) en pleine
+  // largeur (1180px) serait absurde — on la resserre façon dialogue, centrée,
+  // avec une bordure pour la détacher visuellement du fond.
+  modal_bg_wide: { maxWidth: 560, marginLeft: 'auto', marginRight: 'auto', borderLeftWidth: 1, borderRightWidth: 1, borderColor: T.border },
   modal_hdr:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.border },
   modal_title: { color: T.text, fontSize: 18, fontWeight: 'bold' },
   modal_title_lg: { color: T.text, fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 12 },
@@ -2146,6 +3024,8 @@ const st = StyleSheet.create({
     marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border,
     shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
   },
+  token_grid:     { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 6 },
+  token_row_wide: { width: '32%', marginHorizontal: '0.66%' },
   token_name:    { color: T.text, fontSize: 14, fontWeight: '600' },
   token_price_txt:{ color: T.text2, fontSize: 12, marginTop: 2 },
   token_val:     { color: T.text, fontSize: 14, fontWeight: '600' },
@@ -2164,11 +3044,16 @@ const st = StyleSheet.create({
   news_date:  { color: T.text3, fontSize: 10 },
 
   market_grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 14 },
+  // La largeur (part de grille) vit sur le wrapper FadeInView ; `market_card`
+  // ne porte que l'habillage visuel et remplit ce wrapper (stretch par défaut).
+  market_card_slot:      { width: '48%', marginBottom: 12 },
+  market_card_slot_wide: { width: '23.5%' },
   market_card: {
-    width: '48%', backgroundColor: T.card, borderRadius: 16, padding: 12, marginBottom: 12,
-    borderWidth: 1, borderColor: T.border,
+    backgroundColor: T.card, borderRadius: 16, padding: 12,
+    borderWidth: 1, borderColor: T.border, position: 'relative',
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
   },
+  market_card_fav: { position: 'absolute', top: 8, right: 8, zIndex: 1, padding: 2 },
   market_card_sym:  { color: T.text, fontSize: 13, fontWeight: '700' },
   market_card_name: { color: T.text2, fontSize: 10, marginTop: 1 },
   market_card_price:{ color: T.text, fontSize: 16, fontWeight: 'bold', marginTop: 10 },
@@ -2235,4 +3120,105 @@ const st = StyleSheet.create({
     backgroundColor: T.greenBg,
     shadowColor: T.green, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 5, elevation: 3,
   },
+
+  // ── LANDING PUBLIQUE (écran d'accueil, style "Nexia") ──
+  land_screen: { flex: 1, backgroundColor: T.deepBg, ...webFrame },
+  land_screen_wide: { maxWidth: 1180 },
+  land_scroll_flex: { flex: 1 },
+  land_scroll: { paddingBottom: 48 },
+
+  land_hero:      { alignItems: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8 },
+  land_hero_wide: { paddingHorizontal: 48, paddingTop: 56, paddingBottom: 24 },
+  land_hero_row:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 40 },
+  land_hero_col_text:  { flex: 1, alignItems: 'flex-start' },
+  land_hero_col_visual:{ width: 340, alignItems: 'center' },
+  land_title_wide:    { textAlign: 'left', fontSize: 44, lineHeight: 52 },
+  land_subtitle_wide: { textAlign: 'left', maxWidth: 440, marginLeft: 0 },
+  land_eyebrow:   {
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: 999, borderWidth: 1, borderColor: T.stroke, backgroundColor: 'rgba(124,58,237,0.10)', marginBottom: 6,
+  },
+  land_eyebrow_dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: T.cyan },
+  land_eyebrow_txt: { color: T.cyan, fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
+
+  land_orbit_wrap:   { width: 260, height: 260, alignItems: 'center', justifyContent: 'center', marginVertical: 6 },
+  land_orbit_center: { alignItems: 'center', justifyContent: 'center' },
+
+  land_title:      { color: T.text, fontSize: 30, fontWeight: '800', textAlign: 'center', lineHeight: 36, marginTop: 8 },
+  land_title_grad: { color: T.cyan },
+  land_subtitle:   { color: T.text2, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 14, maxWidth: 340 },
+
+  land_marquee:       { borderTopWidth: 1, borderBottomWidth: 1, borderColor: T.stroke, paddingVertical: 12, marginTop: 26, overflow: 'hidden' },
+  land_marquee_track: { flexDirection: 'row' },
+  land_marquee_item:  { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16 },
+  land_marquee_icon:  { fontSize: 15 },
+  land_marquee_sym:   { color: T.text, fontSize: 13, fontWeight: '700' },
+  land_marquee_chg:   { fontSize: 12, fontWeight: '700' },
+
+  land_section:         { paddingHorizontal: 20, paddingTop: 34 },
+  land_section_eyebrow: { color: T.cyan, fontSize: 11, letterSpacing: 1.6, fontWeight: '700', textAlign: 'center', marginBottom: 8 },
+  land_section_title:   { color: T.text, fontSize: 21, fontWeight: '700', textAlign: 'center', lineHeight: 27, marginBottom: 20 },
+
+  land_features_grid: { gap: 14 },
+  land_features_grid_wide: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 0 },
+  land_feature_card_wide: { width: '31.5%' },
+  land_feature_card:  {
+    borderRadius: 18, padding: 18, borderWidth: 1, borderColor: T.stroke,
+    backgroundColor: 'rgba(124,58,237,0.06)', overflow: 'hidden',
+  },
+  land_feature_glare: {
+    position: 'absolute', width: 220, height: 220, borderRadius: 110,
+    marginLeft: -110, marginTop: -110, backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  land_feature_icon: {
+    width: 46, height: 46, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+    backgroundColor: 'rgba(34,211,238,0.12)', borderWidth: 1, borderColor: 'rgba(34,211,238,0.3)',
+  },
+  land_feature_title: { color: T.text, fontSize: 15, fontWeight: '700', marginBottom: 8 },
+  land_feature_desc:  { color: T.text2, fontSize: 13, lineHeight: 19 },
+
+  land_checklist: { gap: 16 },
+  land_narrow_wide: { maxWidth: 560, alignSelf: 'center', width: '100%' },
+  land_security_split:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 40 },
+  land_security_visual: { width: 280, alignItems: 'center' },
+  land_check_row: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  land_check_bullet: {
+    width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginTop: 2,
+    backgroundColor: 'rgba(34,211,238,0.08)', borderWidth: 1, borderColor: 'rgba(34,211,238,0.4)',
+  },
+  land_check_title: { color: T.text, fontSize: 14, fontWeight: '700', marginBottom: 2 },
+  land_check_desc:  { color: T.text2, fontSize: 12.5, lineHeight: 18 },
+
+  land_stats_wrap: {
+    flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: 20, marginTop: 34,
+    borderRadius: 20, borderWidth: 1, borderColor: T.stroke, backgroundColor: 'rgba(124,58,237,0.06)',
+    paddingVertical: 22,
+  },
+  land_stat:     { width: '50%', alignItems: 'center', marginBottom: 14 },
+  land_stat_wide:{ width: '25%', marginBottom: 0 },
+  land_stat_num: { color: T.cyan, fontSize: 24, fontWeight: '800' },
+  land_stat_lbl: { color: T.text2, fontSize: 11, marginTop: 4, textAlign: 'center' },
+
+  land_steps_row_wide: { flexDirection: 'row', gap: 16 },
+  land_step: {
+    borderRadius: 18, borderWidth: 1, borderColor: T.stroke, padding: 20, marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.015)',
+  },
+  land_step_wide: { flex: 1, marginBottom: 0 },
+  land_step_num:   { color: T.violet, fontSize: 28, fontWeight: '800', marginBottom: 8 },
+  land_step_title: { color: T.text, fontSize: 15, fontWeight: '700', marginBottom: 6 },
+  land_step_desc:  { color: T.text2, fontSize: 13, lineHeight: 19 },
+
+  land_cta: { alignItems: 'center', paddingHorizontal: 20, paddingTop: 34 },
+  land_network_switch: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 4 },
+  land_cta_actions: { width: '100%', gap: 12, marginTop: 18 },
+  land_cta_btn_primary: {
+    borderRadius: 16, paddingVertical: 16, alignItems: 'center', backgroundColor: T.violet,
+    shadowColor: T.violet, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14, elevation: 6,
+  },
+  land_cta_btn_primary_txt: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
+  land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
+
+  land_footer: { color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 40, letterSpacing: 0.5 },
 });
