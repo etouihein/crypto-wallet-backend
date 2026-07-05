@@ -329,11 +329,16 @@ const clearBiometricPin = async () => {
 const RECENT_ADDRESSES_KEY = 'wallet-pro-recent-addresses-v1';
 const MAX_RECENT_ADDRESSES = 8;
 
+// Ancien format : simple tableau de chaînes ("0x..."). Nouveau format :
+// tableau d'objets { address, label } pour permettre un nom optionnel
+// ("Binance", "Compte perso"...). On normalise à la lecture pour rester
+// compatible avec ce qui est déjà sauvegardé sur les appareils existants.
 const loadRecentAddresses = async () => {
   try {
     const raw = await AsyncStorage.getItem(RECENT_ADDRESSES_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(entry => typeof entry === 'string' ? { address: entry, label: '' } : entry);
   } catch { return []; }
 };
 
@@ -1196,6 +1201,8 @@ export default function App() {
   const [sendFeeEstimate, setSendFeeEstimate]   = useState(null);
   const [sendFeeLoading, setSendFeeLoading]     = useState(false);
   const [recentAddresses, setRecentAddresses]   = useState([]);
+  const [labelEditFor, setLabelEditFor]         = useState(null); // adresse en cours de renommage, ou null
+  const [labelInput, setLabelInput]             = useState('');
   // Scan QR : natif uniquement (caméra). Sur web, on propose "Coller" à la
   // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
   // pur serait un chantier à part, hors scope de ce passage).
@@ -1776,7 +1783,17 @@ export default function App() {
 
   const addRecentAddress = useCallback((address) => {
     setRecentAddresses(prev => {
-      const next = [address, ...prev.filter(a => a.toLowerCase() !== address.toLowerCase())].slice(0, MAX_RECENT_ADDRESSES);
+      const existing = prev.find(a => a.address.toLowerCase() === address.toLowerCase());
+      const entry = { address, label: existing?.label || '' };
+      const next = [entry, ...prev.filter(a => a.address.toLowerCase() !== address.toLowerCase())].slice(0, MAX_RECENT_ADDRESSES);
+      saveRecentAddresses(next);
+      return next;
+    });
+  }, []);
+
+  const setAddressLabel = useCallback((address, label) => {
+    setRecentAddresses(prev => {
+      const next = prev.map(a => a.address.toLowerCase() === address.toLowerCase() ? { ...a, label: label.trim() } : a);
       saveRecentAddresses(next);
       return next;
     });
@@ -3229,12 +3246,48 @@ export default function App() {
               <View style={{ marginBottom: 16 }}>
                 <Text style={[st.form_label, { marginBottom: 8 }]}>Adresses récentes</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {recentAddresses.map(addr => (
-                    <TouchableOpacity key={addr} style={st.recent_addr_chip} onPress={() => setSendAddress(addr)}>
-                      <Text style={st.recent_addr_txt}>{addr.slice(0, 6)}…{addr.slice(-4)}</Text>
-                    </TouchableOpacity>
+                  {recentAddresses.map(({ address, label }) => (
+                    <View key={address} style={st.recent_addr_chip}>
+                      <TouchableOpacity onPress={() => setSendAddress(address)}>
+                        <Text style={st.recent_addr_txt}>
+                          {label ? label : `${address.slice(0, 6)}…${address.slice(-4)}`}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={() => { setLabelEditFor(address); setLabelInput(label || ''); }}
+                      >
+                        <Text style={st.recent_addr_edit}>✏️</Text>
+                      </TouchableOpacity>
+                    </View>
                   ))}
                 </ScrollView>
+                {!!labelEditFor && (
+                  <View style={[st.alert_form, { marginTop: 10 }]}>
+                    <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8 }}>
+                      {labelEditFor.slice(0, 8)}…{labelEditFor.slice(-6)}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <TextInput
+                        style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+                        value={labelInput}
+                        onChangeText={setLabelInput}
+                        placeholder="Ex: Binance, Compte perso..."
+                        placeholderTextColor={T.text3}
+                        maxLength={24}
+                      />
+                      <TouchableOpacity
+                        style={[st.max_btn, { marginBottom: 0 }]}
+                        onPress={() => { setAddressLabel(labelEditFor, labelInput); setLabelEditFor(null); }}
+                      >
+                        <Text style={st.max_btn_txt}>OK</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity onPress={() => setLabelEditFor(null)} style={{ marginTop: 10 }}>
+                      <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             )}
 
@@ -3266,7 +3319,7 @@ export default function App() {
               );
             })()}
 
-            {!!sendAddress && sendAddress.length === 42 && !recentAddresses.includes(sendAddress) && (
+            {!!sendAddress && sendAddress.length === 42 && !recentAddresses.some(a => a.address.toLowerCase() === sendAddress.toLowerCase()) && (
               <View style={[st.warning_box, { marginTop: 12 }]}>
                 <Text style={st.warning_txt}>
                   🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
@@ -4353,8 +4406,9 @@ const st = StyleSheet.create({
   confirm_sub:      { color: T.text2, fontSize: 13, marginTop: 4 },
   confirm_addr_box: { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
   confirm_addr_txt: { color: T.green, fontFamily: 'monospace', fontSize: 13 },
-  recent_addr_chip: { backgroundColor: T.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderWidth: 1, borderColor: T.border },
-  recent_addr_txt:  { color: T.text2, fontSize: 12, fontWeight: '600', fontFamily: 'monospace' },
+  recent_addr_chip: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderWidth: 1, borderColor: T.border, gap: 8 },
+  recent_addr_txt:  { color: T.text2, fontSize: 12, fontWeight: '600' },
+  recent_addr_edit: { fontSize: 12, opacity: 0.7 },
   green_btn:     {
     backgroundColor: T.green, borderRadius: 14, padding: 16, alignItems: 'center',
     shadowColor: T.green, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
