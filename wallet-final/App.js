@@ -1238,6 +1238,10 @@ export default function App() {
   const activeNetwork = network === 'bsc'
     ? { label: 'BNB Smart Chain', network: 'bsc', chainId: 56, explorer: 'https://bscscan.com' }
     : { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1, explorer: 'https://etherscan.io' };
+  // Symbole du token natif du réseau actif — recalculé souvent ailleurs
+  // avant cette factorisation (envoi, swap, achat, affichage du solde) ;
+  // une seule source évite un oubli si BSC/Ethereum est un jour remplacé.
+  const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
 
   // ── FORMATAGE DEVISE ──
   const fmt = useCallback((usdVal, dec = 2) => {
@@ -1897,11 +1901,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setSendToken(network === 'bsc' ? 'BNB' : 'ETH');
-    setSwapFrom(network === 'bsc' ? 'BNB' : 'ETH');
+    setSendToken(nativeSymbol);
+    setSwapFrom(nativeSymbol);
     setSwapTo('USDT');
-    setBuyToken(network === 'bsc' ? 'BNB' : 'ETH');
-  }, [network]);
+    setBuyToken(nativeSymbol);
+  }, [network, nativeSymbol]);
 
   // ── CALCUL SWAP ──
   useEffect(() => {
@@ -2230,7 +2234,6 @@ export default function App() {
 
     const amt = parseFloat(sendAmount);
     if (isNaN(amt) || amt <= 0) { showAlert('Montant invalide'); return; }
-    const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
     const bal = (sendToken === nativeSymbol) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0);
     if (amt > bal) { showAlert('Solde insuffisant', `Tu as ${bal.toFixed(6)} ${sendToken}`); return; }
 
@@ -2260,7 +2263,6 @@ export default function App() {
   // Étape 2 : déclenchée depuis l'écran de confirmation — c'est ici, et
   // seulement ici, que la transaction est vraiment signée et diffusée.
   const confirmAndSend = async () => {
-    const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
     const isNative = sendToken === nativeSymbol;
 
     setSendLoading(true);
@@ -2307,7 +2309,6 @@ export default function App() {
     if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
     if (swapFrom === swapTo) { showAlert('Tokens identiques', 'Choisis deux tokens différents.'); return; }
 
-    const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
     const available = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
     if (parseFloat(swapAmt) > available) {
       showAlert('Solde insuffisant', `Tu n'as pas assez de ${swapFrom} pour cette opération.`);
@@ -3163,7 +3164,7 @@ export default function App() {
               </TouchableOpacity>
             </View>
             {(() => {
-              const sendableBalance = (sendToken === (network === 'bsc' ? 'BNB' : 'ETH'))
+              const sendableBalance = (sendToken === nativeSymbol)
                 ? parseFloat(walletBalance || '0')
                 : (tokens[sendToken]?.balance || 0);
               if (!sendableBalance) return null;
@@ -3192,7 +3193,7 @@ export default function App() {
 
             <View style={st.send_info_box}>
               <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
-              <Text style={st.send_info_line}>Solde réel: {((sendToken === (network === 'bsc' ? 'BNB' : 'ETH')) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
+              <Text style={st.send_info_line}>Solde réel: {((sendToken === nativeSymbol) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
               <Text style={st.send_info_line}>Réseau: {activeNetwork.label} • validation directe</Text>
             </View>
 
@@ -3546,7 +3547,7 @@ export default function App() {
         <View>
           <Text style={st.home_account}>Mon Wallet</Text>
           <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : 'Adresse en attente...'}</Text>
-          <Text style={[st.home_addr, { fontSize: 12, color: T.text3, marginTop: 4 }]}>Solde {activeNetwork.label}: {parseFloat(walletBalance || '0').toFixed(6)} {network === 'bsc' ? 'BNB' : 'ETH'}</Text>
+          <Text style={[st.home_addr, { fontSize: 12, color: T.text3, marginTop: 4 }]}>Solde {activeNetwork.label}: {parseFloat(walletBalance || '0').toFixed(6)} {nativeSymbol}</Text>
         </View>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn}>
           <Text style={{ fontSize: 20 }}>⚙️</Text>
