@@ -2321,7 +2321,7 @@ export default function App() {
   // n'est signé ni diffusé ici, juste une estimation des frais pour que
   // l'utilisateur voie tout (adresse, montant, frais) avant de confirmer.
   const prepareSend = async () => {
-    if (!sendAddress || !sendAmount) { showAlert('Champs manquants'); return; }
+    if (!sendAddress || !sendAmount) { showAlert('Champs manquants', 'Renseigne une adresse de destination et un montant.'); return; }
 
     if (!sendAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
       showAlert('Adresse invalide', 'Doit commencer par 0x et contenir 40 caractères hexadécimaux.');
