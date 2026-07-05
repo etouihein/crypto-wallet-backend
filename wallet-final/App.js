@@ -3683,7 +3683,14 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   //  MODAL: DOCUMENT LÉGAL (CGU / Confidentialité / Mentions légales)
   // ════════════════════════════════════════════════════════
-  const renderLegal = () => {
+  // Déclaration `function` (pas `const ... =>`) et volontairement : elle est
+  // appelée à la fois depuis la landing (avant que l'exécution du corps du
+  // composant n'atteigne cette ligne) et depuis la pile de modales plus bas.
+  // Une `const` n'aurait pas été hissée et aurait plané tant qu'aucun wallet
+  // n'existe (ReferenceError "Cannot access before initialization" -> écran
+  // noir). Une déclaration `function` est hissée entièrement, donc utilisable
+  // avant sa position dans le fichier.
+  function renderLegal() {
     if (!legalDoc) return null;
     const doc = LEGAL_DOCS[legalDoc];
     return (
@@ -3704,7 +3711,7 @@ export default function App() {
         </SafeAreaView>
       </Modal>
     );
-  };
+  }
 
   // ════════════════════════════════════════════════════════
   //  MODAL: ONBOARDING (3 écrans, une seule fois après création)
