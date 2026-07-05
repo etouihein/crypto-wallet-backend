@@ -607,7 +607,15 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
       return res.status(503).json({ success: false, error: 'Swap non configuré (ZEROX_API_KEY manquante dans .env).' });
     }
     const { network = 'ethereum', sellToken, buyToken, sellAmount, taker } = req.query;
-    if (!sellToken || !buyToken || !sellAmount || !ethers.utils.isAddress(taker || '')) {
+    const isValidTokenAddress = (addr) => typeof addr === 'string' && ethers.utils.isAddress(addr);
+    const isValidAmount = typeof sellAmount === 'string' && /^[1-9][0-9]*$/.test(sellAmount);
+    if (
+      !isValidTokenAddress(sellToken) ||
+      !isValidTokenAddress(buyToken) ||
+      !isValidAmount ||
+      !ethers.utils.isAddress(taker || '') ||
+      !['ethereum', 'bsc'].includes(network)
+    ) {
       return res.status(400).json({ success: false, error: 'Paramètres de swap invalides.' });
     }
 
