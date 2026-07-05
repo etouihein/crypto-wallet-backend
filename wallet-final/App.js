@@ -380,6 +380,27 @@ const savePriceAlerts = async (list) => {
   try { await AsyncStorage.setItem(PRICE_ALERTS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
 
+// Historique local de la valeur totale du portefeuille — un point ajouté au
+// plus toutes les 10 minutes (pas à chaque rafraîchissement de 30s, sinon le
+// tableau ne couvrirait que quelques heures). Purement local, jamais envoyé
+// au serveur ; se construit au fil de l'usage réel de l'app, pas de données
+// rétroactives inventées.
+const PORTFOLIO_HISTORY_KEY = 'wallet-pro-portfolio-history-v1';
+const PORTFOLIO_HISTORY_MAX_POINTS = 200;
+const PORTFOLIO_HISTORY_MIN_GAP_MS = 10 * 60 * 1000;
+
+const loadPortfolioHistory = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PORTFOLIO_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const savePortfolioHistory = async (list) => {
+  try { await AsyncStorage.setItem(PORTFOLIO_HISTORY_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
 // Vibration au déclenchement d'une alerte de prix — activée par défaut,
 // désactivable dans Paramètres. `Vibration.vibrate` de react-native-web ne
 // fait rien si `navigator.vibrate` est absent (desktop), donc pas besoin de
@@ -802,6 +823,26 @@ function PulseDot({ color = T.green, size = 7 }) {
 //  WALLET — halo qui respire derrière la carte de solde (accueil). Boucle
 //  continue, contrairement aux animations d'entrée des tokens.
 // ═══════════════════════════════════════════════════════════
+// Mini-graphique de la valeur totale du portefeuille dans le temps, construit
+// avec de simples View% (même technique que CandlestickChart plus haut) —
+// pas besoin d'ajouter une dépendance SVG pour quelques barres.
+function PortfolioSparkline({ points }) {
+  if (points.length < 2) return null;
+  const values = points.map(p => p.v);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const range = hi - lo || hi * 0.01 || 1;
+  const trendUp = values[values.length - 1] >= values[0];
+  const color = trendUp ? T.green : T.red;
+  return (
+    <View style={st.sparkline_row}>
+      {points.map((p, i) => (
+        <View key={p.t ?? i} style={[st.sparkline_bar, { height: `${Math.max(((p.v - lo) / range) * 100, 6)}%`, backgroundColor: color }]} />
+      ))}
+    </View>
+  );
+}
+
 function BalanceGlow() {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -1238,6 +1279,8 @@ export default function App() {
   const [labelInput, setLabelInput]             = useState('');
   const [calcAmount, setCalcAmount]             = useState(''); // calculatrice rapide sur la fiche Marché
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [portfolioHistory, setPortfolioHistory] = useState([]);
+  const [portfolioHistoryLoaded, setPortfolioHistoryLoaded] = useState(false);
   const [showOnboarding, setShowOnboarding]     = useState(false);
   const [onboardingStep, setOnboardingStep]     = useState(0);
   const [isFirstTimeMnemonicBackup, setIsFirstTimeMnemonicBackup] = useState(false);
@@ -1702,6 +1745,7 @@ export default function App() {
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
+    loadPortfolioHistory().then(list => { setPortfolioHistory(list); setPortfolioHistoryLoaded(true); });
     loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
   }, []);
 
@@ -2205,6 +2249,21 @@ export default function App() {
     const topPct = (top.value / totalUSD) * 100;
     return { topSymbol: top.sym, topPct };
   }, [tokens, totalUSD]);
+
+  // Enregistre un point d'historique de valeur totale au plus toutes les
+  // PORTFOLIO_HISTORY_MIN_GAP_MS -- pas à chaque rafraîchissement de prix
+  // (30s), sinon l'historique ne couvrirait que quelques heures.
+  useEffect(() => {
+    if (!portfolioHistoryLoaded || totalUSD <= 0) return;
+    const last = portfolioHistory[portfolioHistory.length - 1];
+    if (last && Date.now() - last.t < PORTFOLIO_HISTORY_MIN_GAP_MS) return;
+    const next = [...portfolioHistory, { t: Date.now(), v: totalUSD }].slice(-PORTFOLIO_HISTORY_MAX_POINTS);
+    setPortfolioHistory(next);
+    savePortfolioHistory(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche
+    // sur totalUSD ; dépendre de portfolioHistory reboucleraît sur son
+    // propre setState.
+  }, [totalUSD, portfolioHistoryLoaded]);
 
   // ── FILTRES ──
   const filteredCoins = useMemo(() => {
@@ -3840,6 +3899,15 @@ export default function App() {
         </LinearGradient>
       </View>
 
+      {portfolioHistory.length >= 2 && (
+        <View style={st.sparkline_wrap}>
+          <PortfolioSparkline points={portfolioHistory} />
+          <Text style={st.sparkline_caption}>
+            Évolution depuis le {new Date(portfolioHistory[0].t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+          </Text>
+        </View>
+      )}
+
       <View style={st.quick_actions}>
         {[
           { icon: '↑', label: 'Envoyer', bg: T.card2, onPress: () => setShowSend(true) },
@@ -4558,6 +4626,10 @@ const st = StyleSheet.create({
   warning_box:     { backgroundColor: T.redBg, borderRadius: 12, padding: 14, marginTop: 20, width: '100%', borderWidth: 1, borderColor: T.red + '44' },
   warning_txt:     { color: T.text2, fontSize: 12, lineHeight: 18 },
   diversif_card:   { backgroundColor: T.orangeBg, borderRadius: 12, padding: 14, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderColor: T.orange + '44' },
+  sparkline_wrap:  { marginHorizontal: 14, marginTop: 12 },
+  sparkline_row:   { flexDirection: 'row', alignItems: 'flex-end', height: 44, gap: 2 },
+  sparkline_bar:   { flex: 1, borderRadius: 2, opacity: 0.85, minWidth: 2 },
+  sparkline_caption: { color: T.text3, fontSize: 11, marginTop: 6, textAlign: 'center' },
   favorites_hint:      { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 16, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: T.border },
   favorites_hint_icon: { fontSize: 26 },
   favorites_hint_title:{ color: T.text, fontSize: 13, fontWeight: '700' },
