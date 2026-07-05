@@ -3890,7 +3890,7 @@ export default function App() {
         </View>
 
         {!!historySymbols.length && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.market_filter_row}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={st.market_filter_row}>
             {['ALL', ...historySymbols].map(sym => (
               <TouchableOpacity
                 key={sym}
@@ -4597,7 +4597,7 @@ export default function App() {
           placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.market_filter_row}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={st.market_filter_row}>
         <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
           <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>
             ⭐ Favoris{favorites.length ? ` (${favorites.length})` : ''}
