@@ -3801,7 +3801,14 @@ export default function App() {
       <View style={st.home_hdr}>
         <View>
           <Text style={st.home_account}>Mon Wallet</Text>
-          <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : 'Adresse en attente...'}</Text>
+          <TouchableOpacity
+            onPress={() => walletAddr && copyToClipboard(walletAddr, 'Adresse copiée')}
+            disabled={!walletAddr}
+            accessibilityRole="button"
+            accessibilityLabel="Copier l'adresse du wallet"
+          >
+            <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)} 📋` : 'Adresse en attente...'}</Text>
+          </TouchableOpacity>
           <Text style={[st.home_addr, { fontSize: 12, color: T.text3, marginTop: 4 }]}>Solde {activeNetwork.label}: {parseFloat(walletBalance || '0').toFixed(6)} {nativeSymbol}</Text>
         </View>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Paramètres">
