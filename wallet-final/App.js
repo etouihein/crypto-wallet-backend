@@ -62,12 +62,18 @@ const T = {
 // ═══════════════════════════════════════════════════════════
 //  DEVISES & CRYPTO
 // ═══════════════════════════════════════════════════════════
+// Taux fixes (non rafraîchis en direct), comme le reste de cette liste —
+// une imprécision de quelques % est acceptable pour un affichage indicatif,
+// mais ne pas s'y fier pour un calcul exact (à rafraîchir à la main de temps
+// en temps, ou brancher sur une vraie API de taux de change plus tard).
 const CURRENCIES = {
-  USD: { symbol: '$',  name: 'Dollar US',      flag: '🇺🇸', rate: 1      },
-  EUR: { symbol: '€',  name: 'Euro',            flag: '🇪🇺', rate: 0.922  },
-  GBP: { symbol: '£',  name: 'Livre Sterling',  flag: '🇬🇧', rate: 0.788  },
-  CHF: { symbol: 'Fr', name: 'Franc Suisse',    flag: '🇨🇭', rate: 0.905  },
-  JPY: { symbol: '¥',  name: 'Yen Japonais',    flag: '🇯🇵', rate: 149.50 },
+  USD: { symbol: '$',   name: 'Dollar US',        flag: '🇺🇸', rate: 1      },
+  EUR: { symbol: '€',   name: 'Euro',              flag: '🇪🇺', rate: 0.922  },
+  GBP: { symbol: '£',   name: 'Livre Sterling',    flag: '🇬🇧', rate: 0.788  },
+  CHF: { symbol: 'Fr',  name: 'Franc Suisse',      flag: '🇨🇭', rate: 0.905  },
+  JPY: { symbol: '¥',   name: 'Yen Japonais',      flag: '🇯🇵', rate: 149.50 },
+  CAD: { symbol: 'C$',  name: 'Dollar Canadien',   flag: '🇨🇦', rate: 1.38   },
+  AUD: { symbol: 'A$',  name: 'Dollar Australien', flag: '🇦🇺', rate: 1.52   },
 };
 
 // ═══════════════════════════════════════════════════════════
