@@ -2653,6 +2653,31 @@ export default function App() {
             <CountStat value={0} label="Donnée revendue" style={isWideWeb && st.land_stat_wide} />
           </View>
 
+          {/* ── COMPARATIF ── */}
+          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
+            <Text style={st.land_section_eyebrow}>LA DIFFÉRENCE</Text>
+            <Text style={st.land_section_title}>Pas un exchange{'\n'}comme les autres.</Text>
+            <View style={st.compare_table}>
+              <View style={st.compare_row}>
+                <View style={{ flex: 1.4 }} />
+                <Text style={[st.compare_head, { flex: 1 }]}>NexiaWallet</Text>
+                <Text style={[st.compare_head, { flex: 1, color: T.text3 }]}>Exchange classique</Text>
+              </View>
+              {[
+                ['Qui détient tes clés ?', 'Toi, uniquement', "La plateforme"],
+                ['Compte / KYC obligatoire', 'Non', 'Souvent oui'],
+                ['Risque si la plateforme est piratée', 'Aucun — rien à voler ici', 'Tes fonds peuvent être perdus'],
+                ['Accès à tes fonds', '24/7, sans autorisation', 'Peut être gelé ou limité'],
+              ].map(([label, us, them]) => (
+                <View key={label} style={st.compare_row}>
+                  <Text style={[st.compare_label, { flex: 1.4 }]}>{label}</Text>
+                  <Text style={[st.compare_cell, st.compare_cell_us, { flex: 1 }]}>✓ {us}</Text>
+                  <Text style={[st.compare_cell, { flex: 1, color: T.text3 }]}>{them}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
           {/* ── DÉMARRAGE ── */}
           <View style={st.land_section}>
             <Text style={st.land_section_eyebrow}>DÉMARRAGE</Text>
@@ -4456,6 +4481,12 @@ const st = StyleSheet.create({
   land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
   land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
 
+  compare_table:  { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 14, marginTop: 8, overflow: 'hidden' },
+  compare_row:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: T.border },
+  compare_head:   { color: T.green, fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
+  compare_label:  { color: T.text2, fontSize: 12 },
+  compare_cell:   { fontSize: 12, textAlign: 'center' },
+  compare_cell_us:{ color: T.green, fontWeight: '600' },
   faq_item: { backgroundColor: T.card, borderRadius: 12, borderWidth: 1, borderColor: T.border, padding: 16, marginBottom: 10 },
   faq_q_row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   faq_q_txt: { color: T.text, fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
