@@ -1530,6 +1530,28 @@ export default function App() {
     }
   }, [showHistory, fetchHistory]);
 
+  // Export CSV via presse-papier plutôt qu'un vrai fichier — expo-file-system
+  // n'est pas installé et rajouter une dépendance juste pour ça serait
+  // disproportionné ; coller dans Excel/Sheets marche très bien avec du texte
+  // brut copié.
+  const exportHistoryCsv = useCallback(async (items) => {
+    if (!items.length) return;
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = ['Date', 'Type', 'Direction', 'Montant', 'Symbole', 'De', 'Vers', 'Hash', 'Statut'].map(esc).join(',');
+    const rows = items.map(item => [
+      new Date(item.timestamp).toISOString(),
+      item.type,
+      item.direction === 'out' ? 'Envoyé' : 'Reçu',
+      item.amount,
+      item.symbol,
+      item.from,
+      item.to,
+      item.hash,
+      item.failed ? 'Échoué' : 'Réussi',
+    ].map(esc).join(','));
+    await copyToClipboard([header, ...rows].join('\n'), `${items.length} transaction(s) copiées en CSV`);
+  }, [copyToClipboard]);
+
   // Wallet 100% non-custodial : génération/import/restauration se font en
   // local avec `lib/wallet.js` — la clé privée et la mnémonique ne quittent
   // jamais l'appareil, aucun appel réseau vers le backend n'est nécessaire ici.
@@ -3541,6 +3563,17 @@ export default function App() {
               <ActivityIndicator color={T.green} size="large" />
               <Text style={{ color: T.text2, fontSize: 12, marginTop: 10 }}>Chargement depuis {activeNetwork.explorer}…</Text>
             </View>
+          )}
+
+          {!historyLoading && !!filteredHistoryItems.length && (
+            <TouchableOpacity
+              onPress={() => exportHistoryCsv(filteredHistoryItems)}
+              style={{ alignSelf: 'flex-end', marginBottom: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Exporter l'historique en CSV"
+            >
+              <Text style={{ color: T.cyan, fontSize: 12, fontWeight: '600' }}>⇩ Exporter en CSV</Text>
+            </TouchableOpacity>
           )}
 
           {!historyLoading && filteredHistoryItems.length === 0 && (
