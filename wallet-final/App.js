@@ -2936,14 +2936,14 @@ export default function App() {
       <Modal visible animationType="slide" transparent>
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setSelectedToken(null)} style={st.back_btn}>
+            <TouchableOpacity onPress={() => setSelectedToken(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <View style={{ alignItems: 'center' }}>
               <Text style={st.modal_title}>{tk.name}</Text>
               <Text style={st.modal_sub}>{selectedToken} / USD</Text>
             </View>
-            <TouchableOpacity onPress={() => toggleFavorite(selectedToken)} style={st.back_btn}>
+            <TouchableOpacity onPress={() => toggleFavorite(selectedToken)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Ajouter ou retirer des favoris">
               <Text style={{ fontSize: 20 }}>{favorites.includes(selectedToken) ? '⭐' : '☆'}</Text>
             </TouchableOpacity>
           </View>
@@ -3030,14 +3030,14 @@ export default function App() {
       <Modal visible animationType="slide" transparent>
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setSelectedMarketCoin(null)} style={st.back_btn}>
+            <TouchableOpacity onPress={() => setSelectedMarketCoin(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <View style={{ alignItems: 'center' }}>
               <Text style={st.modal_title}>{coin.name}</Text>
               <Text style={st.modal_sub}>{sym} / USD</Text>
             </View>
-            <TouchableOpacity onPress={() => toggleFavorite(sym)} style={st.back_btn}>
+            <TouchableOpacity onPress={() => toggleFavorite(sym)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Ajouter ou retirer des favoris">
               <Text style={{ fontSize: 20 }}>{favorites.includes(sym) ? '⭐' : '☆'}</Text>
             </TouchableOpacity>
           </View>
@@ -3193,7 +3193,7 @@ export default function App() {
     <Modal visible={showQrScanner} animationType="slide">
       <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowQrScanner(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => setShowQrScanner(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Scanner un QR code</Text>
@@ -3224,7 +3224,7 @@ export default function App() {
     <Modal visible={showSend} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => (sendStep === 'confirm' ? setSendStep('form') : closeSend())} style={st.back_btn}>
+          <TouchableOpacity onPress={() => (sendStep === 'confirm' ? setSendStep('form') : closeSend())} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>{sendStep === 'confirm' ? 'Vérifie et confirme' : 'Envoyer'}</Text>
@@ -3294,11 +3294,11 @@ export default function App() {
               <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
                 placeholder="0x123...abc" placeholderTextColor={T.text3} autoCapitalize="none" />
               {Platform.OS === 'web' ? (
-                <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard}>
+                <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
                   <Text style={{ fontSize: 18 }}>📋</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)}>
+                <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
                   <Text style={{ fontSize: 18 }}>📷</Text>
                 </TouchableOpacity>
               )}
@@ -3412,7 +3412,7 @@ export default function App() {
     <Modal visible={showReceive} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowReceive(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => setShowReceive(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Recevoir</Text>
@@ -3445,11 +3445,11 @@ export default function App() {
     <Modal visible={showHistory} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowHistory(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => setShowHistory(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Activité</Text>
-          <TouchableOpacity onPress={() => { setHistoryVisibleCount(HISTORY_PAGE_SIZE); fetchHistory(); }} style={st.back_btn}>
+          <TouchableOpacity onPress={() => { setHistoryVisibleCount(HISTORY_PAGE_SIZE); fetchHistory(); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Actualiser l'historique">
             <Text style={{ color: T.text, fontSize: 18 }}>↻</Text>
           </TouchableOpacity>
         </View>
@@ -3538,7 +3538,7 @@ export default function App() {
       <Modal visible transparent animationType="slide">
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setLegalDoc(null)} style={st.back_btn}>
+            <TouchableOpacity onPress={() => setLegalDoc(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <Text style={st.modal_title}>{doc.title}</Text>
@@ -3597,7 +3597,7 @@ export default function App() {
     <Modal visible={showSettings} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowSettings(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => setShowSettings(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Paramètres</Text>
@@ -3804,7 +3804,7 @@ export default function App() {
           <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : 'Adresse en attente...'}</Text>
           <Text style={[st.home_addr, { fontSize: 12, color: T.text3, marginTop: 4 }]}>Solde {activeNetwork.label}: {parseFloat(walletBalance || '0').toFixed(6)} {nativeSymbol}</Text>
         </View>
-        <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn}>
+        <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Paramètres">
           <Text style={{ fontSize: 20 }}>⚙️</Text>
         </TouchableOpacity>
       </View>
@@ -4169,7 +4169,7 @@ export default function App() {
     <Modal visible={showBuy} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowBuy(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => setShowBuy(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Acheter des crypto</Text>
