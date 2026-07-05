@@ -14,7 +14,7 @@ import {
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
   FlatList, Linking, Platform, Animated, Pressable, Easing,
-  useWindowDimensions, AppState, Share,
+  useWindowDimensions, AppState, Share, Vibration,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
@@ -362,6 +362,23 @@ const loadPriceAlerts = async () => {
 
 const savePriceAlerts = async (list) => {
   try { await AsyncStorage.setItem(PRICE_ALERTS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
+// Vibration au déclenchement d'une alerte de prix — activée par défaut,
+// désactivable dans Paramètres. `Vibration.vibrate` de react-native-web ne
+// fait rien si `navigator.vibrate` est absent (desktop), donc pas besoin de
+// vérifier la plateforme avant d'appeler.
+const VIBRATION_ENABLED_KEY = 'wallet-pro-vibration-enabled-v1';
+
+const loadVibrationEnabled = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(VIBRATION_ENABLED_KEY);
+    return raw === null ? true : raw === 'true';
+  } catch { return true; }
+};
+
+const saveVibrationEnabled = async (enabled) => {
+  try { await AsyncStorage.setItem(VIBRATION_ENABLED_KEY, String(enabled)); } catch { /* rien à faire */ }
 };
 
 // Tokens personnalisés (adresse de contrat saisie à la main) — lecture seule,
@@ -1204,6 +1221,7 @@ export default function App() {
   const [labelEditFor, setLabelEditFor]         = useState(null); // adresse en cours de renommage, ou null
   const [labelInput, setLabelInput]             = useState('');
   const [calcAmount, setCalcAmount]             = useState(''); // calculatrice rapide sur la fiche Marché
+  const [vibrationEnabled, setVibrationEnabled] = useState(true);
   // Scan QR : natif uniquement (caméra). Sur web, on propose "Coller" à la
   // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
   // pur serait un chantier à part, hors scope de ce passage).
@@ -1663,6 +1681,7 @@ export default function App() {
     loadFavorites().then(list => { setFavorites(list); setFavoritesLoaded(true); });
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
+    loadVibrationEnabled().then(setVibrationEnabled);
     loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
   }, []);
 
@@ -1743,6 +1762,7 @@ export default function App() {
     });
     if (!triggered.length) return;
 
+    if (vibrationEnabled) Vibration.vibrate(200);
     triggered.forEach(a => {
       showAlert(
         '🔔 Alerte de prix',
@@ -1753,7 +1773,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche sur
     // les prix, pas sur `fmt`/`showAlert` (stables) ni `priceAlerts` lui-même
     // (mis à jour à l'intérieur, dépendre de lui reboucleraît inutilement).
-  }, [tokens, marketCoins, priceAlertsLoaded]);
+  }, [tokens, marketCoins, priceAlertsLoaded, vibrationEnabled]);
 
   const handleQrScanned = useCallback(({ data }) => {
     if (!data) return;
@@ -3650,6 +3670,19 @@ export default function App() {
               </AnimPressable>
             </>
           )}
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🔔 Notifications</Text>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => { const next = !vibrationEnabled; setVibrationEnabled(next); saveVibrationEnabled(next); }}
+          >
+            <Text style={{ fontSize: 22 }}>📳</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Vibration sur alerte de prix</Text>
+              <Text style={st.settings_row_sub}>{vibrationEnabled ? 'Activée' : 'Désactivée'}</Text>
+            </View>
+            <View style={[st.status_dot, { backgroundColor: vibrationEnabled ? T.green : T.text3 }]} />
+          </AnimPressable>
 
           <View style={[st.warning_box, { marginTop: 24 }]}>
             <Text style={st.warning_txt}>
