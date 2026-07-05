@@ -1278,6 +1278,8 @@ export default function App() {
   const [labelEditFor, setLabelEditFor]         = useState(null); // adresse en cours de renommage, ou null
   const [labelInput, setLabelInput]             = useState('');
   const [calcAmount, setCalcAmount]             = useState(''); // calculatrice rapide sur la fiche Marché
+  const [simAmount, setSimAmount]               = useState('100'); // simulateur "et si le prix x2/x5/x10" sur la landing
+  const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [portfolioHistoryLoaded, setPortfolioHistoryLoaded] = useState(false);
@@ -2856,6 +2858,57 @@ export default function App() {
                 </View>
               ))}
             </View>
+          </View>
+
+          {/* ── SIMULATEUR ── */}
+          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
+            <Text style={st.land_section_eyebrow}>PROJECTION</Text>
+            <Text style={st.land_section_title}>Et si ça{'\n'}décollait ?</Text>
+            {(() => {
+              const coin = marketCoins.find(c => c.symbol?.toUpperCase() === simCoin);
+              const price = coin?.current_price;
+              const amt = parseFloat(simAmount) || 0;
+              const qty = price ? amt / price : 0;
+              return (
+                <View style={st.sim_card}>
+                  <View style={{ flexDirection: 'row', marginBottom: 14 }}>
+                    {['BTC', 'ETH'].map(sym => (
+                      <TouchableOpacity
+                        key={sym}
+                        style={[st.chain_tab_sm, simCoin === sym && st.chain_tab_sm_on, { marginRight: 8 }]}
+                        onPress={() => setSimCoin(sym)}
+                      >
+                        <Text style={[st.chain_tab_sm_txt, simCoin === sym && st.chain_tab_sm_txt_on]}>{sym}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={st.form_label}>Si j'avais investi</Text>
+                  <TextInput
+                    style={st.form_input}
+                    value={simAmount}
+                    onChangeText={setSimAmount}
+                    keyboardType="numeric"
+                    placeholder="100"
+                    placeholderTextColor={T.text3}
+                  />
+                  {price ? (
+                    <>
+                      {[2, 5, 10].map(mult => (
+                        <View key={mult} style={st.sim_row}>
+                          <Text style={st.sim_row_lbl}>Si {simCoin} fait x{mult}</Text>
+                          <Text style={st.sim_row_val}>≈ {(amt * mult).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} $</Text>
+                        </View>
+                      ))}
+                      <Text style={{ color: T.text3, fontSize: 10, marginTop: 10, textAlign: 'center' }}>
+                        ≈ {qty.toFixed(6)} {simCoin} au prix actuel ({fmt(price)}). Simulation illustrative, ne constitue pas un conseil d'investissement.
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center', marginTop: 10 }}>Chargement des prix…</Text>
+                  )}
+                </View>
+              );
+            })()}
           </View>
 
           {/* ── FAQ ── */}
@@ -4808,6 +4861,10 @@ const st = StyleSheet.create({
   onboarding_dot:     { width: 6, height: 6, borderRadius: 3, backgroundColor: T.border },
   onboarding_dot_on:  { backgroundColor: T.green, width: 18 },
   calc_card:      { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 16, marginBottom: 20 },
+  sim_card:       { backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border, padding: 18, marginTop: 8 },
+  sim_row:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: T.border },
+  sim_row_lbl:    { color: T.text2, fontSize: 13 },
+  sim_row_val:    { color: T.green, fontSize: 15, fontWeight: 'bold' },
   calc_sym:       { color: T.text2, fontWeight: 'bold', fontSize: 13, marginLeft: 10 },
   calc_result:    { color: T.green, fontSize: 18, fontWeight: 'bold', marginTop: 10 },
   compare_table:  { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 14, marginTop: 8, overflow: 'hidden' },
