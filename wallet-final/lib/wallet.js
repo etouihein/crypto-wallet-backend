@@ -174,11 +174,19 @@ async function getCustomTokenInfo(contractAddress, walletAddress, network = 'eth
 // estimation approximative si le nœud RPC refuse `estimateGas` sans clé
 // (certains RPC publics l'exigent) — mieux vaut un ordre de grandeur affiché
 // que rien plutôt que de bloquer l'écran de confirmation.
+//
+// Pas d'oracle de gas dédié ici (type Etherscan Gas Tracker) : les 3 niveaux
+// lent/normal/rapide sont de simples multiplicateurs du gasPrice actuel du
+// réseau (90% / 100% / 130%). C'est une approximation grossière assumée —
+// pas de promesse de délai de confirmation en secondes, seulement moins cher
+// / plus rapide en tendance relative.
+const GAS_TIER_MULTIPLIERS = { slow: 0.9, normal: 1, fast: 1.3 };
+
 async function estimateSendFee({ from, to, amount, symbol, network = 'ethereum' }) {
   const provider = getProvider(network);
   const nativeSymbol = getNetworkConfig(network).nativeSymbol;
   const feeData = await provider.getFeeData();
-  const gasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.BigNumber.from('5000000000');
+  const baseGasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.BigNumber.from('5000000000');
 
   let gasLimit;
   let approximate = false;
@@ -197,13 +205,27 @@ async function estimateSendFee({ from, to, amount, symbol, network = 'ethereum' 
     approximate = true;
   }
 
-  const feeWei = gasPrice.mul(gasLimit);
+  // Multiplication en entiers (basis points) pour éviter toute perte de
+  // précision en virgule flottante sur un BigNumber.
+  const tiers = {};
+  for (const [tier, mult] of Object.entries(GAS_TIER_MULTIPLIERS)) {
+    const tierGasPrice = baseGasPrice.mul(Math.round(mult * 1000)).div(1000);
+    const tierFeeWei = tierGasPrice.mul(gasLimit);
+    tiers[tier] = {
+      gasPriceWei: tierGasPrice.toString(),
+      gasPriceGwei: ethers.utils.formatUnits(tierGasPrice, 'gwei'),
+      feeNative: ethers.utils.formatEther(tierFeeWei),
+    };
+  }
+
+  const feeWei = baseGasPrice.mul(gasLimit);
   return {
     feeNative: ethers.utils.formatEther(feeWei),
     nativeSymbol,
     gasLimit: gasLimit.toString(),
-    gasPriceGwei: ethers.utils.formatUnits(gasPrice, 'gwei'),
+    gasPriceGwei: ethers.utils.formatUnits(baseGasPrice, 'gwei'),
     approximate,
+    tiers,
   };
 }
 
@@ -211,7 +233,17 @@ async function estimateSendFee({ from, to, amount, symbol, network = 'ethereum' 
 //    diffusée directement d'ici : App.js l'envoie à
 //    POST /wallet/tx/broadcast qui se contente de la relayer. ────
 
-async function signNativeTx({ privateKey, to, amount, network = 'ethereum' }) {
+// `gasPrice` (optionnel, en wei, string ou BigNumber-able) vient du niveau
+// lent/normal/rapide choisi par l'utilisateur sur l'écran de confirmation
+// (voir `tiers` dans estimateSendFee ci-dessus). Absent -> comportement
+// inchangé, ethers choisit lui-même le gasPrice courant du réseau.
+//
+// IMPORTANT : `type: 0` (legacy) est obligatoire ici. Sans ça,
+// `wallet.populateTransaction` ignore silencieusement un `gasPrice` fourni
+// et repopule ses propres maxFeePerGas/maxPriorityFeePerGas EIP-1559 à la
+// place (vérifié empiriquement : la transaction signée n'utilisait PAS le
+// gasPrice demandé) -- le sélecteur de vitesse aurait été purement cosmétique.
+async function signNativeTx({ privateKey, to, amount, network = 'ethereum', gasPrice }) {
   if (!ethers.utils.isAddress(to)) throw new Error("L'adresse de destination n'est pas valide.");
   const wallet = walletFromPrivateKey(privateKey, network);
   const value = ethers.utils.parseEther(amount.toString());
@@ -219,12 +251,14 @@ async function signNativeTx({ privateKey, to, amount, network = 'ethereum' }) {
   const currentBalanceWei = await wallet.provider.getBalance(wallet.address);
   if (currentBalanceWei.lt(value)) throw new Error('Fonds insuffisants sur le wallet.');
 
-  const populated = await wallet.populateTransaction({ to, value });
+  const base = { to, value };
+  if (gasPrice) { base.gasPrice = ethers.BigNumber.from(gasPrice); base.type = 0; }
+  const populated = await wallet.populateTransaction(base);
   const rawTx = await wallet.signTransaction(populated);
   return { rawTx };
 }
 
-async function signErc20Tx({ privateKey, to, amount, symbol, network = 'ethereum' }) {
+async function signErc20Tx({ privateKey, to, amount, symbol, network = 'ethereum', gasPrice }) {
   if (!ethers.utils.isAddress(to)) throw new Error("L'adresse de destination n'est pas valide.");
   const token = getErc20Config(symbol, network);
   if (!token) throw new Error(`Token ${symbol} non configuré sur ${network}.`);
@@ -237,6 +271,7 @@ async function signErc20Tx({ privateKey, to, amount, symbol, network = 'ethereum
   if (currentBalance.lt(value)) throw new Error(`Fonds ${symbol} insuffisants sur le wallet.`);
 
   const unsignedTx = await contract.populateTransaction.transfer(to, value);
+  if (gasPrice) { unsignedTx.gasPrice = ethers.BigNumber.from(gasPrice); unsignedTx.type = 0; }
   const populated = await wallet.populateTransaction(unsignedTx);
   const rawTx = await wallet.signTransaction(populated);
   return { rawTx };

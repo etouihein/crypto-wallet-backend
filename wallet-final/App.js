@@ -1274,6 +1274,7 @@ export default function App() {
   const [sendStep, setSendStep]                 = useState('form');
   const [sendFeeEstimate, setSendFeeEstimate]   = useState(null);
   const [sendFeeLoading, setSendFeeLoading]     = useState(false);
+  const [sendGasTier, setSendGasTier]           = useState('normal'); // 'slow' | 'normal' | 'fast'
   const [recentAddresses, setRecentAddresses]   = useState([]);
   const [labelEditFor, setLabelEditFor]         = useState(null); // adresse en cours de renommage, ou null
   const [labelInput, setLabelInput]             = useState('');
@@ -2428,6 +2429,7 @@ export default function App() {
     setSendStep('confirm');
     setSendFeeLoading(true);
     setSendFeeEstimate(null);
+    setSendGasTier('normal');
     try {
       const est = await localWallet.estimateSendFee({
         from: walletAddr, to: sendAddress, amount: sendAmount,
@@ -2445,6 +2447,11 @@ export default function App() {
   // seulement ici, que la transaction est vraiment signée et diffusée.
   const confirmAndSend = async () => {
     const isNative = sendToken === nativeSymbol;
+    // Prix du gas du niveau choisi (Lent/Normal/Rapide) — absent si
+    // l'estimation a échoué ou pour le niveau 'normal' (comportement par
+    // défaut d'ethers, inchangé). `sendFeeEstimate.tiers` vient de
+    // estimateSendFee (voir lib/wallet.js).
+    const chosenGasPrice = sendFeeEstimate?.tiers?.[sendGasTier]?.gasPriceWei;
 
     setSendLoading(true);
     try {
@@ -2454,8 +2461,8 @@ export default function App() {
       // soit le réseau (corrige l'ancien bug où USDT/USDC sur BSC étaient
       // silencieusement envoyés comme du BNB natif).
       const { rawTx } = isNative
-        ? await localWallet.signNativeTx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, network })
-        : await localWallet.signErc20Tx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network });
+        ? await localWallet.signNativeTx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, network, gasPrice: chosenGasPrice })
+        : await localWallet.signErc20Tx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network, gasPrice: chosenGasPrice });
 
       const response = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network }, { timeout: 25000, headers: API_HEADERS });
       if (!response.data?.success) {
@@ -3386,23 +3393,44 @@ export default function App() {
               <Text style={st.confirm_addr_txt} selectable>{sendAddress}</Text>
             </View>
 
-            <Text style={st.form_label}>Frais de réseau estimés</Text>
-            <View style={st.send_info_box}>
-              {sendFeeLoading ? (
-                <ActivityIndicator color={T.green} />
-              ) : sendFeeEstimate ? (
-                <>
-                  <Text style={st.send_info_line}>
-                    ≈ {parseFloat(sendFeeEstimate.feeNative).toFixed(6)} {sendFeeEstimate.nativeSymbol}
-                  </Text>
-                  <Text style={[st.send_info_line, { color: T.text3, fontSize: 11 }]}>
-                    {sendFeeEstimate.approximate ? 'Estimation approximative' : 'Gas ' + sendFeeEstimate.gasLimit + ' • ' + parseFloat(sendFeeEstimate.gasPriceGwei).toFixed(2) + ' Gwei'}
-                  </Text>
-                </>
-              ) : (
-                <Text style={[st.send_info_line, { color: T.text3 }]}>Indisponible — le montant réel sera calculé à l'envoi.</Text>
-              )}
-            </View>
+            <Text style={st.form_label}>Frais de réseau</Text>
+            {sendFeeLoading ? (
+              <View style={st.send_info_box}><ActivityIndicator color={T.green} /></View>
+            ) : sendFeeEstimate?.tiers && !sendFeeEstimate.approximate ? (
+              <>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {[
+                    { key: 'slow', label: 'Lent' },
+                    { key: 'normal', label: 'Normal' },
+                    { key: 'fast', label: 'Rapide' },
+                  ].map(({ key, label }) => {
+                    const tier = sendFeeEstimate.tiers[key];
+                    const isSelected = sendGasTier === key;
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        style={[st.gas_tier_btn, isSelected && st.gas_tier_btn_on]}
+                        onPress={() => setSendGasTier(key)}
+                      >
+                        <Text style={[st.gas_tier_lbl, isSelected && st.gas_tier_lbl_on]}>{label}</Text>
+                        <Text style={[st.gas_tier_fee, isSelected && st.gas_tier_lbl_on]}>
+                          {parseFloat(tier.feeNative).toFixed(6)} {sendFeeEstimate.nativeSymbol}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={{ color: T.text3, fontSize: 10, marginTop: 8, textAlign: 'center' }}>
+                  Pas d'estimation de délai précise — "Rapide" paie plus cher pour tendre vers une confirmation plus rapide, sans garantie.
+                </Text>
+              </>
+            ) : (
+              <View style={st.send_info_box}>
+                <Text style={[st.send_info_line, { color: T.text3 }]}>
+                  {sendFeeEstimate ? `≈ ${parseFloat(sendFeeEstimate.feeNative).toFixed(6)} ${sendFeeEstimate.nativeSymbol} (estimation approximative)` : "Indisponible — le montant réel sera calculé à l'envoi."}
+                </Text>
+              </View>
+            )}
 
             <View style={st.warning_box}>
               <Text style={st.warning_txt}>
@@ -4720,6 +4748,11 @@ const st = StyleSheet.create({
   max_btn_txt:   { color: T.green, fontWeight: 'bold', fontSize: 13 },
   quick_pct_btn: { flex: 1, backgroundColor: T.card2, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
   quick_pct_txt: { color: T.text2, fontWeight: '600', fontSize: 12 },
+  gas_tier_btn:   { flex: 1, backgroundColor: T.card, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
+  gas_tier_btn_on:{ backgroundColor: T.greenBg, borderColor: T.green },
+  gas_tier_lbl:   { color: T.text2, fontWeight: 'bold', fontSize: 13 },
+  gas_tier_lbl_on:{ color: T.green },
+  gas_tier_fee:   { color: T.text3, fontSize: 10, marginTop: 4 },
   tok_chip:      { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderWidth: 1, borderColor: T.border },
   tok_chip_on:   { backgroundColor: T.blueBg, borderColor: T.blue },
   tok_chip_txt:  { color: T.text2, fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
