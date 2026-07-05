@@ -1006,6 +1006,33 @@ function PortfolioSparkline({ points }) {
   );
 }
 
+// En-tête de section standardisé (trait vert + majuscules espacées) au lieu
+// d'un emoji collé au texte — remplace l'ancien `<Text style={st.section_title}>
+// EMOJI Label</Text>` partout où c'était utilisé. Reste le premier enfant
+// d'un `st.section_hdr` (flexDirection row, justifyContent space-between),
+// donc un éventuel texte "sub" à droite continue de fonctionner sans y toucher.
+function SectionTitle({ children }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <View style={st.section_tick} />
+      <Text style={st.section_title}>{children}</Text>
+    </View>
+  );
+}
+
+// Pastille de variation de prix — remplace le texte coloré brut collé au
+// prix par un vrai badge, réutilisé partout où un %24h de token s'affiche.
+function ChangePill({ value }) {
+  const pos = (value || 0) >= 0;
+  return (
+    <View style={[st.change_pill, { backgroundColor: pos ? 'rgba(0,224,165,0.12)' : 'rgba(255,106,106,0.12)' }]}>
+      <Text style={[st.change_pill_txt, { color: pos ? T.green : T.red }]} numberOfLines={1}>
+        {pos ? '+' : ''}{(value || 0).toFixed(2)}%
+      </Text>
+    </View>
+  );
+}
+
 function BalanceGlow() {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -4564,13 +4591,20 @@ export default function App() {
       <View style={{ position: 'relative', marginHorizontal: 14 }}>
         <BalanceGlow />
         <LinearGradient
-          colors={[T.card2, T.card, T.bg]}
+          colors={['rgba(0,224,165,0.55)', 'rgba(94,140,255,0.30)', 'rgba(39,56,92,0.35)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={[st.balance_wrap, { marginHorizontal: 0 }]}
+          style={st.balance_border_wrap}
         >
-          <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+          <LinearGradient
+            colors={[T.card2, T.card, T.bg]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={st.balance_wrap}
+          >
+            <Text style={st.balance_kicker}>Solde total</Text>
+            <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: periodChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
               {periodChange >= 0 ? '+' : ''}{fmt(periodChange)} ({((periodChange / Math.max(totalUSD - periodChange, 1)) * 100).toFixed(2)}%)
             </Text>
@@ -4586,6 +4620,7 @@ export default function App() {
               ))}
             </View>
           </View>
+          </LinearGradient>
         </LinearGradient>
       </View>
 
@@ -4638,24 +4673,21 @@ export default function App() {
       {!!favoriteMarketCoins.length && (
         <>
           <View style={st.section_hdr}>
-            <Text style={st.section_title}>⭐ Favoris</Text>
+            <SectionTitle>Favoris</SectionTitle>
           </View>
           <View style={isWideWeb && st.token_grid}>
             {favoriteMarketCoins.map((coin, i) => {
               const sym = coin.symbol?.toUpperCase() || '';
-              const pos = (coin.price_change_percentage_24h || 0) >= 0;
               return (
                 <FadeInView key={coin.id} deps={[coin.id]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
                   <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedMarketCoin(coin)}>
                     <CoinLogo logo={coin.image} icon="🪙" size={44} />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={st.token_name}>{coin.name}</Text>
-                      <Text style={st.token_price_txt}>
-                        {fmt(coin.current_price, coin.current_price < 1 ? 4 : 2)}
-                        <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
-                          {' '}{pos ? '+' : ''}{(coin.price_change_percentage_24h || 0).toFixed(2)}%
-                        </Text>
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={st.token_price_txt}>{fmt(coin.current_price, coin.current_price < 1 ? 4 : 2)}</Text>
+                        <ChangePill value={coin.price_change_percentage_24h} />
+                      </View>
                     </View>
                   </AnimPressable>
                   <TouchableOpacity
@@ -4673,7 +4705,7 @@ export default function App() {
       )}
 
       <View style={st.section_hdr}>
-        <Text style={st.section_title}>Mes Tokens</Text>
+        <SectionTitle>Mes Tokens</SectionTitle>
       </View>
 
       <View style={isWideWeb && st.token_grid}>
@@ -4683,7 +4715,6 @@ export default function App() {
           ))
         ) : sortedTokenEntries.map(([sym, t], i) => {
           const val = (t.balance || 0) * (t.price || 0);
-          const pos = (t.change24h || 0) >= 0;
           const isFav = favorites.includes(sym);
           return (
             <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
@@ -4696,12 +4727,10 @@ export default function App() {
                       <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
                     )}
                   </View>
-                  <Text style={st.token_price_txt}>
-                    {fmt(t.price, t.price < 1 ? 4 : 2)}
-                    <Text style={{ color: pos ? T.green : T.red, fontWeight: '600' }}>
-                      {' '}{pos ? '+' : ''}{(t.change24h || 0).toFixed(2)}%
-                    </Text>
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={st.token_price_txt}>{fmt(t.price, t.price < 1 ? 4 : 2)}</Text>
+                    <ChangePill value={t.change24h} />
+                  </View>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={st.token_val}>{fmt(val)}</Text>
@@ -4723,7 +4752,7 @@ export default function App() {
       {customTokens.filter(t => t.network === network).length > 0 && (
         <>
           <View style={st.section_hdr}>
-            <Text style={st.section_title}>🧩 Tokens personnalisés</Text>
+            <SectionTitle>Tokens personnalisés</SectionTitle>
           </View>
           <View style={isWideWeb && st.token_grid}>
             {customTokens.filter(t => t.network === network).map(t => (
@@ -4790,7 +4819,7 @@ export default function App() {
         {!!newsItems.length && (
           <View style={{ marginBottom: 20 }}>
             <View style={st.section_hdr}>
-              <Text style={st.section_title}>📰 Actu crypto en direct</Text>
+              <SectionTitle>Actu crypto en direct</SectionTitle>
               <Text style={st.section_sub}>MAJ / 5 min</Text>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
@@ -4814,7 +4843,7 @@ export default function App() {
         )}
 
         <View style={st.section_hdr}>
-          <Text style={st.section_title}>💹 Tous les cours</Text>
+          <SectionTitle>Tous les cours</SectionTitle>
           <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
         </View>
         <View style={st.market_grid}>
@@ -5212,8 +5241,10 @@ const st = StyleSheet.create({
   home_account:  { color: T.text, fontSize: 16, fontWeight: 'bold' },
   home_addr:     { color: T.text2, fontSize: 12, marginTop: 2 },
   icon_btn:      { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  balance_wrap:  { alignItems: 'center', paddingVertical: 26, paddingHorizontal: 16, marginHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: T.border },
-  balance_amount:{ color: T.text, fontSize: 40, fontWeight: 'bold' },
+  balance_border_wrap: { borderRadius: 23, padding: 1 },
+  balance_wrap:  { alignItems: 'center', paddingVertical: 26, paddingHorizontal: 16, borderRadius: 22 },
+  balance_kicker:{ color: T.text3, fontSize: 11, fontWeight: '700', letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 6 },
+  balance_amount:{ color: T.text, fontSize: 44, fontWeight: '800', letterSpacing: -1, fontVariant: ['tabular-nums'] },
 
   quick_actions: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 10, paddingVertical: 14, marginTop: 16, marginBottom: 16 },
   quick_btn:     { alignItems: 'center', minWidth: 54 },
@@ -5224,8 +5255,11 @@ const st = StyleSheet.create({
   quick_icon_txt:{ fontSize: 18, fontWeight: 'bold' },
   quick_lbl:     { color: T.text2, fontSize: 11 },
 
-  section_hdr:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8 },
-  section_title: { color: T.text, fontSize: 15, fontWeight: 'bold' },
+  section_hdr:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginTop: 20, marginBottom: 10 },
+  section_title: { color: T.text2, fontSize: 12, fontWeight: '800', letterSpacing: 1.2, textTransform: 'uppercase' },
+  section_tick:  { width: 3, height: 12, borderRadius: 2, backgroundColor: T.green, marginRight: 8 },
+  change_pill:     { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginLeft: 6 },
+  change_pill_txt: { fontSize: 11, fontWeight: '700' },
   token_row:     {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 14,
     marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border,
