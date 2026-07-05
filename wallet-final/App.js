@@ -144,6 +144,31 @@ Pour toute question, un formulaire ou une adresse de contact sera ajouté procha
   },
 };
 
+// FAQ affichée sur la landing — questions réellement posées par les
+// premiers testeurs (phrase de récupération, non-custodial, réseaux).
+const LANDING_FAQ = [
+  {
+    q: "C'est quoi une phrase de récupération ?",
+    a: "12 mots générés à la création de ton wallet. Ils permettent de reconstruire ta clé privée n'importe où. Si tu les perds ET perds ton appareil, personne — pas même nous — ne peut récupérer tes fonds.",
+  },
+  {
+    q: 'Que veut dire "non-custodial" ?',
+    a: "Ta clé privée est générée et chiffrée uniquement sur ton appareil. NexiaWallet ne la voit, ne la stocke et ne la transmet jamais. C'est l'opposé d'un exchange (Binance, Coinbase...) qui garde tes fonds pour toi.",
+  },
+  {
+    q: 'Quels réseaux sont supportés ?',
+    a: 'Ethereum Mainnet et BNB Smart Chain pour le moment, avec ETH, BNB, USDT et USDC actifs (solde, envoi, réception). D\'autres tokens peuvent être ajoutés en lecture seule par adresse de contrat.',
+  },
+  {
+    q: "J'ai perdu mon téléphone, comment je récupère mon wallet ?",
+    a: 'Installe NexiaWallet sur un nouvel appareil et choisis "J\'ai déjà un wallet", puis entre ta phrase de récupération de 12 mots. Sans elle, la récupération est impossible.',
+  },
+  {
+    q: 'Le swap et l\'achat par carte sont-ils sûrs ?',
+    a: "L'achat par carte passe par MoonPay, un prestataire de paiement tiers réglementé. Le swap passe par l'agrégateur DEX 0x pour trouver le meilleur prix, mais la signature de la transaction reste 100% locale sur ton appareil, comme un envoi classique.",
+  },
+];
+
 // URLs images CoinGecko (logos réels)
 const COIN_LOGOS = {
   ethereum:      'https://assets.coingecko.com/coins/images/279/large/ethereum.png',
@@ -1127,6 +1152,7 @@ export default function App() {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showSettings, setShowSettings]   = useState(false);
   const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
+  const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
   const [sendAmount, setSendAmount]       = useState('');
@@ -2643,6 +2669,26 @@ export default function App() {
                   <Text style={st.land_step_desc}>{desc}</Text>
                 </View>
               ))}
+            </View>
+          </View>
+
+          {/* ── FAQ ── */}
+          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
+            <Text style={st.land_section_eyebrow}>QUESTIONS FRÉQUENTES</Text>
+            <Text style={st.land_section_title}>On répond{'\n'}avant que tu demandes.</Text>
+            <View style={{ marginTop: 8 }}>
+              {LANDING_FAQ.map((item, i) => {
+                const isOpen = openFaq === i;
+                return (
+                  <TouchableOpacity key={i} style={st.faq_item} onPress={() => setOpenFaq(isOpen ? null : i)} activeOpacity={0.8}>
+                    <View style={st.faq_q_row}>
+                      <Text style={st.faq_q_txt}>{item.q}</Text>
+                      <Text style={st.faq_chevron}>{isOpen ? '−' : '+'}</Text>
+                    </View>
+                    {isOpen && <Text style={st.faq_a_txt}>{item.a}</Text>}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
 
@@ -4410,6 +4456,11 @@ const st = StyleSheet.create({
   land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
   land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
 
+  faq_item: { backgroundColor: T.card, borderRadius: 12, borderWidth: 1, borderColor: T.border, padding: 16, marginBottom: 10 },
+  faq_q_row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  faq_q_txt: { color: T.text, fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
+  faq_chevron: { color: T.cyan, fontSize: 18, fontWeight: 'bold' },
+  faq_a_txt: { color: T.text2, fontSize: 13, lineHeight: 20, marginTop: 10 },
   land_footer: { color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 16, letterSpacing: 0.5 },
   land_footer_wrap: { marginTop: 40, alignItems: 'center' },
   land_footer_links: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 18, gap: 16 },
