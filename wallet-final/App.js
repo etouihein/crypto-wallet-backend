@@ -22,6 +22,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Clipboard from 'expo-clipboard';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import jsQR from 'jsqr';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as localWallet from './lib/wallet';
@@ -466,6 +467,85 @@ const BLOCKCHAIN_CONFIG = {
 // ═══════════════════════════════════════════════════════════
 //  QR CODE RÉEL
 // ═══════════════════════════════════════════════════════════
+// Scanner QR pour le web — expo-camera n'a pas de shim web fonctionnel
+// (useCameraPermissions/CameraView plantent, voir le commentaire plus bas
+// dans le composant principal), donc on pilote directement getUserMedia +
+// un <video> DOM inséré à la main dans un View (React Native Web ne permet
+// pas d'écrire <video> en JSX), et jsQR décode chaque frame capturée sur un
+// <canvas> caché. Le natif continue d'utiliser CameraView normalement.
+function WebQrScanner({ onScanned }) {
+  const containerRef = useRef(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let stopped = false;
+    let rafId = null;
+    let stream = null;
+    let videoEl = null;
+    const canvas = document.createElement('canvas');
+
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+        videoEl = document.createElement('video');
+        videoEl.setAttribute('playsinline', 'true'); // évite le plein écran natif sur iOS Safari
+        videoEl.muted = true;
+        videoEl.style.width = '100%';
+        videoEl.style.height = '100%';
+        videoEl.style.objectFit = 'cover';
+        videoEl.srcObject = stream;
+        if (containerRef.current) containerRef.current.appendChild(videoEl);
+        await videoEl.play();
+
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const tick = () => {
+          if (stopped) return;
+          if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
+            canvas.width = videoEl.videoWidth;
+            canvas.height = videoEl.videoHeight;
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+            if (code?.data) { onScanned(code.data); return; }
+          }
+          rafId = requestAnimationFrame(tick);
+        };
+        rafId = requestAnimationFrame(tick);
+      } catch (e) {
+        // Les navigateurs normalisent le `name` des erreurs getUserMedia
+        // (contrairement au `message`, souvent vague type "Not supported") —
+        // plus fiable pour donner un message clair selon la vraie cause.
+        setError(e.name || 'UnknownError');
+      }
+    })();
+
+    return () => {
+      stopped = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (videoEl && videoEl.parentNode) videoEl.parentNode.removeChild(videoEl);
+    };
+  }, [onScanned]);
+
+  if (error) {
+    const CAMERA_ERROR_MESSAGES = {
+      NotAllowedError: "Accès à la caméra refusé — autorise-le dans les réglages de ton navigateur.",
+      NotFoundError: 'Aucune caméra détectée sur cet appareil.',
+      NotReadableError: 'La caméra est déjà utilisée par une autre application.',
+      SecurityError: 'Le scan caméra nécessite une connexion sécurisée (https).',
+    };
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: T.text2, textAlign: 'center' }}>
+          {CAMERA_ERROR_MESSAGES[error] || "Impossible d'accéder à la caméra — utilise plutôt le collage depuis le presse-papier."}
+        </Text>
+      </View>
+    );
+  }
+  return <View ref={containerRef} style={{ flex: 1, backgroundColor: '#000' }} />;
+}
+
 function QRCodeMock({ address }) {
   const size = 180;
   return (
@@ -3477,7 +3557,9 @@ export default function App() {
           <Text style={st.modal_title}>Scanner un QR code</Text>
           <View style={{ width: 40 }} />
         </View>
-        {cameraPermission?.granted ? (
+        {Platform.OS === 'web' ? (
+          showQrScanner && <WebQrScanner onScanned={(data) => handleQrScanned({ data })} />
+        ) : cameraPermission?.granted ? (
           <CameraView
             style={{ flex: 1 }}
             facing="back"
@@ -3592,15 +3674,14 @@ export default function App() {
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
                 placeholder="0x123...abc" placeholderTextColor={T.text3} autoCapitalize="none" />
-              {Platform.OS === 'web' ? (
+              {Platform.OS === 'web' && (
                 <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
                   <Text style={{ fontSize: 18 }}>📋</Text>
                 </TouchableOpacity>
-              ) : (
-                <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
-                  <Text style={{ fontSize: 18 }}>📷</Text>
-                </TouchableOpacity>
               )}
+              <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
+                <Text style={{ fontSize: 18 }}>📷</Text>
+              </TouchableOpacity>
             </View>
             <View style={{ height: 16 }} />
 
