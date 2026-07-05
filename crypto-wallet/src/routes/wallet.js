@@ -207,7 +207,7 @@ async function cachedFetch(key, ttlMs, loader) {
 // donc l'écran d'accueil continue de trouver ses prix dans la même réponse.
 async function fetchCoinGeckoMarket(limit = 50) {
   return cachedFetch(`market:${limit}`, 30_000, async () => {
-    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h`;
+    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h,7d,30d`;
     try {
       const response = await fetch(url, { headers: coingeckoHeaders() });
       if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
@@ -219,6 +219,8 @@ async function fetchCoinGeckoMarket(limit = 50) {
         current_price: item.current_price,
         market_cap: item.market_cap,
         price_change_percentage_24h: item.price_change_percentage_24h,
+        price_change_percentage_7d: item.price_change_percentage_7d_in_currency,
+        price_change_percentage_30d: item.price_change_percentage_30d_in_currency,
         image: item.image,
       }));
     } catch (error) {

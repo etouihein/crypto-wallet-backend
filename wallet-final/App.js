@@ -438,6 +438,70 @@ const saveVibrationEnabled = async (enabled) => {
   try { await AsyncStorage.setItem(VIBRATION_ENABLED_KEY, String(enabled)); } catch { /* rien à faire */ }
 };
 
+// Période affichée sous le solde total de l'accueil (24h / 7j / 30j).
+const BALANCE_PERIOD_KEY = 'wallet-pro-balance-period-v1';
+
+const loadBalancePeriod = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(BALANCE_PERIOD_KEY);
+    return ['24h', '7d', '30d'].includes(raw) ? raw : '24h';
+  } catch { return '24h'; }
+};
+
+const saveBalancePeriod = async (period) => {
+  try { await AsyncStorage.setItem(BALANCE_PERIOD_KEY, period); } catch { /* rien à faire */ }
+};
+
+// Dernier envoi réussi — pour le raccourci "Répéter le dernier envoi" sur
+// l'accueil. Rien de sensible : adresse publique, symbole, montant, réseau.
+const LAST_SEND_KEY = 'wallet-pro-last-send-v1';
+
+const loadLastSend = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(LAST_SEND_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+};
+
+const saveLastSend = async (record) => {
+  try { await AsyncStorage.setItem(LAST_SEND_KEY, JSON.stringify(record)); } catch { /* rien à faire */ }
+};
+
+// Compteur d'utilisation par token (nombre d'envois réussis) -- sert à trier
+// "Mes Tokens" en mettant les plus utilisés en premier, plutôt qu'un ordre
+// fixe arbitraire ou un vrai drag & drop (pas de lib de glisser-déposer
+// installée, disproportionné pour ce seul besoin).
+const TOKEN_USAGE_KEY = 'wallet-pro-token-usage-v1';
+
+const loadTokenUsage = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(TOKEN_USAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+};
+
+const saveTokenUsage = async (map) => {
+  try { await AsyncStorage.setItem(TOKEN_USAGE_KEY, JSON.stringify(map)); } catch { /* rien à faire */ }
+};
+
+// Actions rapides masquées sur l'accueil (ids parmi QUICK_ACTION_IDS) --
+// permet de cacher celles qu'on n'utilise jamais plutôt qu'un vrai
+// glisser-déposer pour réordonner.
+const HIDDEN_QUICK_ACTIONS_KEY = 'wallet-pro-hidden-quick-actions-v1';
+
+const loadHiddenQuickActions = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(HIDDEN_QUICK_ACTIONS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const saveHiddenQuickActions = async (list) => {
+  try { await AsyncStorage.setItem(HIDDEN_QUICK_ACTIONS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
 // Tokens personnalisés (adresse de contrat saisie à la main) — lecture seule,
 // voir getCustomTokenInfo dans lib/wallet.js pour le pourquoi.
 const CUSTOM_TOKENS_KEY = 'wallet-pro-custom-tokens-v1';
@@ -1387,6 +1451,10 @@ export default function App() {
   const [simAmount, setSimAmount]               = useState('100'); // simulateur "et si le prix x2/x5/x10" sur la landing
   const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [balancePeriod, setBalancePeriod] = useState('24h');
+  const [lastSend, setLastSend]           = useState(null);
+  const [tokenUsage, setTokenUsage]       = useState({});
+  const [hiddenQuickActions, setHiddenQuickActions] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [portfolioHistoryLoaded, setPortfolioHistoryLoaded] = useState(false);
   const [showOnboarding, setShowOnboarding]     = useState(false);
@@ -1541,6 +1609,8 @@ export default function App() {
             ...next[sym],
             price:     token.current_price ?? next[sym].price,
             change24h: token.price_change_percentage_24h ?? next[sym].change24h,
+            change7d:  token.price_change_percentage_7d ?? next[sym].change7d,
+            change30d: token.price_change_percentage_30d ?? next[sym].change30d,
             marketCap: token.market_cap ?? next[sym].marketCap,
           };
         });
@@ -1945,6 +2015,10 @@ export default function App() {
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
+    loadBalancePeriod().then(setBalancePeriod);
+    loadLastSend().then(setLastSend);
+    loadTokenUsage().then(setTokenUsage);
+    loadHiddenQuickActions().then(setHiddenQuickActions);
     loadPortfolioHistory().then(list => { setPortfolioHistory(list); setPortfolioHistoryLoaded(true); });
     loadTxTags().then(setTxTags);
     loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
@@ -2439,6 +2513,18 @@ export default function App() {
     }, 0),
   [tokens, chartTick]);
 
+  // Variation du solde sur la période choisie (24h/7j/30j) — même calcul
+  // que todayChange mais avec le champ de variation correspondant. 24h reste
+  // le champ dédié historique (todayChange), les deux autres réutilisent ce
+  // même principe avec change7d/change30d (ajoutés au backend pour ça).
+  const periodChangeField = { '24h': 'change24h', '7d': 'change7d', '30d': 'change30d' }[balancePeriod] || 'change24h';
+  const periodChange = useMemo(() =>
+    balancePeriod === '24h' ? todayChange : Object.values(tokens).reduce((total, t) => {
+      const val = (t.balance || 0) * (t.price || 0);
+      return total + val * ((t[periodChangeField] || 0) / 100);
+    }, 0),
+  [tokens, chartTick, balancePeriod, periodChangeField, todayChange]);
+
   // Score de diversification : signale seulement une forte concentration
   // (≥70% sur un seul actif) — en dessous, pas la peine d'alerter.
   const diversification = useMemo(() => {
@@ -2452,6 +2538,54 @@ export default function App() {
     const topPct = (top.value / totalUSD) * 100;
     return { topSymbol: top.sym, topPct };
   }, [tokens, totalUSD]);
+
+  // "Mes Tokens" trié par usage réel (nb d'envois) plutôt qu'un ordre fixe --
+  // Array.prototype.sort est stable (ES2019+), les ex-aequo (jamais envoyés)
+  // gardent leur ordre d'origine.
+  const sortedTokenEntries = useMemo(() =>
+    Object.entries(tokens).sort(([symA], [symB]) => (tokenUsage[symB] || 0) - (tokenUsage[symA] || 0)),
+  [tokens, tokenUsage]);
+
+  // Token détenu (solde > 0) dont le prix bouge le plus aujourd'hui, dans un
+  // sens ou l'autre -- ignoré sous 1% pour ne pas polluer l'accueil avec du
+  // bruit sans intérêt.
+  const dailyMover = useMemo(() => {
+    const entries = Object.entries(tokens).filter(([, t]) => (t.balance || 0) > 0 && typeof t.change24h === 'number');
+    if (!entries.length) return null;
+    entries.sort((a, b) => Math.abs(b[1].change24h) - Math.abs(a[1].change24h));
+    const [sym, t] = entries[0];
+    return Math.abs(t.change24h) >= 1 ? { sym, change: t.change24h } : null;
+  }, [tokens]);
+
+  const repeatLastSend = useCallback(() => {
+    if (!lastSend) return;
+    setSendToken(lastSend.token);
+    setSendAddress(lastSend.address);
+    setSendAmount(lastSend.amount);
+    setShowSend(true);
+  }, [lastSend]);
+
+  const toggleQuickAction = useCallback((id) => {
+    setHiddenQuickActions(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      saveHiddenQuickActions(next);
+      return next;
+    });
+  }, []);
+
+  // "Marché" retiré : redondant depuis que c'est un onglet principal. Le
+  // raccourci "Répéter" n'apparaît que si un dernier envoi existe sur ce
+  // même réseau (adresse/montant/token n'ont de sens que dans ce contexte).
+  const QUICK_ACTIONS_BASE = [
+    { id: 'send',    icon: '↑',  label: 'Envoyer',  bg: T.card2, onPress: () => setShowSend(true) },
+    { id: 'buy',     icon: '💳', label: 'Acheter',  bg: T.green, onPress: () => setShowBuy(true) },
+    { id: 'receive', icon: '+',  label: 'Recevoir', bg: T.card2, onPress: () => setShowReceive(true) },
+    { id: 'history', icon: '🕐', label: 'Activité', bg: T.card2, onPress: () => setShowHistory(true) },
+  ];
+  const visibleQuickActions = [
+    ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
+    ...(lastSend && lastSend.network === network ? [{ id: 'repeat', icon: '🔁', label: 'Répéter', bg: T.card2, onPress: repeatLastSend }] : []),
+  ];
 
   // Enregistre un point d'historique de valeur totale au plus toutes les
   // PORTFOLIO_HISTORY_MIN_GAP_MS -- pas à chaque rafraîchissement de prix
@@ -2657,6 +2791,14 @@ export default function App() {
       );
 
       addRecentAddress(sendAddress);
+      const sendRecord = { address: sendAddress, token: sendToken, amount: sendAmount, network };
+      setLastSend(sendRecord);
+      saveLastSend(sendRecord);
+      setTokenUsage(prev => {
+        const next = { ...prev, [sendToken]: (prev[sendToken] || 0) + 1 };
+        saveTokenUsage(next);
+        return next;
+      });
       await refreshPortfolio(network);
       setShowSend(false);
       setSendStep('form');
@@ -4280,6 +4422,21 @@ export default function App() {
             </>
           )}
 
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 Actions rapides de l'accueil</Text>
+          {QUICK_ACTIONS_BASE.map(a => {
+            const isHidden = hiddenQuickActions.includes(a.id);
+            return (
+              <AnimPressable key={a.id} style={st.settings_row} onPress={() => toggleQuickAction(a.id)}>
+                <Text style={{ fontSize: 22 }}>{a.icon}</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>{a.label}</Text>
+                  <Text style={st.settings_row_sub}>{isHidden ? 'Masquée' : 'Visible sur l\'accueil'}</Text>
+                </View>
+                <View style={[st.status_dot, { backgroundColor: isHidden ? T.text3 : T.green }]} />
+              </AnimPressable>
+            );
+          })}
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>🔔 Notifications</Text>
           <AnimPressable
             style={st.settings_row}
@@ -4414,10 +4571,20 @@ export default function App() {
         >
           <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-            <Text style={{ color: todayChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
-              {todayChange >= 0 ? '+' : ''}{fmt(todayChange)} ({((todayChange / Math.max(totalUSD - todayChange, 1)) * 100).toFixed(2)}%)
+            <Text style={{ color: periodChange >= 0 ? T.green : T.red, fontSize: 14, fontWeight: '600' }}>
+              {periodChange >= 0 ? '+' : ''}{fmt(periodChange)} ({((periodChange / Math.max(totalUSD - periodChange, 1)) * 100).toFixed(2)}%)
             </Text>
-            <Text style={{ color: T.text2, fontSize: 12, marginLeft: 6 }}>24h</Text>
+            <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
+              {[['24h', '24h'], ['7d', '7j'], ['30d', '30j']].map(([key, label]) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => { setBalancePeriod(key); saveBalancePeriod(key); }}
+                  style={[st.period_chip, balancePeriod === key && st.period_chip_on]}
+                >
+                  <Text style={[st.period_chip_txt, balancePeriod === key && st.period_chip_txt_on]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         </LinearGradient>
       </View>
@@ -4432,14 +4599,8 @@ export default function App() {
       )}
 
       <View style={st.quick_actions}>
-        {[
-          { icon: '↑', label: 'Envoyer', bg: T.card2, onPress: () => setShowSend(true) },
-          { icon: '💳', label: 'Acheter', bg: T.green, onPress: () => setShowBuy(true) },
-          { icon: '+', label: 'Recevoir',bg: T.card2, onPress: () => setShowReceive(true) },
-          { icon: '🕐', label: 'Activité', bg: T.card2, onPress: () => setShowHistory(true) },
-          { icon: '📊',label: 'Marché', bg: T.card2, onPress: () => setTab('markets') },
-        ].map(a => (
-          <AnimPressable key={a.label} style={st.quick_btn} onPress={a.onPress}>
+        {visibleQuickActions.map(a => (
+          <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
               <Text style={[st.quick_icon_txt, { color: a.bg === T.green ? '#000' : T.text }]}>{a.icon}</Text>
             </View>
@@ -4447,6 +4608,14 @@ export default function App() {
           </AnimPressable>
         ))}
       </View>
+
+      {!!dailyMover && (
+        <View style={st.mover_card}>
+          <Text style={st.mover_txt}>
+            {dailyMover.change >= 0 ? '🚀' : '📉'} {dailyMover.sym} est ton token qui bouge le plus aujourd'hui ({dailyMover.change >= 0 ? '+' : ''}{dailyMover.change.toFixed(2)}%).
+          </Text>
+        </View>
+      )}
 
       {!!diversification && diversification.topPct >= 70 && (
         <View style={st.diversif_card}>
@@ -4512,7 +4681,7 @@ export default function App() {
           Object.keys(tokens).map(sym => (
             <TokenRowSkeleton key={sym} style={[isWideWeb && st.token_row_wide]} />
           ))
-        ) : Object.entries(tokens).map(([sym, t], i) => {
+        ) : sortedTokenEntries.map(([sym, t], i) => {
           const val = (t.balance || 0) * (t.price || 0);
           const pos = (t.change24h || 0) >= 0;
           const isFav = favorites.includes(sym);
@@ -5164,6 +5333,12 @@ const st = StyleSheet.create({
   warning_box:     { backgroundColor: T.redBg, borderRadius: 12, padding: 14, marginTop: 20, width: '100%', borderWidth: 1, borderColor: T.red + '44' },
   warning_txt:     { color: T.text2, fontSize: 12, lineHeight: 18 },
   diversif_card:   { backgroundColor: T.orangeBg, borderRadius: 12, padding: 14, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderColor: T.orange + '44' },
+  mover_card:      { backgroundColor: T.blueBg, borderRadius: 12, padding: 14, marginHorizontal: 14, marginTop: 12, borderWidth: 1, borderColor: T.blue + '44' },
+  mover_txt:       { color: T.text2, fontSize: 12, lineHeight: 18 },
+  period_chip:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: T.card2 },
+  period_chip_on:  { backgroundColor: T.green },
+  period_chip_txt: { color: T.text3, fontSize: 11, fontWeight: '600' },
+  period_chip_txt_on: { color: '#000' },
   sparkline_wrap:  { marginHorizontal: 14, marginTop: 12 },
   sparkline_row:   { flexDirection: 'row', alignItems: 'flex-end', height: 44, gap: 2 },
   sparkline_bar:   { flex: 1, borderRadius: 2, opacity: 0.85, minWidth: 2 },
