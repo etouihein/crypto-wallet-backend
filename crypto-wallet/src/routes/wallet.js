@@ -596,6 +596,36 @@ router.get('/tx/history', async (req, res) => {
   }
 });
 
+// Swap réel — agrégateur DEX 0x, clé côté serveur uniquement. Le backend ne
+// fait QUE demander un devis chiffré (prix + transaction à exécuter) ; la
+// construction, la signature et la diffusion restent 100% côté client, comme
+// n'importe quel envoi (aucune clé privée ne transite jamais par ici).
+router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
+  try {
+    const apiKey = process.env.ZEROX_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ success: false, error: 'Swap non configuré (ZEROX_API_KEY manquante dans .env).' });
+    }
+    const { network = 'ethereum', sellToken, buyToken, sellAmount, taker } = req.query;
+    if (!sellToken || !buyToken || !sellAmount || !ethers.utils.isAddress(taker || '')) {
+      return res.status(400).json({ success: false, error: 'Paramètres de swap invalides.' });
+    }
+
+    const chainId = getNetworkConfig(network).chainId;
+    const qs = new URLSearchParams({ chainId, sellToken, buyToken, sellAmount, taker }).toString();
+    const response = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${qs}`, {
+      headers: { '0x-api-key': apiKey, '0x-version': 'v2' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return res.status(400).json({ success: false, error: data?.reason || data?.validationErrors?.[0]?.reason || data?.message || 'Devis de swap impossible.' });
+    }
+    res.json({ success: true, quote: data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, res) => {
   try {
     const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;

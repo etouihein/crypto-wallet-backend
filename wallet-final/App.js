@@ -14,11 +14,14 @@ import {
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
   FlatList, Linking, Platform, Animated, Pressable, Easing,
-  useWindowDimensions,
+  useWindowDimensions, AppState,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
 import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as Clipboard from 'expo-clipboard';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as localWallet from './lib/wallet';
@@ -65,6 +68,80 @@ const CURRENCIES = {
   GBP: { symbol: '£',  name: 'Livre Sterling',  flag: '🇬🇧', rate: 0.788  },
   CHF: { symbol: 'Fr', name: 'Franc Suisse',    flag: '🇨🇭', rate: 0.905  },
   JPY: { symbol: '¥',  name: 'Yen Japonais',    flag: '🇯🇵', rate: 149.50 },
+};
+
+// ═══════════════════════════════════════════════════════════
+//  DOCUMENTS LÉGAUX — texte affiché tel quel dans Paramètres et le footer de
+//  la landing. Gabarit générique pour un wallet non-custodial ; à faire
+//  relire par un juriste avant un vrai lancement à grande échelle, mais
+//  couvre déjà les points essentiels (pas de garde de fonds, responsabilité
+//  utilisateur sur la phrase de récupération, absence de collecte de
+//  données personnelles).
+// ═══════════════════════════════════════════════════════════
+const LEGAL_DOCS = {
+  cgu: {
+    title: "Conditions Générales d'Utilisation",
+    updated: '5 juillet 2026',
+    body: `1. Objet
+NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille Ethereum/BNB Smart Chain dont les clés privées sont générées, chiffrées et stockées uniquement sur l'appareil de l'utilisateur.
+
+2. Nature non-custodiale
+NexiaWallet ne détient, ne stocke et ne transmet jamais la clé privée ou la phrase de récupération de l'utilisateur. Chaque transaction est signée localement sur l'appareil avant d'être relayée au réseau. En conséquence, NexiaWallet n'a techniquement aucun moyen d'accéder aux fonds, de les bloquer ou de les récupérer en cas de perte des identifiants.
+
+3. Responsabilité de l'utilisateur
+L'utilisateur est seul responsable de la conservation de sa phrase de récupération et de son code PIN. Leur perte entraîne la perte définitive et irréversible de l'accès aux fonds. NexiaWallet ne peut en aucun cas restaurer un accès perdu.
+
+4. Transactions
+Les transactions sur une blockchain publique sont irréversibles. L'utilisateur doit vérifier l'adresse et le montant avant toute confirmation d'envoi. NexiaWallet n'est pas responsable des transactions envoyées à une adresse erronée.
+
+5. Services tiers
+L'achat de crypto par carte bancaire est assuré par un prestataire de paiement tiers (MoonPay), soumis à ses propres conditions et vérifications. Les prix et données de marché proviennent de fournisseurs tiers (CoinGecko, Etherscan) fournis "en l'état", sans garantie d'exactitude en temps réel.
+
+6. Limitation de responsabilité
+NexiaWallet est fourni "en l'état", sans garantie d'absence d'erreur ou d'interruption. L'utilisation de cryptomonnaies comporte des risques de marché et de sécurité que l'utilisateur accepte en connaissance de cause.
+
+7. Évolution
+Ces conditions peuvent être mises à jour ; la date de dernière mise à jour figure en haut de ce document.`,
+  },
+  privacy: {
+    title: 'Politique de Confidentialité',
+    updated: '5 juillet 2026',
+    body: `1. Aucune donnée personnelle collectée
+NexiaWallet ne demande ni email, ni nom, ni numéro de téléphone pour créer un wallet. Aucun compte utilisateur n'existe côté serveur.
+
+2. Ce qui reste uniquement sur l'appareil
+La clé privée, la phrase de récupération, le code PIN (chiffré), les favoris, le carnet d'adresses récentes et les alertes de prix sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
+
+3. Ce qui transite par le serveur
+Le serveur NexiaWallet ne reçoit que des données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces données sont publiques par nature sur une blockchain.
+
+4. Fournisseurs tiers
+Les prix de marché (CoinGecko), l'historique de transactions (Etherscan) et le paiement par carte (MoonPay) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté.
+
+5. Cookies et tracking
+Aucun cookie publicitaire ni outil de suivi tiers n'est utilisé sur ce site.
+
+6. Contact
+Pour toute question sur cette politique, contacter l'éditeur via les informations listées dans les Mentions Légales.`,
+  },
+  mentions: {
+    title: 'Mentions Légales',
+    updated: '5 juillet 2026',
+    body: `Éditeur du site
+NexiaWallet — application de portefeuille crypto non-custodial.
+
+Hébergement
+Backend applicatif hébergé par Railway (railway.app). Application web hébergée par Cloudflare Pages (pages.dev).
+
+Nature du service
+NexiaWallet met à disposition un outil technique de génération et de gestion de portefeuille crypto non-custodial. NexiaWallet n'est ni un établissement de paiement, ni un prestataire de services sur actifs numériques (PSAN) au sens où elle ne détient jamais les fonds des utilisateurs.
+
+Propriété intellectuelle
+L'interface, le code et les visuels de NexiaWallet sont la propriété de leur auteur, sauf logos et données de marché appartenant à leurs fournisseurs respectifs (CoinGecko, MoonPay).
+
+Contact
+Pour toute question, un formulaire ou une adresse de contact sera ajouté prochainement.`,
+  },
 };
 
 // URLs images CoinGecko (logos réels)
@@ -196,6 +273,81 @@ const saveFavorites = async (list) => {
   } catch (error) {
     console.warn('saveFavorites failed', error);
   }
+};
+
+// Déverrouillage biométrique — natif uniquement. Le PIN lui-même (pas la clé
+// privée) est mis dans le Keychain/Keystore OS (déjà chiffré au niveau
+// matériel par SecureStore) ; Face ID/empreinte ne fait que déclencher sa
+// récupération, PUIS le PIN récupéré repasse par le déchiffrement normal du
+// keystore (`decryptWalletKeystore`) — aucun raccourci qui contournerait le
+// chiffrement. Absent sur web : SecureStore n'y a aucune protection
+// matérielle, l'activer donnerait un faux sentiment de sécurité.
+const BIOMETRIC_PIN_KEY = 'wallet-pro-biometric-pin-v1';
+
+const saveBiometricPin = async (pin) => {
+  if (Platform.OS === 'web') return;
+  try { await SecureStore.setItemAsync(BIOMETRIC_PIN_KEY, pin); } catch (error) { console.warn('saveBiometricPin failed', error); }
+};
+
+const loadBiometricPin = async () => {
+  if (Platform.OS === 'web') return null;
+  try { return await SecureStore.getItemAsync(BIOMETRIC_PIN_KEY); } catch { return null; }
+};
+
+const clearBiometricPin = async () => {
+  if (Platform.OS === 'web') return;
+  try { await SecureStore.deleteItemAsync(BIOMETRIC_PIN_KEY); } catch { /* rien à faire */ }
+};
+
+// Carnet d'adresses léger : juste les dernières adresses utilisées pour
+// "Envoyer", aucune donnée sensible — de simples adresses publiques 0x...
+const RECENT_ADDRESSES_KEY = 'wallet-pro-recent-addresses-v1';
+const MAX_RECENT_ADDRESSES = 8;
+
+const loadRecentAddresses = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(RECENT_ADDRESSES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const saveRecentAddresses = async (list) => {
+  try { await AsyncStorage.setItem(RECENT_ADDRESSES_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
+// Alertes de prix — vérifiées en local à chaque rafraîchissement du marché
+// (toutes les 30s pendant que l'app est ouverte). Pas de notification push
+// réelle (ça demanderait un serveur dédié) : juste un toast + une alerte
+// visible pendant que l'app tourne — d'où "in-app".
+const PRICE_ALERTS_KEY = 'wallet-pro-price-alerts-v1';
+
+const loadPriceAlerts = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PRICE_ALERTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const savePriceAlerts = async (list) => {
+  try { await AsyncStorage.setItem(PRICE_ALERTS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
+// Tokens personnalisés (adresse de contrat saisie à la main) — lecture seule,
+// voir getCustomTokenInfo dans lib/wallet.js pour le pourquoi.
+const CUSTOM_TOKENS_KEY = 'wallet-pro-custom-tokens-v1';
+
+const loadCustomTokens = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(CUSTOM_TOKENS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const saveCustomTokens = async (list) => {
+  try { await AsyncStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -486,6 +638,72 @@ function AnimatedLogo({ size = 92, icon = '🛡️' }) {
         </LinearGradient>
       </Animated.View>
     </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WALLET — bloc "skeleton" (placeholder qui respire) affiché tant que les
+//  prix n'ont pas encore été chargés, au lieu d'une liste vide ou figée.
+// ═══════════════════════════════════════════════════════════
+function SkeletonBlock({ style }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: 1, duration: 750, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 0, duration: 750, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [anim]);
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] });
+  return <Animated.View style={[st.skeleton_block, style, { opacity }]} />;
+}
+
+function TokenRowSkeleton({ style }) {
+  return (
+    <View style={[st.token_row, style, { flexDirection: 'row', alignItems: 'center' }]}>
+      <SkeletonBlock style={{ width: 44, height: 44, borderRadius: 22 }} />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <SkeletonBlock style={{ width: '55%', height: 13, borderRadius: 6, marginBottom: 8 }} />
+        <SkeletonBlock style={{ width: '35%', height: 11, borderRadius: 6 }} />
+      </View>
+      <SkeletonBlock style={{ width: 50, height: 13, borderRadius: 6 }} />
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WALLET — bandeau toast (confirmations non-bloquantes : copie, succès
+//  rapide). Fondu + léger glissement à l'apparition, auto-disparition gérée
+//  par l'appelant (showToast) via un minuteur, pas ici.
+// ═══════════════════════════════════════════════════════════
+function ToastBanner({ toast }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!toast) return;
+    anim.setValue(0);
+    Animated.timing(anim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+  }, [toast, anim]);
+  if (!toast) return null;
+  const bg = toast.type === 'success' ? T.greenBg : toast.type === 'error' ? T.redBg : T.card2;
+  const fg = toast.type === 'success' ? T.green : toast.type === 'error' ? T.red : T.text;
+  return (
+    // Modal transparent = même mécanisme d'overlay que les autres popups
+    // (Envoyer, Paramètres...) — sans ça, un toast simple sibling passait
+    // SOUS les Modal ouverts (portés au-dessus par RN indépendamment de
+    // l'ordre dans le JSX).
+    <Modal visible transparent animationType="none">
+      <View style={st.toast_layer} pointerEvents="none">
+        <Animated.View
+          style={[
+            st.toast_wrap,
+            { backgroundColor: bg, borderColor: fg + '55', opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+          ]}
+        >
+          <Text style={[st.toast_txt, { color: fg }]}>{toast.message}</Text>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
@@ -893,6 +1111,8 @@ export default function App() {
 
   const [marketCoins, setMarketCoins]   = useState([]);
   const [marketSearch, setMarketSearch] = useState('');
+  const [marketSort, setMarketSort]           = useState('market_cap'); // market_cap | gainers | losers | alpha
+  const [marketFavOnly, setMarketFavOnly]     = useState(false);
   const [refreshing, setRefreshing]     = useState(false);
   const [selectedToken, setSelectedToken] = useState(null);
   const [detailTf, setDetailTf]           = useState('1J');
@@ -902,7 +1122,11 @@ export default function App() {
   const [showHistory, setShowHistory]     = useState(false);
   const [historyItems, setHistoryItems]   = useState(null); // null = pas encore chargé, [] = chargé et vide
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFilterSymbol, setHistoryFilterSymbol] = useState('ALL');
+  const HISTORY_PAGE_SIZE = 15;
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showSettings, setShowSettings]   = useState(false);
+  const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
   const [sendAmount, setSendAmount]       = useState('');
@@ -927,6 +1151,53 @@ export default function App() {
   const [network, setNetwork]             = useState('ethereum');
   const [walletSession, setWalletSession] = useState(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
+  // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
+  // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
+  // disparaissent à la déconnexion ou à la fermeture de l'app.
+  const [pinStage, setPinStage]                 = useState(null); // null | 'choose' | 'confirm'
+  const [pendingWalletForPin, setPendingWalletForPin] = useState(null);
+  const [pendingPinDigits, setPendingPinDigits] = useState('');
+  const [pinError, setPinError]                 = useState(null);
+  const [isVerifyingPin, setIsVerifyingPin]     = useState(false);
+  const [unlockedPrivateKey, setUnlockedPrivateKey] = useState(null);
+  const [unlockedMnemonic, setUnlockedMnemonic]     = useState(null);
+  const [biometricEnabled, setBiometricEnabled]     = useState(false);
+  // Écran de confirmation avant envoi : 'form' (saisie) -> 'confirm' (relire
+  // adresse/montant/frais avant de signer). Adresses récentes = carnet léger,
+  // rempli au fil des envois réussis.
+  const [sendStep, setSendStep]                 = useState('form');
+  const [sendFeeEstimate, setSendFeeEstimate]   = useState(null);
+  const [sendFeeLoading, setSendFeeLoading]     = useState(false);
+  const [recentAddresses, setRecentAddresses]   = useState([]);
+  // Scan QR : natif uniquement (caméra). Sur web, on propose "Coller" à la
+  // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
+  // pur serait un chantier à part, hors scope de ce passage).
+  const [showQrScanner, setShowQrScanner]       = useState(false);
+  // `useCameraPermissions` n'existe pas dans le shim web d'expo-camera (crash
+  // immédiat au montage) — Platform.OS ne change jamais en cours de vie de
+  // l'app, donc cet appel conditionnel reste stable d'un render à l'autre.
+  const [cameraPermission, requestCameraPermission] = Platform.OS === 'web'
+    ? [null, () => {}]
+    : useCameraPermissions();
+  // Toast léger pour les confirmations non-bloquantes (copie, succès rapide)
+  // — les vraies décisions (déconnexion, désactiver la biométrie...) restent
+  // sur showAlert, qui bloque vraiment et demande un choix explicite.
+  const [toast, setToast] = useState(null); // { message, type: 'success' | 'error' | 'info' }
+  const toastTimerRef = useRef(null);
+  const showToast = useCallback((message, type = 'info') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+  const copyToClipboard = useCallback(async (value, label = 'Copié') => {
+    try {
+      await Clipboard.setStringAsync(value);
+      showToast(`✓ ${label}`, 'success');
+    } catch {
+      showToast('Impossible de copier', 'error');
+    }
+  }, [showToast]);
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
@@ -943,6 +1214,19 @@ export default function App() {
   // l'accueil — persistée localement, pas de compte ni de backend impliqué.
   const [favorites, setFavorites]         = useState([]);
   const [favoritesLoaded, setFavoritesLoaded] = useState(false);
+  // Alertes de prix : { id, symbol, targetPrice, direction: 'above'|'below' }
+  const [priceAlerts, setPriceAlerts]     = useState([]);
+  const [priceAlertsLoaded, setPriceAlertsLoaded] = useState(false);
+  const [alertFormFor, setAlertFormFor]   = useState(null); // symbole en cours d'édition, ou null
+  const [alertTargetInput, setAlertTargetInput] = useState('');
+  const [alertDirection, setAlertDirection]     = useState('above');
+  // Tokens personnalisés : lecture seule (nom/symbole/décimales/solde), voir
+  // getCustomTokenInfo. Rechargés à chaque refreshPortfolio pour rester à jour.
+  const [customTokens, setCustomTokens]         = useState([]);
+  const [customTokensLoaded, setCustomTokensLoaded] = useState(false);
+  const [showAddCustomToken, setShowAddCustomToken] = useState(false);
+  const [customTokenAddrInput, setCustomTokenAddrInput] = useState('');
+  const [customTokenLoading, setCustomTokenLoading]     = useState(false);
   // Fiche "info seule" pour une crypto du Marché qui n'est PAS dans le
   // wallet (pas de solde/envoi possible — juste prix, capitalisation, desc).
   const [selectedMarketCoin, setSelectedMarketCoin] = useState(null);
@@ -1109,39 +1393,34 @@ export default function App() {
   }, [walletAddr, network]);
 
   useEffect(() => {
-    if (showHistory) fetchHistory();
+    if (showHistory) {
+      setHistoryFilterSymbol('ALL');
+      setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+      fetchHistory();
+    }
   }, [showHistory, fetchHistory]);
 
   // Wallet 100% non-custodial : génération/import/restauration se font en
   // local avec `lib/wallet.js` — la clé privée et la mnémonique ne quittent
   // jamais l'appareil, aucun appel réseau vers le backend n'est nécessaire ici.
+  // Ni l'une ni l'autre ne sont écrites sur disque en clair : la création/
+  // l'import ne fait que préparer `pendingWalletForPin` — c'est
+  // `finalizePinSetup` (déclenché une fois le PIN choisi et confirmé) qui
+  // chiffre et persiste réellement la session.
   const createWallet = useCallback(async () => {
     try {
       setBackendError(null);
       const created = localWallet.createLocalWallet();
-      const nextSession = {
-        address: created.address,
-        mnemonic: created.mnemonic,
-        privateKey: created.privateKey,
-        balance: '0',
-        network,
-        createdAt: Date.now(),
-      };
-      await saveWalletSession(nextSession);
-      setWalletSession(nextSession);
-      setWalletAddr(created.address);
-      setWalletBalance('0');
-      setWalletCreated(true);
-      setBackendReady(true);
-      setPendingMnemonic(created.mnemonic);
-      await refreshPortfolio(network);
+      setPendingWalletForPin({ address: created.address, privateKey: created.privateKey, mnemonic: created.mnemonic, isImport: false, isMigration: false });
+      setPinCode(''); setPendingPinDigits(''); setPinError(null);
+      setPinStage('choose');
       return true;
     } catch (err) {
       console.error('Création wallet locale échouée:', err.message);
       setBackendError('Impossible de créer le wallet.');
       return false;
     }
-  }, [network, refreshPortfolio]);
+  }, []);
 
   const importWallet = useCallback(async () => {
     try {
@@ -1152,49 +1431,119 @@ export default function App() {
       }
 
       const imported = localWallet.importLocalWallet(importValue, importType);
-      const nextSession = {
-        address: imported.address,
-        mnemonic: imported.mnemonic,
-        privateKey: imported.privateKey,
-        balance: '0',
-        network,
-        createdAt: Date.now(),
-      };
-      await saveWalletSession(nextSession);
-      setWalletSession(nextSession);
-      setWalletAddr(imported.address);
-      setWalletBalance('0');
-      setWalletCreated(true);
-      setBackendReady(true);
-      await refreshPortfolio(network);
-      setImportMode(false);
-      setImportValue('');
+      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, isImport: true, isMigration: false });
+      setPinCode(''); setPendingPinDigits(''); setPinError(null);
+      setPinStage('choose');
       return true;
     } catch (err) {
       console.error('Import local échoué:', err.message);
       setImportError(err.message || 'Mnémonique ou clé privée invalide.');
       return false;
     }
-  }, [importType, importValue, network, refreshPortfolio]);
+  }, [importType, importValue]);
+
+  // Une fois le PIN choisi ET confirmé (deux saisies identiques), chiffre la
+  // clé (+ mnémonique si dispo) avec ce PIN et persiste le résultat — c'est
+  // le SEUL moment où quelque chose touche le disque pour un nouveau wallet.
+  const finalizePinSetup = useCallback(async (pin) => {
+    if (!pendingWalletForPin) return;
+    setIsVerifyingPin(true);
+    try {
+      const encryptedKeystore = await localWallet.encryptWalletKeystore(pendingWalletForPin, pin);
+      const nextSession = {
+        address: pendingWalletForPin.address,
+        encryptedKeystore,
+        network,
+        createdAt: Date.now(),
+      };
+      await saveWalletSession(nextSession);
+      setWalletSession(nextSession);
+      setWalletAddr(pendingWalletForPin.address);
+      setUnlockedPrivateKey(pendingWalletForPin.privateKey);
+      setUnlockedMnemonic(pendingWalletForPin.mnemonic || null);
+      setWalletBalance('0');
+      setWalletCreated(true);
+      setBackendReady(true);
+      setIsUnlocked(true);
+      if (!pendingWalletForPin.isImport && !pendingWalletForPin.isMigration) {
+        setPendingMnemonic(pendingWalletForPin.mnemonic);
+      }
+      if (pendingWalletForPin.isImport) { setImportMode(false); setImportValue(''); }
+      await refreshPortfolio(network);
+      setPinStage(null);
+      setPendingWalletForPin(null);
+      setPendingPinDigits('');
+      setPinCode('');
+      setPinError(null);
+      // eslint-disable-next-line no-use-before-define -- défini plus bas dans
+      // ce composant, mais l'appel n'a lieu qu'à l'exécution (post-render).
+      offerBiometricEnroll(pin);
+    } catch (err) {
+      console.error('Sécurisation du wallet échouée:', err.message);
+      setPinError('Impossible de sécuriser le wallet — réessaie.');
+      setPinCode('');
+      setPendingPinDigits('');
+      setPinStage('choose');
+    } finally {
+      setIsVerifyingPin(false);
+    }
+  }, [pendingWalletForPin, network, refreshPortfolio]);
+
+  // Déverrouillage : déchiffre le keystore stocké avec le PIN saisi. Un
+  // mauvais PIN fait simplement échouer le déchiffrement (aucune comparaison
+  // de code en clair nulle part) — la seule "vérité" est cryptographique.
+  const attemptUnlock = useCallback(async (pin) => {
+    if (!walletSession?.encryptedKeystore) return;
+    setIsVerifyingPin(true);
+    setPinError(null);
+    try {
+      const result = await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, pin);
+      if (result.address.toLowerCase() !== walletSession.address.toLowerCase()) {
+        throw new Error('Adresse incohérente après déchiffrement.');
+      }
+      setUnlockedPrivateKey(result.privateKey);
+      setUnlockedMnemonic(result.mnemonic);
+      setIsUnlocked(true);
+      setPinCode('');
+      setPinError(null);
+      await refreshPortfolio(network);
+    } catch (err) {
+      setPinError('Code incorrect');
+      setPinCode('');
+    } finally {
+      setIsVerifyingPin(false);
+    }
+  }, [walletSession, network, refreshPortfolio]);
 
   const initWallet = useCallback(async () => {
     try {
       setBackendError(null);
       const saved = await loadWalletSession();
-      if (saved?.address && saved.privateKey) {
-        // Sanity check : la clé privée sauvegardée doit bien redonner la même
-        // adresse (détecte une corruption de stockage plutôt que de signer
-        // silencieusement avec la mauvaise clé).
-        const wallet = localWallet.walletFromPrivateKey(saved.privateKey);
-        if (wallet.address !== saved.address) {
-          throw new Error('Session locale corrompue (adresse incohérente).');
-        }
+
+      if (saved?.address && saved.encryptedKeystore) {
+        // Format sécurisé : on ne déchiffre rien tant que l'utilisateur n'a
+        // pas saisi son PIN sur l'écran de déverrouillage.
         setWalletSession(saved);
         setWalletAddr(saved.address);
         setWalletBalance(saved.balance || '0');
         setWalletCreated(true);
         setBackendReady(true);
-        await refreshPortfolio(network);
+        return;
+      }
+
+      if (saved?.address && saved.privateKey) {
+        // Ancien format (clé en clair, d'avant l'ajout du PIN réel) : sanity
+        // check puis migration — on redemande un PIN pour re-chiffrer cette
+        // session existante, sans rien perdre (pas de recréation forcée).
+        const wallet = localWallet.walletFromPrivateKey(saved.privateKey);
+        if (wallet.address !== saved.address) {
+          throw new Error('Session locale corrompue (adresse incohérente).');
+        }
+        setPendingWalletForPin({ address: saved.address, privateKey: saved.privateKey, mnemonic: saved.mnemonic || null, isImport: true, isMigration: true });
+        setPinCode(''); setPendingPinDigits(''); setPinError(null);
+        setPinStage('choose');
+        setWalletCreated(true);
+        setBackendReady(true);
         return;
       }
 
@@ -1221,6 +1570,8 @@ export default function App() {
           text: 'Déconnecter',
           onPress: async () => {
             await clearWalletSession();
+            await clearBiometricPin();
+            setBiometricEnabled(false);
             setWalletSession(null);
             setWalletAddr('');
             setWalletBalance('0');
@@ -1228,6 +1579,12 @@ export default function App() {
             setBackendReady(false);
             setIsUnlocked(false);
             setShowSettings(false);
+            setUnlockedPrivateKey(null);
+            setUnlockedMnemonic(null);
+            setPinStage(null);
+            setPendingWalletForPin(null);
+            setPendingPinDigits('');
+            setPinError(null);
             setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
           },
         },
@@ -1254,6 +1611,133 @@ export default function App() {
 
   useEffect(() => {
     loadFavorites().then(list => { setFavorites(list); setFavoritesLoaded(true); });
+    loadRecentAddresses().then(setRecentAddresses);
+    loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
+    loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
+  }, []);
+
+  useEffect(() => {
+    if (customTokensLoaded) saveCustomTokens(customTokens.map(({ balance, ...rest }) => rest));
+    // Le solde n'est pas persisté (il serait périmé au prochain lancement) —
+    // seuls l'adresse du contrat et les métadonnées le sont.
+  }, [customTokens, customTokensLoaded]);
+
+  const refreshCustomTokenBalances = useCallback(async () => {
+    if (!walletAddr || !customTokens.length) return;
+    const updated = await Promise.all(customTokens.map(async (t) => {
+      try {
+        const info = await localWallet.getCustomTokenInfo(t.address, walletAddr, t.network);
+        return { ...t, balance: info.balance };
+      } catch {
+        return t;
+      }
+    }));
+    setCustomTokens(updated);
+  }, [walletAddr, customTokens]);
+
+  const addCustomToken = useCallback(async (contractAddress) => {
+    if (customTokens.some(t => t.address.toLowerCase() === contractAddress.toLowerCase() && t.network === network)) {
+      showToast('Ce token est déjà ajouté', 'error');
+      return;
+    }
+    setCustomTokenLoading(true);
+    try {
+      const info = await localWallet.getCustomTokenInfo(contractAddress, walletAddr, network);
+      setCustomTokens(prev => [...prev, info]);
+      showToast(`✓ ${info.symbol} ajouté`, 'success');
+      setShowAddCustomToken(false);
+      setCustomTokenAddrInput('');
+    } catch (err) {
+      showToast(err.message || 'Impossible de lire ce contrat', 'error');
+    } finally {
+      setCustomTokenLoading(false);
+    }
+  }, [customTokens, walletAddr, network, showToast]);
+
+  const removeCustomToken = useCallback((address) => {
+    setCustomTokens(prev => prev.filter(t => t.address !== address));
+  }, []);
+
+  useEffect(() => {
+    if (priceAlertsLoaded) savePriceAlerts(priceAlerts);
+  }, [priceAlerts, priceAlertsLoaded]);
+
+  const addPriceAlert = useCallback((symbol, targetPrice, direction) => {
+    setPriceAlerts(prev => [
+      ...prev.filter(a => a.symbol !== symbol), // une seule alerte active par crypto à la fois
+      { id: `${symbol}-${Date.now()}`, symbol, targetPrice, direction },
+    ]);
+    showToast(`🔔 Alerte créée pour ${symbol}`, 'success');
+  }, [showToast]);
+
+  const removePriceAlert = useCallback((id) => {
+    setPriceAlerts(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  // Vérifie les alertes à chaque nouveau prix reçu (tokens du wallet + toutes
+  // les cryptos du Marché) — déclenche une seule fois puis se retire toute
+  // seule (sinon on serait spammé à chaque rafraîchissement de 30s).
+  useEffect(() => {
+    if (!priceAlertsLoaded || !priceAlerts.length) return;
+    const priceBySymbol = {};
+    Object.entries(tokens).forEach(([sym, t]) => { if (t.price) priceBySymbol[sym] = t.price; });
+    marketCoins.forEach(c => {
+      const sym = c.symbol?.toUpperCase();
+      if (sym && c.current_price) priceBySymbol[sym] = c.current_price;
+    });
+
+    const triggered = priceAlerts.filter(a => {
+      const price = priceBySymbol[a.symbol];
+      if (!price) return false;
+      return a.direction === 'above' ? price >= a.targetPrice : price <= a.targetPrice;
+    });
+    if (!triggered.length) return;
+
+    triggered.forEach(a => {
+      showAlert(
+        '🔔 Alerte de prix',
+        `${a.symbol} a ${a.direction === 'above' ? 'dépassé' : 'chuté sous'} ${fmt(a.targetPrice)}.`
+      );
+    });
+    setPriceAlerts(prev => prev.filter(a => !triggered.some(t => t.id === a.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche sur
+    // les prix, pas sur `fmt`/`showAlert` (stables) ni `priceAlerts` lui-même
+    // (mis à jour à l'intérieur, dépendre de lui reboucleraît inutilement).
+  }, [tokens, marketCoins, priceAlertsLoaded]);
+
+  const handleQrScanned = useCallback(({ data }) => {
+    if (!data) return;
+    // Gère une adresse brute 0x... ou un URI "ethereum:0x...".
+    const match = data.match(/0x[a-fA-F0-9]{40}/);
+    if (match) {
+      setSendAddress(match[0]);
+      setShowQrScanner(false);
+    } else {
+      showToast('QR non reconnu', 'error');
+    }
+  }, [showToast]);
+
+  const pasteAddressFromClipboard = useCallback(async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      const match = (text || '').match(/0x[a-fA-F0-9]{40}/);
+      if (match) {
+        setSendAddress(match[0]);
+        showToast('✓ Adresse collée', 'success');
+      } else {
+        showToast('Aucune adresse valide dans le presse-papier', 'error');
+      }
+    } catch {
+      showToast('Impossible de lire le presse-papier', 'error');
+    }
+  }, [showToast]);
+
+  const addRecentAddress = useCallback((address) => {
+    setRecentAddresses(prev => {
+      const next = [address, ...prev.filter(a => a.toLowerCase() !== address.toLowerCase())].slice(0, MAX_RECENT_ADDRESSES);
+      saveRecentAddresses(next);
+      return next;
+    });
   }, []);
 
   // Ne persiste qu'après le chargement initial, sinon le premier render
@@ -1267,11 +1751,117 @@ export default function App() {
     setFavorites(prev => prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]);
   }, []);
 
+  // Vérifie une seule fois au montage si un PIN biométrique est déjà
+  // enregistré sur cet appareil (natif uniquement).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    loadBiometricPin().then(pin => setBiometricEnabled(!!pin));
+  }, []);
+
+  // Propose l'activation juste après avoir choisi/confirmé un PIN — c'est le
+  // seul moment où on a le PIN en clair sous la main (jamais gardé en
+  // mémoire au-delà de cet instant précis).
+  const offerBiometricEnroll = useCallback(async (pin) => {
+    if (Platform.OS === 'web') return;
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) return;
+      showAlert(
+        '🔓 Déverrouillage rapide',
+        'Activer Face ID / empreinte pour déverrouiller NexiaWallet sans retaper ton code ?',
+        [
+          { text: 'Non merci', style: 'cancel' },
+          { text: 'Activer', onPress: async () => { await saveBiometricPin(pin); setBiometricEnabled(true); } },
+        ]
+      );
+    } catch (err) {
+      console.warn('offerBiometricEnroll failed', err.message);
+    }
+  }, []);
+
+  const handleBiometricUnlock = useCallback(async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Déverrouille NexiaWallet',
+        cancelLabel: 'Annuler',
+      });
+      if (!result.success) return;
+      const pin = await loadBiometricPin();
+      if (!pin) return;
+      await attemptUnlock(pin);
+    } catch (err) {
+      console.warn('Déverrouillage biométrique échoué:', err.message);
+    }
+  }, [attemptUnlock]);
+
+  const disableBiometric = useCallback(async () => {
+    await clearBiometricPin();
+    setBiometricEnabled(false);
+  }, []);
+
+  // ── VERROUILLAGE AUTOMATIQUE APRÈS INACTIVITÉ ──
+  // La clé déchiffrée ne reste en mémoire que pendant que l'app est
+  // effectivement utilisée : au-delà du seuil sans interaction (ou dès que
+  // l'app repasse en arrière-plan sur mobile), on revient à l'écran PIN —
+  // il faudra rechiffrer... déchiffrer à nouveau pour continuer.
+  const AUTO_LOCK_MS = 2 * 60 * 1000;
+  const lastActivityRef = useRef(Date.now());
+
+  const lockWallet = useCallback(() => {
+    setIsUnlocked(false);
+    setUnlockedPrivateKey(null);
+    setUnlockedMnemonic(null);
+    setPinCode('');
+    setPinError(null);
+  }, []);
+
+  useEffect(() => {
+    const markActivity = () => { lastActivityRef.current = Date.now(); };
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+      events.forEach(e => document.addEventListener(e, markActivity, { passive: true }));
+      const onVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          if (isUnlocked && Date.now() - lastActivityRef.current > AUTO_LOCK_MS) lockWallet();
+          markActivity();
+        }
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      return () => {
+        events.forEach(e => document.removeEventListener(e, markActivity));
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
+    }
+    // Natif : le passage en arrière-plan verrouille immédiatement (pas
+    // d'attente du seuil — l'app quitte l'écran, donc le risque est immédiat).
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' && isUnlocked) lockWallet();
+      if (state === 'active') markActivity();
+    });
+    return () => sub.remove();
+  }, [isUnlocked, lockWallet]);
+
+  useEffect(() => {
+    if (!isUnlocked) return undefined;
+    const id = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > AUTO_LOCK_MS) lockWallet();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [isUnlocked, lockWallet]);
+
   useEffect(() => {
     if (walletAddr) {
       refreshPortfolio(network);
     }
   }, [network, walletAddr, refreshPortfolio]);
+
+  useEffect(() => {
+    if (walletAddr && customTokensLoaded) refreshCustomTokenBalances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche sur
+    // wallet/réseau, pas sur customTokens (sinon boucle : le refresh met à
+    // jour customTokens, qui redéclencherait l'effet indéfiniment).
+  }, [walletAddr, network, customTokensLoaded]);
 
   // Retour depuis MoonPay/Stripe : confirme l'achat et revérifie le solde
   // plusieurs fois (la crypto arrive on-chain, pas instantanément).
@@ -1502,14 +2092,53 @@ export default function App() {
     }, 0),
   [tokens, chartTick]);
 
+  // Score de diversification : signale seulement une forte concentration
+  // (≥70% sur un seul actif) — en dessous, pas la peine d'alerter.
+  const diversification = useMemo(() => {
+    if (totalUSD <= 0) return null;
+    const entries = Object.entries(tokens)
+      .map(([sym, t]) => ({ sym, value: (t.balance || 0) * (t.price || 0) }))
+      .filter(e => e.value > 0);
+    if (!entries.length) return null;
+    entries.sort((a, b) => b.value - a.value);
+    const top = entries[0];
+    const topPct = (top.value / totalUSD) * 100;
+    return { topSymbol: top.sym, topPct };
+  }, [tokens, totalUSD]);
+
   // ── FILTRES ──
   const filteredCoins = useMemo(() => {
-    if (!marketSearch) return marketCoins;
-    const q = marketSearch.toLowerCase();
-    return marketCoins.filter(c =>
-      c.name?.toLowerCase().includes(q) || c.symbol?.toLowerCase().includes(q)
-    );
-  }, [marketCoins, marketSearch]);
+    let list = marketCoins;
+    if (marketSearch) {
+      const q = marketSearch.toLowerCase();
+      list = list.filter(c => c.name?.toLowerCase().includes(q) || c.symbol?.toLowerCase().includes(q));
+    }
+    if (marketFavOnly) {
+      list = list.filter(c => favorites.includes(c.symbol?.toUpperCase()));
+    }
+    const sorted = [...list];
+    if (marketSort === 'gainers') {
+      sorted.sort((a, b) => (b.price_change_percentage_24h || -Infinity) - (a.price_change_percentage_24h || -Infinity));
+    } else if (marketSort === 'losers') {
+      sorted.sort((a, b) => (a.price_change_percentage_24h ?? Infinity) - (b.price_change_percentage_24h ?? Infinity));
+    } else if (marketSort === 'alpha') {
+      sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } else {
+      sorted.sort((a, b) => (b.market_cap || 0) - (a.market_cap || 0));
+    }
+    return sorted;
+  }, [marketCoins, marketSearch, marketSort, marketFavOnly, favorites]);
+
+  const historySymbols = useMemo(() => {
+    const set = new Set((historyItems || []).map(i => i.symbol).filter(Boolean));
+    return Array.from(set);
+  }, [historyItems]);
+
+  const filteredHistoryItems = useMemo(() => {
+    if (!historyItems) return [];
+    if (historyFilterSymbol === 'ALL') return historyItems;
+    return historyItems.filter(i => i.symbol === historyFilterSymbol);
+  }, [historyItems, historyFilterSymbol]);
 
   // Favoris affichés sur l'accueil : uniquement les cryptos du Marché qui ne
   // sont PAS déjà dans "Mes Tokens" (sinon doublon avec la liste du wallet).
@@ -1522,13 +2151,31 @@ export default function App() {
 
   // ── PIN HANDLER ──
   const handlePin = (d) => {
-    if (pinCode.length >= 6) return;
+    if (isVerifyingPin || pinCode.length >= 6) return;
     const n = pinCode + d;
     setPinCode(n);
-    if (n === '123456') { setIsUnlocked(true); return; }
-    if (n.length === 6) {
-      setTimeout(() => { showAlert('Code incorrect', 'PIN par défaut: 123456'); setPinCode(''); }, 100);
+    if (n.length < 6) return;
+
+    if (pinStage === 'choose') {
+      setPendingPinDigits(n);
+      setPinCode('');
+      setPinError(null);
+      setPinStage('confirm');
+      return;
     }
+    if (pinStage === 'confirm') {
+      if (n === pendingPinDigits) {
+        finalizePinSetup(n);
+      } else {
+        setPinError('Les deux codes ne correspondent pas — recommence.');
+        setPinCode('');
+        setPendingPinDigits('');
+        setPinStage('choose');
+      }
+      return;
+    }
+    // Sinon : écran de déverrouillage d'un wallet déjà existant sur l'appareil.
+    attemptUnlock(n);
   };
 
   // ── ACHAT / PAIEMENT STRIPE ──
@@ -1570,10 +2217,12 @@ export default function App() {
   };
 
   // ── ENVOI SÉCURISÉ (Validation sur réseau réel) ──
-  const handleSend = async () => {
+  // Étape 1 : valide et bascule vers l'écran "relis avant d'envoyer" — rien
+  // n'est signé ni diffusé ici, juste une estimation des frais pour que
+  // l'utilisateur voie tout (adresse, montant, frais) avant de confirmer.
+  const prepareSend = async () => {
     if (!sendAddress || !sendAmount) { showAlert('Champs manquants'); return; }
-    
-    // Validation adresse
+
     if (!sendAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
       showAlert('Adresse invalide', 'Doit commencer par 0x et avoir 40 hex chars');
       return;
@@ -1592,6 +2241,28 @@ export default function App() {
       return;
     }
 
+    setSendStep('confirm');
+    setSendFeeLoading(true);
+    setSendFeeEstimate(null);
+    try {
+      const est = await localWallet.estimateSendFee({
+        from: walletAddr, to: sendAddress, amount: sendAmount,
+        symbol: isNative ? null : sendToken, network,
+      });
+      setSendFeeEstimate(est);
+    } catch (err) {
+      console.warn('Estimation des frais indisponible:', err.message);
+    } finally {
+      setSendFeeLoading(false);
+    }
+  };
+
+  // Étape 2 : déclenchée depuis l'écran de confirmation — c'est ici, et
+  // seulement ici, que la transaction est vraiment signée et diffusée.
+  const confirmAndSend = async () => {
+    const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
+    const isNative = sendToken === nativeSymbol;
+
     setSendLoading(true);
     try {
       // Signature 100% locale — la clé privée ne quitte jamais l'appareil.
@@ -1600,8 +2271,8 @@ export default function App() {
       // soit le réseau (corrige l'ancien bug où USDT/USDC sur BSC étaient
       // silencieusement envoyés comme du BNB natif).
       const { rawTx } = isNative
-        ? await localWallet.signNativeTx({ privateKey: walletSession.privateKey, to: sendAddress, amount: sendAmount, network })
-        : await localWallet.signErc20Tx({ privateKey: walletSession.privateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network });
+        ? await localWallet.signNativeTx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, network })
+        : await localWallet.signErc20Tx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network });
 
       const response = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network }, { timeout: 25000, headers: API_HEADERS });
       if (!response.data?.success) {
@@ -1613,15 +2284,18 @@ export default function App() {
         '✅ Transaction Soumise!',
         `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
         [
-          { text: 'Copier Hash', onPress: () => showAlert('✓ Copié'), style: 'default' },
+          { text: 'Copier Hash', onPress: () => copyToClipboard(txHash, 'Hash copié'), style: 'default' },
           { text: 'OK' }
         ]
       );
 
+      addRecentAddress(sendAddress);
       await refreshPortfolio(network);
       setShowSend(false);
+      setSendStep('form');
       setSendAddress('');
       setSendAmount('');
+      setSendFeeEstimate(null);
       fetchMarket();
     } catch (e) {
       showAlert('❌ Erreur', e.message || 'Transaction échouée');
@@ -1686,7 +2360,7 @@ export default function App() {
       const spender = quote.issues?.allowance?.spender;
       if (spender) {
         const { rawTx: approveRawTx } = await localWallet.signApproveTx({
-          privateKey: walletSession.privateKey,
+          privateKey: unlockedPrivateKey,
           tokenAddress: sellAddress,
           spender,
           amount: ethers.constants.MaxUint256,
@@ -1700,7 +2374,7 @@ export default function App() {
       }
 
       const { rawTx: swapRawTx } = await localWallet.signRawTx({
-        privateKey: walletSession.privateKey,
+        privateKey: unlockedPrivateKey,
         to: quote.transaction.to,
         data: quote.transaction.data,
         value: quote.transaction.value || '0',
@@ -1772,6 +2446,57 @@ export default function App() {
       <SafeAreaView style={[st.pin_screen, { justifyContent: 'center' }]}>
         <StatusBar barStyle="light-content" />
         <ActivityIndicator color={T.green} size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  CHOISIR / CONFIRMER LE PIN — juste après création, import, ou migration
+  //  d'une session pré-existante (ancien format non chiffré). Prioritaire sur
+  //  tout le reste : tant que ce n'est pas fini, rien n'est encore persisté.
+  // ════════════════════════════════════════════════════════
+  if (pinStage === 'choose' || pinStage === 'confirm') {
+    const isConfirmStage = pinStage === 'confirm';
+    const subtitle = isConfirmStage
+      ? 'Ressaisis le même code pour confirmer'
+      : (pendingWalletForPin?.isMigration ? 'Choisis un code pour sécuriser ce wallet' : 'Choisis un code PIN à 6 chiffres');
+    return (
+      <SafeAreaView style={st.pin_screen}>
+        <StatusBar barStyle="light-content" />
+        <View style={st.pin_logo_wrap}>
+          <View style={st.pin_logo_circle}>
+            <Text style={{ fontSize: 48 }}>🔐</Text>
+          </View>
+          <Text style={st.pin_app_name}>NexiaWallet</Text>
+          <Text style={st.pin_sub}>{subtitle}</Text>
+        </View>
+
+        <View style={st.pin_dots}>
+          {[...Array(6)].map((_, i) => (
+            <View key={i} style={[st.pin_dot, pinCode.length > i && st.pin_dot_on]} />
+          ))}
+        </View>
+
+        {pinError ? <Text style={st.auth_error}>{pinError}</Text> : null}
+
+        {isVerifyingPin ? (
+          <ActivityIndicator color={T.green} style={{ marginTop: 20 }} />
+        ) : (
+          <View style={st.pin_pad}>
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <TouchableOpacity key={n} style={st.pin_key} onPress={() => handlePin(n.toString())}>
+                <Text style={st.pin_key_txt}>{n}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={st.pin_key} onPress={() => setPinCode(p => p.slice(0, -1))}>
+              <Text style={[st.pin_key_txt, { color: T.red }]}>⌫</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={st.pin_key} onPress={() => handlePin('0')}>
+              <Text style={st.pin_key_txt}>0</Text>
+            </TouchableOpacity>
+            <View style={st.pin_key} />
+          </View>
+        )}
       </SafeAreaView>
     );
   }
@@ -1981,9 +2706,24 @@ export default function App() {
             )}
           </View>
 
-          <Text style={st.land_footer}>NEXIA WALLET · Tes clés, tes cryptos.</Text>
+          <View style={st.land_footer_wrap}>
+            <View style={[st.warning_box, { width: '100%' }]}>
+              <Text style={st.warning_txt}>
+                🛡️ NexiaWallet ne te demandera JAMAIS ta phrase de récupération par email, chat ou support. Si on te la demande, c'est une arnaque.
+              </Text>
+            </View>
+            <View style={st.land_footer_links}>
+              {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
+                <TouchableOpacity key={key} onPress={() => setLegalDoc(key)}>
+                  <Text style={st.land_footer_link}>{doc.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={st.land_footer}>NEXIA WALLET · Tes clés, tes cryptos.</Text>
+          </View>
         </ScrollView>
         {renderMnemonicBackup()}
+        {renderLegal()}
       </SafeAreaView>
     );
   }
@@ -2008,20 +2748,30 @@ export default function App() {
             <View key={i} style={[st.pin_dot, pinCode.length > i && st.pin_dot_on]} />
           ))}
         </View>
-        <View style={st.pin_pad}>
-          {[1,2,3,4,5,6,7,8,9].map(n => (
-            <TouchableOpacity key={n} style={st.pin_key} onPress={() => handlePin(n.toString())}>
-              <Text style={st.pin_key_txt}>{n}</Text>
+        {pinError ? <Text style={st.auth_error}>{pinError}</Text> : null}
+        {isVerifyingPin ? (
+          <ActivityIndicator color={T.green} style={{ marginTop: 20 }} />
+        ) : (
+          <View style={st.pin_pad}>
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <TouchableOpacity key={n} style={st.pin_key} onPress={() => handlePin(n.toString())}>
+                <Text style={st.pin_key_txt}>{n}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={st.pin_key} onPress={() => setPinCode(p => p.slice(0, -1))}>
+              <Text style={[st.pin_key_txt, { color: T.red }]}>⌫</Text>
             </TouchableOpacity>
-          ))}
-          <TouchableOpacity style={st.pin_key} onPress={() => setPinCode(p => p.slice(0, -1))}>
-            <Text style={[st.pin_key_txt, { color: T.red }]}>⌫</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={st.pin_key} onPress={() => handlePin('0')}>
-            <Text style={st.pin_key_txt}>0</Text>
-          </TouchableOpacity>
-          <View style={st.pin_key} />
-        </View>
+            <TouchableOpacity style={st.pin_key} onPress={() => handlePin('0')}>
+              <Text style={st.pin_key_txt}>0</Text>
+            </TouchableOpacity>
+            <View style={st.pin_key} />
+          </View>
+        )}
+        {biometricEnabled && Platform.OS !== 'web' && !isVerifyingPin && (
+          <AnimPressable style={st.biometric_btn} onPress={handleBiometricUnlock}>
+            <Text style={st.biometric_btn_txt}>👆 Face ID / Empreinte</Text>
+          </AnimPressable>
+        )}
         {renderMnemonicBackup()}
       </SafeAreaView>
     );
@@ -2071,6 +2821,7 @@ export default function App() {
             <View style={{ paddingHorizontal: 16 }}>
               <CandlestickChart candles={candles} />
             </View>
+            {renderPriceAlertSection(selectedToken, tk.price)}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, marginBottom: 16 }}>
               <View style={st.tf_row}>
                 {TF_KEYS.map(tf => (
@@ -2162,6 +2913,8 @@ export default function App() {
               </View>
             )}
 
+            {renderPriceAlertSection(sym, coin.current_price)}
+
             <View style={st.detail_grid}>
               {[
                 { label: 'Prix',       val: fmt(coin.current_price, 4) },
@@ -2193,55 +2946,261 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   //  MODAL: ENVOYER (VALIDATION MAINNET / BSC)
   // ════════════════════════════════════════════════════════
+  // Réutilisé dans la fiche détail d'un token du wallet ET dans la fiche
+  // "lecture seule" d'une crypto du Marché — d'où une fonction plutôt qu'un
+  // doublon de JSX dans les deux écrans.
+  const renderPriceAlertSection = (symbol, currentPrice) => {
+    const existing = priceAlerts.filter(a => a.symbol === symbol);
+    const isEditing = alertFormFor === symbol;
+    return (
+      <View style={st.alert_section}>
+        {existing.map(a => (
+          <View key={a.id} style={st.alert_chip}>
+            <Text style={st.alert_chip_txt}>
+              🔔 Prix {a.direction === 'above' ? '≥' : '≤'} {fmt(a.targetPrice, a.targetPrice < 1 ? 4 : 2)}
+            </Text>
+            <TouchableOpacity onPress={() => removePriceAlert(a.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={{ color: T.red, fontSize: 13 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+        {isEditing ? (
+          <View style={st.alert_form}>
+            <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+              <TouchableOpacity
+                style={[st.chain_tab_sm, alertDirection === 'above' && st.chain_tab_sm_on]}
+                onPress={() => setAlertDirection('above')}
+              >
+                <Text style={[st.chain_tab_sm_txt, alertDirection === 'above' && st.chain_tab_sm_txt_on]}>Au-dessus de</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.chain_tab_sm, alertDirection === 'below' && st.chain_tab_sm_on]}
+                onPress={() => setAlertDirection('below')}
+              >
+                <Text style={[st.chain_tab_sm_txt, alertDirection === 'below' && st.chain_tab_sm_txt_on]}>En dessous de</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TextInput
+                style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+                value={alertTargetInput}
+                onChangeText={setAlertTargetInput}
+                keyboardType="numeric"
+                placeholder={currentPrice ? currentPrice.toString() : '0.00'}
+                placeholderTextColor={T.text3}
+              />
+              <TouchableOpacity
+                style={[st.max_btn, { marginBottom: 0 }]}
+                onPress={() => {
+                  const v = parseFloat(alertTargetInput);
+                  if (!v || v <= 0) { showToast('Prix cible invalide', 'error'); return; }
+                  // Retour immédiat si la condition est déjà vraie, plutôt que
+                  // de créer une alerte qui n'attendrait que le prochain
+                  // rafraîchissement (jusqu'à 30s) pour se déclencher.
+                  const alreadyMet = currentPrice && (alertDirection === 'above' ? currentPrice >= v : currentPrice <= v);
+                  if (alreadyMet) {
+                    showAlert('🔔 Déjà atteint', `${symbol} est déjà ${alertDirection === 'above' ? 'au-dessus' : 'en dessous'} de ${fmt(v, v < 1 ? 4 : 2)}.`);
+                  } else {
+                    addPriceAlert(symbol, v, alertDirection);
+                  }
+                  setAlertFormFor(null);
+                  setAlertTargetInput('');
+                }}
+              >
+                <Text style={st.max_btn_txt}>Créer</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={() => setAlertFormFor(null)} style={{ marginTop: 10 }}>
+              <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => { setAlertFormFor(symbol); setAlertTargetInput(''); setAlertDirection('above'); }}>
+            <Text style={st.alert_add_txt}>🔔 Créer une alerte de prix</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const closeSend = () => { setShowSend(false); setSendStep('form'); setSendFeeEstimate(null); };
+
+  const renderQrScanner = () => (
+    <Modal visible={showQrScanner} animationType="slide">
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => setShowQrScanner(false)} style={st.back_btn}>
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Scanner un QR code</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        {cameraPermission?.granted ? (
+          <CameraView
+            style={{ flex: 1 }}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={showQrScanner ? handleQrScanned : undefined}
+          />
+        ) : (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <Text style={{ color: T.text2, textAlign: 'center', marginBottom: 16 }}>
+              Accès à la caméra nécessaire pour scanner un QR code.
+            </Text>
+            <AnimPressable style={st.green_btn} onPress={requestCameraPermission}>
+              <Text style={st.green_btn_txt}>Autoriser la caméra</Text>
+            </AnimPressable>
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderSend = () => (
     <Modal visible={showSend} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowSend(false)} style={st.back_btn}>
+          <TouchableOpacity onPress={() => (sendStep === 'confirm' ? setSendStep('form') : closeSend())} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>Envoyer</Text>
+          <Text style={st.modal_title}>{sendStep === 'confirm' ? 'Vérifie et confirme' : 'Envoyer'}</Text>
           <View style={{ width: 40 }} />
         </View>
-        <ScrollView style={{ flex: 1, padding: 16 }}>
-          <View style={st.network_badge}>
-            <Text style={{ color: T.orange, fontSize: 12, fontWeight: 'bold' }}>⛓️ {activeNetwork.label.toUpperCase()} • SOLDE RÉEL</Text>
-          </View>
-          
-          <Text style={st.form_label}>Token</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
-            {Object.entries(tokens).map(([sym, t]) => (
-              <TouchableOpacity key={sym} style={[st.tok_chip, sendToken === sym && st.tok_chip_on]} onPress={() => setSendToken(sym)}>
-                <CoinLogo logo={t.logo} icon={t.icon} size={24} />
-                <Text style={[st.tok_chip_txt, sendToken === sym && { color: T.text }]}>{sym}</Text>
-              </TouchableOpacity>
-            ))}
+
+        {sendStep === 'confirm' ? (
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <View style={st.confirm_box}>
+              <Text style={st.confirm_label}>Tu envoies</Text>
+              <Text style={st.confirm_amount}>{sendAmount} {sendToken}</Text>
+              <Text style={st.confirm_sub}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
+            </View>
+
+            <Text style={st.form_label}>À l'adresse</Text>
+            <View style={st.confirm_addr_box}>
+              <Text style={st.confirm_addr_txt} selectable>{sendAddress}</Text>
+            </View>
+
+            <Text style={st.form_label}>Frais de réseau estimés</Text>
+            <View style={st.send_info_box}>
+              {sendFeeLoading ? (
+                <ActivityIndicator color={T.green} />
+              ) : sendFeeEstimate ? (
+                <>
+                  <Text style={st.send_info_line}>
+                    ≈ {parseFloat(sendFeeEstimate.feeNative).toFixed(6)} {sendFeeEstimate.nativeSymbol}
+                  </Text>
+                  <Text style={[st.send_info_line, { color: T.text3, fontSize: 11 }]}>
+                    {sendFeeEstimate.approximate ? 'Estimation approximative' : 'Gas ' + sendFeeEstimate.gasLimit + ' • ' + parseFloat(sendFeeEstimate.gasPriceGwei).toFixed(2) + ' Gwei'}
+                  </Text>
+                </>
+              ) : (
+                <Text style={[st.send_info_line, { color: T.text3 }]}>Indisponible — le montant réel sera calculé à l'envoi.</Text>
+              )}
+            </View>
+
+            <View style={st.warning_box}>
+              <Text style={st.warning_txt}>
+                ⚠️ Vérifie bien l'adresse — une transaction envoyée à la mauvaise adresse est irrécupérable.
+              </Text>
+            </View>
+
+            <AnimPressable style={[st.green_btn, { opacity: sendLoading ? 0.7 : 1, marginTop: 8 }]}
+              onPress={confirmAndSend} disabled={sendLoading}>
+              {sendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>✅ Confirmer l'envoi</Text>}
+            </AnimPressable>
           </ScrollView>
+        ) : (
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <View style={st.network_badge}>
+              <Text style={{ color: T.orange, fontSize: 12, fontWeight: 'bold' }}>⛓️ {activeNetwork.label.toUpperCase()} • SOLDE RÉEL</Text>
+            </View>
 
-          <Text style={st.form_label}>Adresse (0x...)</Text>
-          <TextInput style={st.form_input} value={sendAddress} onChangeText={setSendAddress}
-            placeholder="0x123...abc" placeholderTextColor={T.text3} autoCapitalize="none" />
+            <Text style={st.form_label}>Token</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+              {Object.entries(tokens).map(([sym, t]) => (
+                <TouchableOpacity key={sym} style={[st.tok_chip, sendToken === sym && st.tok_chip_on]} onPress={() => setSendToken(sym)}>
+                  <CoinLogo logo={t.logo} icon={t.icon} size={24} />
+                  <Text style={[st.tok_chip_txt, sendToken === sym && { color: T.text }]}>{sym}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
 
-          <Text style={st.form_label}>Montant</Text>
-          <View style={{ flexDirection: 'row' }}>
-            <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendAmount}
-              placeholder="0.00" placeholderTextColor={T.text3} keyboardType="numeric" />
-            <TouchableOpacity style={st.max_btn} onPress={() => setSendAmount(String(tokens[sendToken]?.balance || 0))}>
-              <Text style={st.max_btn_txt}>MAX</Text>
-            </TouchableOpacity>
-          </View>
+            <Text style={st.form_label}>Adresse (0x...)</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
+                placeholder="0x123...abc" placeholderTextColor={T.text3} autoCapitalize="none" />
+              {Platform.OS === 'web' ? (
+                <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard}>
+                  <Text style={{ fontSize: 18 }}>📋</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)}>
+                  <Text style={{ fontSize: 18 }}>📷</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={{ height: 16 }} />
 
-          <View style={st.send_info_box}>
-            <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
-            <Text style={st.send_info_line}>Solde réel: {((sendToken === (network === 'bsc' ? 'BNB' : 'ETH')) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
-            <Text style={st.send_info_line}>Réseau: {activeNetwork.label} • validation directe</Text>
-          </View>
+            {!!recentAddresses.length && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={[st.form_label, { marginBottom: 8 }]}>Adresses récentes</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {recentAddresses.map(addr => (
+                    <TouchableOpacity key={addr} style={st.recent_addr_chip} onPress={() => setSendAddress(addr)}>
+                      <Text style={st.recent_addr_txt}>{addr.slice(0, 6)}…{addr.slice(-4)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
 
-          <AnimPressable style={[st.green_btn, { opacity: sendLoading ? 0.7 : 1, marginTop: 24 }]}
-            onPress={handleSend} disabled={sendLoading}>
-            {sendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>✅ Confirmer</Text>}
-          </AnimPressable>
-        </ScrollView>
+            <Text style={st.form_label}>Montant</Text>
+            <View style={{ flexDirection: 'row' }}>
+              <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendAmount}
+                placeholder="0.00" placeholderTextColor={T.text3} keyboardType="numeric" />
+              <TouchableOpacity style={st.max_btn} onPress={() => setSendAmount(String(tokens[sendToken]?.balance || 0))}>
+                <Text style={st.max_btn_txt}>MAX</Text>
+              </TouchableOpacity>
+            </View>
+            {(() => {
+              const sendableBalance = (sendToken === (network === 'bsc' ? 'BNB' : 'ETH'))
+                ? parseFloat(walletBalance || '0')
+                : (tokens[sendToken]?.balance || 0);
+              if (!sendableBalance) return null;
+              return (
+                <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
+                  {[0.25, 0.5, 0.75].map(pct => (
+                    <TouchableOpacity
+                      key={pct}
+                      style={st.quick_pct_btn}
+                      onPress={() => setSendAmount(String(sendableBalance * pct))}
+                    >
+                      <Text style={st.quick_pct_txt}>{pct * 100}%</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              );
+            })()}
+
+            {!!sendAddress && sendAddress.length === 42 && !recentAddresses.includes(sendAddress) && (
+              <View style={[st.warning_box, { marginTop: 12 }]}>
+                <Text style={st.warning_txt}>
+                  🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
+                </Text>
+              </View>
+            )}
+
+            <View style={st.send_info_box}>
+              <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
+              <Text style={st.send_info_line}>Solde réel: {((sendToken === (network === 'bsc' ? 'BNB' : 'ETH')) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
+              <Text style={st.send_info_line}>Réseau: {activeNetwork.label} • validation directe</Text>
+            </View>
+
+            <AnimPressable style={[st.green_btn, { marginTop: 24 }]} onPress={prepareSend}>
+              <Text style={st.green_btn_txt}>Continuer</Text>
+            </AnimPressable>
+          </ScrollView>
+        )}
       </SafeAreaView>
     </Modal>
   );
@@ -2268,7 +3227,7 @@ export default function App() {
           <View style={st.receive_addr_box}>
             <Text style={st.receive_addr} selectable>{walletAddr}</Text>
           </View>
-          <AnimPressable style={st.green_btn} onPress={() => showAlert('✓ Copié!', walletAddr)}>
+          <AnimPressable style={st.green_btn} onPress={() => copyToClipboard(walletAddr, 'Adresse copiée')}>
             <Text style={st.green_btn_txt}>📋 Copier</Text>
           </AnimPressable>
           <View style={st.warning_box}>
@@ -2290,10 +3249,27 @@ export default function App() {
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Activité</Text>
-          <TouchableOpacity onPress={fetchHistory} style={st.back_btn}>
+          <TouchableOpacity onPress={() => { setHistoryVisibleCount(HISTORY_PAGE_SIZE); fetchHistory(); }} style={st.back_btn}>
             <Text style={{ color: T.text, fontSize: 18 }}>↻</Text>
           </TouchableOpacity>
         </View>
+
+        {!!historySymbols.length && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.market_filter_row}>
+            {['ALL', ...historySymbols].map(sym => (
+              <TouchableOpacity
+                key={sym}
+                style={[st.chain_tab_sm, historyFilterSymbol === sym && st.chain_tab_sm_on]}
+                onPress={() => { setHistoryFilterSymbol(sym); setHistoryVisibleCount(HISTORY_PAGE_SIZE); }}
+              >
+                <Text style={[st.chain_tab_sm_txt, historyFilterSymbol === sym && st.chain_tab_sm_txt_on]}>
+                  {sym === 'ALL' ? 'Tous' : sym}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
         <ScrollView style={{ flex: 1, padding: 16 }}>
           {historyLoading && (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
@@ -2302,16 +3278,18 @@ export default function App() {
             </View>
           )}
 
-          {!historyLoading && historyItems?.length === 0 && (
+          {!historyLoading && filteredHistoryItems.length === 0 && (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <Text style={{ fontSize: 40, marginBottom: 10 }}>🕐</Text>
               <Text style={{ color: T.text2, fontSize: 13, textAlign: 'center' }}>
-                Aucune transaction pour l'instant sur {activeNetwork.label}.
+                {historyFilterSymbol === 'ALL'
+                  ? `Aucune transaction pour l'instant sur ${activeNetwork.label}.`
+                  : `Aucune transaction ${historyFilterSymbol} pour l'instant.`}
               </Text>
             </View>
           )}
 
-          {!historyLoading && historyItems?.map((item, i) => {
+          {!historyLoading && filteredHistoryItems.slice(0, historyVisibleCount).map((item, i) => {
             const isOut = item.direction === 'out';
             return (
               <FadeInView key={item.hash + i} deps={[item.hash]}>
@@ -2339,11 +3317,42 @@ export default function App() {
               </FadeInView>
             );
           })}
+          {!historyLoading && filteredHistoryItems.length > historyVisibleCount && (
+            <AnimPressable style={st.load_more_btn} onPress={() => setHistoryVisibleCount(c => c + HISTORY_PAGE_SIZE)}>
+              <Text style={st.load_more_txt}>Charger plus ({filteredHistoryItems.length - historyVisibleCount} restantes)</Text>
+            </AnimPressable>
+          )}
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
     </Modal>
   );
+
+  // ════════════════════════════════════════════════════════
+  //  MODAL: DOCUMENT LÉGAL (CGU / Confidentialité / Mentions légales)
+  // ════════════════════════════════════════════════════════
+  const renderLegal = () => {
+    if (!legalDoc) return null;
+    const doc = LEGAL_DOCS[legalDoc];
+    return (
+      <Modal visible transparent animationType="slide">
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setLegalDoc(null)} style={st.back_btn}>
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>{doc.title}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text3, fontSize: 12, marginBottom: 16 }}>Dernière mise à jour : {doc.updated}</Text>
+            <Text style={{ color: T.text2, fontSize: 13, lineHeight: 21 }}>{doc.body}</Text>
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
 
   // ════════════════════════════════════════════════════════
   //  MODAL: PARAMÈTRES
@@ -2389,10 +3398,56 @@ export default function App() {
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.green }]} />}
           </TouchableOpacity>
 
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 Tokens</Text>
+          {customTokens.filter(t => t.network === network).map(t => (
+            <View key={t.address} style={[st.settings_row, { justifyContent: 'space-between' }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.settings_row_title}>{t.symbol} — {t.name}</Text>
+                <Text style={st.settings_row_sub}>{parseFloat(t.balance || 0).toFixed(4)} • {t.address.slice(0, 6)}…{t.address.slice(-4)}</Text>
+              </View>
+              <TouchableOpacity onPress={() => removeCustomToken(t.address)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+          {showAddCustomToken ? (
+            <View style={st.alert_form}>
+              <Text style={[st.form_label, { marginBottom: 8 }]}>Adresse du contrat ({activeNetwork.label})</Text>
+              <TextInput
+                style={[st.form_input, { marginBottom: 10 }]}
+                value={customTokenAddrInput}
+                onChangeText={setCustomTokenAddrInput}
+                placeholder="0x..."
+                placeholderTextColor={T.text3}
+                autoCapitalize="none"
+              />
+              <View style={{ flexDirection: 'row' }}>
+                <AnimPressable
+                  style={[st.green_btn, { flex: 1, opacity: customTokenLoading ? 0.7 : 1 }]}
+                  disabled={customTokenLoading}
+                  onPress={() => addCustomToken(customTokenAddrInput.trim())}
+                >
+                  {customTokenLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Ajouter</Text>}
+                </AnimPressable>
+              </View>
+              <TouchableOpacity onPress={() => { setShowAddCustomToken(false); setCustomTokenAddrInput(''); }} style={{ marginTop: 10 }}>
+                <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <AnimPressable style={st.settings_row} onPress={() => setShowAddCustomToken(true)}>
+              <Text style={{ fontSize: 22 }}>➕</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>Ajouter un token personnalisé</Text>
+                <Text style={st.settings_row_sub}>Par adresse de contrat — lecture seule</Text>
+              </View>
+            </AnimPressable>
+          )}
+
           {!!walletSession && (
             <>
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
-              {!!walletSession.mnemonic && (
+              {!!unlockedMnemonic && (
                 <AnimPressable
                   style={st.settings_row}
                   onPress={() => showAlert(
@@ -2400,7 +3455,7 @@ export default function App() {
                     'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
                     [
                       { text: 'Annuler', style: 'cancel' },
-                      { text: 'Afficher', onPress: () => setPendingMnemonic(walletSession.mnemonic) },
+                      { text: 'Afficher', onPress: () => setPendingMnemonic(unlockedMnemonic) },
                     ]
                   )}
                 >
@@ -2408,6 +3463,25 @@ export default function App() {
                   <View style={{ flex: 1, marginLeft: 14 }}>
                     <Text style={st.settings_row_title}>Afficher ma phrase de récupération</Text>
                     <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                  </View>
+                </AnimPressable>
+              )}
+              {Platform.OS !== 'web' && biometricEnabled && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => showAlert(
+                    'Désactiver Face ID / empreinte ?',
+                    'Tu devras retaper ton code PIN pour déverrouiller.',
+                    [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Désactiver', style: 'destructive', onPress: disableBiometric },
+                    ]
+                  )}
+                >
+                  <Text style={{ fontSize: 22 }}>👆</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Face ID / Empreinte</Text>
+                    <Text style={st.settings_row_sub}>Activé — appuie pour désactiver</Text>
                   </View>
                 </AnimPressable>
               )}
@@ -2421,6 +3495,12 @@ export default function App() {
             </>
           )}
 
+          <View style={[st.warning_box, { marginTop: 24 }]}>
+            <Text style={st.warning_txt}>
+              🛡️ NexiaWallet ne te demandera JAMAIS ta phrase de récupération ou ton code PIN par email, chat ou support. Si on te la demande, c'est une arnaque.
+            </Text>
+          </View>
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>📋 Info</Text>
           <View style={st.settings_row}>
             <Text style={{ fontSize: 22 }}>📱</Text>
@@ -2429,6 +3509,15 @@ export default function App() {
               <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • Ethereum + BSC</Text>
             </View>
           </View>
+          {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
+            <AnimPressable key={key} style={st.settings_row} onPress={() => setLegalDoc(key)}>
+              <Text style={{ fontSize: 22 }}>📄</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>{doc.title}</Text>
+              </View>
+              <Text style={{ color: T.text3, fontSize: 18 }}>›</Text>
+            </AnimPressable>
+          ))}
 
           {(apiError || backendError) && (
             <View style={st.error_box}>
@@ -2499,6 +3588,14 @@ export default function App() {
         ))}
       </View>
 
+      {!!diversification && diversification.topPct >= 70 && (
+        <View style={st.diversif_card}>
+          <Text style={st.diversif_txt}>
+            ⚖️ {diversification.topPct.toFixed(0)}% de ton portefeuille est en {diversification.topSymbol}. Diversifier réduit le risque si cette crypto chute.
+          </Text>
+        </View>
+      )}
+
       {!!favoriteMarketCoins.length && (
         <>
           <View style={st.section_hdr}>
@@ -2541,7 +3638,11 @@ export default function App() {
       </View>
 
       <View style={isWideWeb && st.token_grid}>
-        {Object.entries(tokens).map(([sym, t], i) => {
+        {Object.values(tokens).every(t => !t.price) ? (
+          Object.keys(tokens).map(sym => (
+            <TokenRowSkeleton key={sym} style={[isWideWeb && st.token_row_wide]} />
+          ))
+        ) : Object.entries(tokens).map(([sym, t], i) => {
           const val = (t.balance || 0) * (t.price || 0);
           const pos = (t.change24h || 0) >= 0;
           const isFav = favorites.includes(sym);
@@ -2580,6 +3681,29 @@ export default function App() {
         })}
       </View>
 
+      {customTokens.filter(t => t.network === network).length > 0 && (
+        <>
+          <View style={st.section_hdr}>
+            <Text style={st.section_title}>🧩 Tokens personnalisés</Text>
+          </View>
+          <View style={isWideWeb && st.token_grid}>
+            {customTokens.filter(t => t.network === network).map(t => (
+              <View key={t.address} style={[st.token_row, isWideWeb && st.token_row_wide]}>
+                <CoinLogo icon="🧩" size={44} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={st.token_name}>{t.name}</Text>
+                  <Text style={st.token_price_txt}>{t.address.slice(0, 6)}…{t.address.slice(-4)}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={st.token_val}>{parseFloat(t.balance || 0).toFixed(4)}</Text>
+                  <Text style={st.token_bal}>{t.symbol}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
       <View style={{ height: 90 }} />
     </ScrollView>
   );
@@ -2593,6 +3717,24 @@ export default function App() {
         <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
           placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
       </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.market_filter_row}>
+        <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
+          <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>⭐ Favoris</Text>
+        </TouchableOpacity>
+        <View style={st.market_filter_sep} />
+        {[
+          ['market_cap', 'Capitalisation'],
+          ['gainers', '↑ Hausse'],
+          ['losers', '↓ Baisse'],
+          ['alpha', 'A–Z'],
+        ].map(([key, label]) => (
+          <TouchableOpacity key={key} style={[st.chain_tab_sm, marketSort === key && st.chain_tab_sm_on]} onPress={() => setMarketSort(key)}>
+            <Text style={[st.chain_tab_sm_txt, marketSort === key && st.chain_tab_sm_txt_on]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
@@ -2635,7 +3777,13 @@ export default function App() {
           <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
         </View>
         <View style={st.market_grid}>
-          {filteredCoins.map((coin, i) => {
+          {marketCoins.length === 0 ? (
+            Array.from({ length: 8 }).map((_, i) => (
+              <View key={i} style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
+                <SkeletonBlock style={{ height: 96, borderRadius: 16 }} />
+              </View>
+            ))
+          ) : filteredCoins.map((coin, i) => {
             const pos = (coin.price_change_percentage_24h || 0) >= 0;
             const p = coin.current_price || 0;
             const sym = coin.symbol?.toUpperCase() || '';
@@ -2822,12 +3970,14 @@ export default function App() {
     </View>
   );
 
+  // `key={tab}` force un nouveau montage à chaque changement d'onglet, donc
+  // FadeInView rejoue son fondu — transition douce plutôt qu'un changement sec.
   const tabContent = (
-    <View style={{ flex: 1 }}>
+    <FadeInView key={tab} style={{ flex: 1 }} deps={[tab]}>
       {tab === 'home'     && renderHome()}
       {tab === 'markets'  && renderMarkets()}
       {tab === 'swap'     && renderSwap()}
-    </View>
+    </FadeInView>
   );
 
   return (
@@ -2883,10 +4033,13 @@ export default function App() {
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
+      {showQrScanner && renderQrScanner()}
       {renderReceive()}
       {renderHistory()}
       {renderSettings()}
+      {renderLegal()}
       {renderMnemonicBackup()}
+      <ToastBanner toast={toast} />
     </SafeAreaView>
   );
 }
@@ -2940,6 +4093,15 @@ const st = StyleSheet.create({
   pin_pad:         { width: '76%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   pin_key:         { width: '28%', height: 62, justifyContent: 'center', alignItems: 'center', marginVertical: 6, backgroundColor: T.card, borderRadius: 31, borderWidth: 1, borderColor: T.border },
   pin_key_txt:     { color: T.text, fontSize: 24, fontWeight: '500' },
+  biometric_btn:     { marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 999, borderWidth: 1, borderColor: T.border },
+  biometric_btn_txt: { color: T.text2, fontSize: 13, fontWeight: '600' },
+  toast_layer: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 90, paddingHorizontal: 20 },
+  toast_wrap: {
+    width: '100%', maxWidth: 440, borderRadius: 14,
+    paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8,
+  },
+  toast_txt: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
   network_switch:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   network_chip:    { backgroundColor: T.card2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: T.border, marginRight: 6 },
   network_chip_on: { backgroundColor: T.blueBg, borderColor: T.blue },
@@ -3025,6 +4187,7 @@ const st = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
   },
   token_grid:     { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 6 },
+  skeleton_block: { backgroundColor: T.card2 },
   token_row_wide: { width: '32%', marginHorizontal: '0.66%' },
   token_name:    { color: T.text, fontSize: 14, fontWeight: '600' },
   token_price_txt:{ color: T.text2, fontSize: 12, marginTop: 2 },
@@ -3036,6 +4199,19 @@ const st = StyleSheet.create({
   search_wrap:    { margin: 14, backgroundColor: T.card, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, borderWidth: 1, borderColor: T.border },
   search_input:   { flex: 1, color: T.text, fontSize: 14, paddingVertical: 12 },
   section_sub:    { color: T.text3, fontSize: 11 },
+  market_filter_row: { paddingHorizontal: 14, paddingBottom: 14, alignItems: 'center' },
+  market_filter_sep: { width: 1, height: 20, backgroundColor: T.border, marginHorizontal: 4 },
+  chain_tab_sm:      { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: T.border, marginRight: 8 },
+  chain_tab_sm_on:   { backgroundColor: T.greenBg, borderColor: T.green },
+  chain_tab_sm_txt:  { color: T.text2, fontSize: 12, fontWeight: '600' },
+  chain_tab_sm_txt_on: { color: T.green },
+  load_more_btn: { alignItems: 'center', paddingVertical: 14, marginTop: 4, borderRadius: 12, borderWidth: 1, borderColor: T.border },
+  load_more_txt: { color: T.text2, fontSize: 13, fontWeight: '600' },
+  alert_section:  { marginHorizontal: 16, marginBottom: 16 },
+  alert_chip:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: T.greenBg, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, borderWidth: 1, borderColor: T.green + '44' },
+  alert_chip_txt: { color: T.green, fontSize: 12, fontWeight: '600' },
+  alert_form:     { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border },
+  alert_add_txt:  { color: T.blue, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: 10 },
 
   news_card:  { width: 220, marginRight: 12, backgroundColor: T.card, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 3 },
   news_img:   { width: '100%', height: 100, borderRadius: 10, marginBottom: 8, backgroundColor: T.card2 },
@@ -3071,12 +4247,23 @@ const st = StyleSheet.create({
   form_label:    { color: T.text2, fontSize: 12, fontWeight: 'bold', marginBottom: 8, textTransform: 'uppercase' },
   form_input:    { backgroundColor: T.card, color: T.text, borderRadius: 12, padding: 14, fontSize: 15, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
   max_btn:       { backgroundColor: T.greenBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginLeft: 8, marginBottom: 16, borderWidth: 1, borderColor: T.green + '55' },
+  addr_action_btn: { width: 48, height: 48, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   max_btn_txt:   { color: T.green, fontWeight: 'bold', fontSize: 13 },
+  quick_pct_btn: { flex: 1, backgroundColor: T.card2, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
+  quick_pct_txt: { color: T.text2, fontWeight: '600', fontSize: 12 },
   tok_chip:      { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderWidth: 1, borderColor: T.border },
   tok_chip_on:   { backgroundColor: T.blueBg, borderColor: T.blue },
   tok_chip_txt:  { color: T.text2, fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
   send_info_box: { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
   send_info_line:{ color: T.text2, fontSize: 12, marginBottom: 4 },
+  confirm_box:      { alignItems: 'center', backgroundColor: T.card, borderRadius: 16, padding: 24, marginBottom: 20, borderWidth: 1, borderColor: T.border },
+  confirm_label:    { color: T.text2, fontSize: 12, marginBottom: 6 },
+  confirm_amount:   { color: T.text, fontSize: 30, fontWeight: 'bold' },
+  confirm_sub:      { color: T.text2, fontSize: 13, marginTop: 4 },
+  confirm_addr_box: { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
+  confirm_addr_txt: { color: T.green, fontFamily: 'monospace', fontSize: 13 },
+  recent_addr_chip: { backgroundColor: T.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderWidth: 1, borderColor: T.border },
+  recent_addr_txt:  { color: T.text2, fontSize: 12, fontWeight: '600', fontFamily: 'monospace' },
   green_btn:     {
     backgroundColor: T.green, borderRadius: 14, padding: 16, alignItems: 'center',
     shadowColor: T.green, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
@@ -3089,6 +4276,8 @@ const st = StyleSheet.create({
   receive_addr:    { color: T.green, fontSize: 12, fontFamily: 'monospace', textAlign: 'center' },
   warning_box:     { backgroundColor: T.redBg, borderRadius: 12, padding: 14, marginTop: 20, width: '100%', borderWidth: 1, borderColor: T.red + '44' },
   warning_txt:     { color: T.text2, fontSize: 12, lineHeight: 18 },
+  diversif_card:   { backgroundColor: T.orangeBg, borderRadius: 12, padding: 14, marginHorizontal: 14, marginTop: 16, borderWidth: 1, borderColor: T.orange + '44' },
+  diversif_txt:    { color: T.text2, fontSize: 12, lineHeight: 18 },
 
   history_row:    { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: T.border },
   history_icon:   { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
@@ -3220,5 +4409,8 @@ const st = StyleSheet.create({
   land_cta_btn_ghost: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.stroke },
   land_cta_btn_ghost_txt: { color: T.text, fontSize: 15, fontWeight: '700' },
 
-  land_footer: { color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 40, letterSpacing: 0.5 },
+  land_footer: { color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 16, letterSpacing: 0.5 },
+  land_footer_wrap: { marginTop: 40, alignItems: 'center' },
+  land_footer_links: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 18, gap: 16 },
+  land_footer_link: { color: T.text2, fontSize: 12, textDecorationLine: 'underline' },
 });

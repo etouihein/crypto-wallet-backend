@@ -48,6 +48,13 @@ const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
 ];
 
+const ERC20_METADATA_ABI = [
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address owner) view returns (uint256)',
+];
+
 function getNetworkConfig(network = 'ethereum') {
   return NETWORKS[network] || NETWORKS.ethereum;
 }
@@ -95,6 +102,31 @@ function walletFromPrivateKey(privateKey, network) {
   return network ? wallet.connect(getProvider(network)) : wallet;
 }
 
+// ── Chiffrement au repos (PIN choisi par l'utilisateur) ──────────
+// Format "Ethereum keystore" standard (scrypt + AES-128-CTR + MAC),
+// implémenté par ethers — aucune dépendance supplémentaire. Quand le
+// wallet a une mnémonique associée (créé via createRandom/fromMnemonic),
+// ethers l'embarque automatiquement dans le keystore (extension "x-ethers")
+// et la restitue telle quelle au déchiffrement.
+// N réduit (16384 au lieu des 131072 par défaut) : reste largement assez
+// coûteux contre le brute-force pour un PIN à 6 chiffres, mais évite un
+// déchiffrement de plusieurs secondes sur un mobile bas de gamme.
+const KEYSTORE_SCRYPT_OPTS = { scrypt: { N: 1 << 14 } };
+
+async function encryptWalletKeystore({ privateKey, mnemonic }, pin) {
+  const wallet = mnemonic ? ethers.Wallet.fromMnemonic(mnemonic) : new ethers.Wallet(privateKey);
+  return wallet.encrypt(pin, KEYSTORE_SCRYPT_OPTS);
+}
+
+async function decryptWalletKeystore(encryptedJson, pin) {
+  const wallet = await ethers.Wallet.fromEncryptedJson(encryptedJson, pin);
+  return {
+    address: wallet.address,
+    privateKey: wallet.privateKey,
+    mnemonic: wallet.mnemonic ? wallet.mnemonic.phrase : null,
+  };
+}
+
 // ── Lecture — RPC public direct, aucune clé nécessaire ──────────
 
 async function getNativeBalance(address, network = 'ethereum') {
@@ -108,6 +140,71 @@ async function getErc20Balance(address, symbol, network = 'ethereum') {
   const contract = new ethers.Contract(token.address, ERC20_ABI, getProvider(network));
   const balance = await contract.balanceOf(address);
   return ethers.utils.formatUnits(balance, token.decimals);
+}
+
+// Token personnalisé (adresse de contrat saisie à la main) — lecture seule :
+// nom/symbole/décimales + solde. Pas d'envoi géré ici (pas d'ajout à
+// ERC20_TOKENS), pour éviter de fiabiliser un transfert sur un contrat non
+// vérifié à la main comme USDT/USDC le sont ci-dessus.
+async function getCustomTokenInfo(contractAddress, walletAddress, network = 'ethereum') {
+  if (!ethers.utils.isAddress(contractAddress)) {
+    throw new Error("Adresse de contrat invalide.");
+  }
+  const provider = getProvider(network);
+  const contract = new ethers.Contract(contractAddress, ERC20_METADATA_ABI, provider);
+  const [name, symbol, decimals, balance] = await Promise.all([
+    contract.name().catch(() => 'Token'),
+    contract.symbol().catch(() => '???'),
+    contract.decimals().catch(() => 18),
+    contract.balanceOf(walletAddress).catch(() => ethers.BigNumber.from(0)),
+  ]);
+  return {
+    address: contractAddress,
+    name,
+    symbol,
+    decimals,
+    balance: ethers.utils.formatUnits(balance, decimals),
+    network,
+  };
+}
+
+// Estimation des frais AVANT signature — sert uniquement à les afficher sur
+// l'écran de confirmation (le vrai gasLimit utilisé à l'envoi est recalculé
+// au moment de signer, dans signNativeTx/signErc20Tx). Repli sur une
+// estimation approximative si le nœud RPC refuse `estimateGas` sans clé
+// (certains RPC publics l'exigent) — mieux vaut un ordre de grandeur affiché
+// que rien plutôt que de bloquer l'écran de confirmation.
+async function estimateSendFee({ from, to, amount, symbol, network = 'ethereum' }) {
+  const provider = getProvider(network);
+  const nativeSymbol = getNetworkConfig(network).nativeSymbol;
+  const feeData = await provider.getFeeData();
+  const gasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.BigNumber.from('5000000000');
+
+  let gasLimit;
+  let approximate = false;
+  try {
+    if (!symbol || symbol === nativeSymbol) {
+      gasLimit = await provider.estimateGas({ from, to, value: ethers.utils.parseEther((amount || '0').toString()) });
+    } else {
+      const token = getErc20Config(symbol, network);
+      if (!token) throw new Error(`Token ${symbol} non configuré sur ${network}.`);
+      const contract = new ethers.Contract(token.address, ERC20_ABI, provider);
+      const value = ethers.utils.parseUnits((amount || '0').toString(), token.decimals);
+      gasLimit = await contract.estimateGas.transfer(to, value, { from });
+    }
+  } catch {
+    gasLimit = ethers.BigNumber.from(symbol && symbol !== nativeSymbol ? 65000 : 21000);
+    approximate = true;
+  }
+
+  const feeWei = gasPrice.mul(gasLimit);
+  return {
+    feeNative: ethers.utils.formatEther(feeWei),
+    nativeSymbol,
+    gasLimit: gasLimit.toString(),
+    gasPriceGwei: ethers.utils.formatUnits(gasPrice, 'gwei'),
+    approximate,
+  };
 }
 
 // ── Signature locale — retourne une tx déjà signée (rawTx), jamais
@@ -145,16 +242,62 @@ async function signErc20Tx({ privateKey, to, amount, symbol, network = 'ethereum
   return { rawTx };
 }
 
+// ── Swap (agrégateur DEX 0x) — la signature reste ici, en local. Le backend
+//    ne fait QUE fournir un devis chiffré (voir GET /wallet/swap/quote) ; la
+//    transaction qu'il retourne est signée et diffusée exactement comme un
+//    envoi classique. Adresse convention 0x pour "token natif" (ETH/BNB).
+const NATIVE_PLACEHOLDER = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+
+const ERC20_APPROVE_ABI = ['function approve(address spender, uint256 amount) returns (bool)'];
+
+// Signe une transaction déjà construite (par ex. celle renvoyée par un devis
+// de swap 0x) : { to, data, value, gasLimit } → transaction signée (rawTx).
+async function signRawTx({ privateKey, to, data, value = '0', gasLimit, network = 'ethereum' }) {
+  const wallet = walletFromPrivateKey(privateKey, network);
+  const base = { to, data: data || '0x', value: ethers.BigNumber.from(value || '0') };
+  if (gasLimit) base.gasLimit = ethers.BigNumber.from(gasLimit);
+  const populated = await wallet.populateTransaction(base);
+  const rawTx = await wallet.signTransaction(populated);
+  return { rawTx };
+}
+
+// Autorise un contrat (le "spender" renvoyé par le devis de swap) à dépenser
+// jusqu'à `amount` d'un token ERC20 — étape obligatoire avant un swap si
+// l'allocation actuelle est insuffisante (jamais nécessaire pour un token natif).
+async function signApproveTx({ privateKey, tokenAddress, spender, amount, network = 'ethereum' }) {
+  const wallet = walletFromPrivateKey(privateKey, network);
+  const iface = new ethers.utils.Interface(ERC20_APPROVE_ABI);
+  const data = iface.encodeFunctionData('approve', [spender, amount]);
+  const populated = await wallet.populateTransaction({ to: tokenAddress, data });
+  const rawTx = await wallet.signTransaction(populated);
+  return { rawTx };
+}
+
+// Attend la confirmation d'une transaction déjà diffusée — utilisé entre
+// l'approbation et le swap lui-même (le swap échouerait si l'allocation
+// n'est pas encore confirmée on-chain).
+async function waitForTx(txHash, network = 'ethereum', timeoutMs = 120_000) {
+  return getProvider(network).waitForTransaction(txHash, 1, timeoutMs);
+}
+
 module.exports = {
   NETWORKS,
   ERC20_TOKENS,
+  NATIVE_PLACEHOLDER,
   getNetworkConfig,
   getProvider,
   createLocalWallet,
   importLocalWallet,
   walletFromPrivateKey,
+  encryptWalletKeystore,
+  decryptWalletKeystore,
   getNativeBalance,
   getErc20Balance,
+  getCustomTokenInfo,
+  estimateSendFee,
   signNativeTx,
   signErc20Tx,
+  signRawTx,
+  signApproveTx,
+  waitForTx,
 };
