@@ -1329,6 +1329,7 @@ export default function App() {
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
+  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now()); // mis à jour par fetchMarket ; jamais affiché mais reste actif ailleurs dans l'app
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
   const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
   const [newsItems, setNewsItems]         = useState([]);
