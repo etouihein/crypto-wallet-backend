@@ -14,7 +14,7 @@ import {
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
   FlatList, Linking, Platform, Animated, Pressable, Easing,
-  useWindowDimensions, AppState,
+  useWindowDimensions, AppState, Share,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
@@ -1224,6 +1224,18 @@ export default function App() {
       showToast('Impossible de copier', 'error');
     }
   }, [showToast]);
+  // `Share.share` échoue sur desktop web (pas de `navigator.share`) — plutôt
+  // que de laisser planter silencieusement, on retombe sur un copier-coller
+  // du lien, avec un toast pour confirmer que quelque chose s'est bien passé.
+  const shareApp = useCallback(async () => {
+    const shareUrl = 'https://nexiawallet.pages.dev';
+    const message = `NexiaWallet — portefeuille crypto non-custodial. Tes clés, tes cryptos. ${shareUrl}`;
+    try {
+      await Share.share({ title: 'NexiaWallet', message, url: shareUrl });
+    } catch {
+      await copyToClipboard(shareUrl, 'Lien copié dans le presse-papiers');
+    }
+  }, [copyToClipboard]);
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
@@ -3581,6 +3593,13 @@ export default function App() {
               <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • Ethereum + BSC</Text>
             </View>
           </View>
+          <AnimPressable style={st.settings_row} onPress={shareApp}>
+            <Text style={{ fontSize: 22 }}>📤</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Partager NexiaWallet</Text>
+              <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
+            </View>
+          </AnimPressable>
           {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
             <AnimPressable key={key} style={st.settings_row} onPress={() => setLegalDoc(key)}>
               <Text style={{ fontSize: 22 }}>📄</Text>
