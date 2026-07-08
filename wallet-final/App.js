@@ -220,14 +220,15 @@ const COIN_LOGOS = {
 
 // Tokens affichés dans "Mes Tokens" à l'accueil, avec prix réels CoinGecko.
 // ETH/BNB/MATIC/USDT/USDC (adresse EVM, MATIC via le réseau Polygon dans le
-// sélecteur réseau) et SOL (adresse Solana, dérivée de la même mnémonique —
-// voir getSolanaAddress dans lib/wallet.js) sont entièrement actifs : solde
-// réel, envoi, réception, achat. BTC/ADA sont affichés pour la vue
-// d'ensemble (prix réels, style Trust Wallet) mais ne sont pas envoyables
-// depuis ce wallet ("Token non supporté" à l'envoi/achat).
+// sélecteur réseau), SOL (adresse Solana dérivée de la même mnémonique —
+// voir getSolanaAddress dans lib/wallet.js) et BTC (adresse Bitcoin BIP84,
+// voir getBitcoinAddress) sont entièrement actifs : solde réel, envoi,
+// réception, achat. ADA est affiché pour la vue d'ensemble (prix réel, style
+// Trust Wallet) mais n'est pas envoyable depuis ce wallet ("Token non
+// supporté" à l'envoi/achat).
 const WALLET_TOKENS = {
   ETH:  { name: 'Ethereum', cgId: 'ethereum',      balance: 0,   icon: '🔷', color: '#5B8DEF', logo: COIN_LOGOS.ethereum },
-  BTC:  { name: 'Bitcoin',  cgId: 'bitcoin',       balance: 0,   icon: '🟠', color: '#F7931A', logo: COIN_LOGOS.bitcoin, readOnly: true },
+  BTC:  { name: 'Bitcoin',  cgId: 'bitcoin',       balance: 0,   icon: '🟠', color: '#F7931A', logo: COIN_LOGOS.bitcoin },
   BNB:  { name: 'BNB',      cgId: 'binancecoin',   balance: 0,   icon: '🟡', color: '#F3BA2F', logo: COIN_LOGOS.binancecoin },
   SOL:  { name: 'Solana',   cgId: 'solana',        balance: 0,   icon: '🟣', color: '#9945FF', logo: COIN_LOGOS.solana },
   USDT: { name: 'Tether',   cgId: 'tether',        balance: 0,   icon: '💚', color: '#26A17B', logo: COIN_LOGOS.tether },
@@ -244,6 +245,7 @@ const BUYABLE_TOKENS = {
   bsc: ['BNB', 'USDT', 'USDC'],
   polygon: ['MATIC'],
   solana: ['SOL'],
+  bitcoin: ['BTC'],
 };
 
 // Le swap réel passe par un agrégateur DEX (0x) : on ne propose que les
@@ -1453,7 +1455,7 @@ export default function App() {
   const [sendAmountMode, setSendAmountMode] = useState('crypto'); // 'crypto' | 'fiat' — sendAmount (en crypto) reste la seule source de vérité pour l'envoi
   const [sendAmountFiatInput, setSendAmountFiatInput] = useState('');
   const [receiveAmount, setReceiveAmount]       = useState(''); // demande de paiement (en token natif) sur l'écran Recevoir
-  const [receiveChain, setReceiveChain]         = useState('evm'); // 'evm' | 'solana' — quelle adresse afficher sur Recevoir
+  const [receiveChain, setReceiveChain]         = useState('evm'); // 'evm' | 'solana' | 'bitcoin' — quelle adresse afficher sur Recevoir
   const [txTags, setTxTags]                     = useState({}); // { [hash]: 'Perso' | 'Pro' | 'Cadeau' }
   const [sendLoading, setSendLoading]     = useState(false);
   const [swapFrom, setSwapFrom]           = useState('ETH');
@@ -1534,6 +1536,13 @@ export default function App() {
     try { return localWallet.getSolanaAddress(unlockedMnemonic); } catch (e) { console.warn('getSolanaAddress error', e.message); return ''; }
   }, [unlockedMnemonic]);
   const [solanaBalance, setSolanaBalance] = useState('0');
+  // Adresse Bitcoin — même principe, dérivée de la même mnémonique (BIP84,
+  // voir getBitcoinAddress dans lib/wallet.js).
+  const bitcoinAddr = useMemo(() => {
+    if (!unlockedMnemonic) return '';
+    try { return localWallet.getBitcoinAddress(unlockedMnemonic); } catch (e) { console.warn('getBitcoinAddress error', e.message); return ''; }
+  }, [unlockedMnemonic]);
+  const [bitcoinBalance, setBitcoinBalance] = useState('0');
   const showToast = useCallback((message, type = 'info') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
@@ -1787,6 +1796,20 @@ export default function App() {
   }, [solanaAddr]);
 
   useEffect(() => { refreshSolanaBalance(); }, [refreshSolanaBalance]);
+
+  // Solde BTC — même principe (API publique Blockstream, pas de clé nécessaire).
+  const refreshBitcoinBalance = useCallback(async () => {
+    if (!bitcoinAddr) return;
+    try {
+      const balance = await localWallet.getBitcoinBalance(bitcoinAddr);
+      setBitcoinBalance(balance);
+      setTokens(prev => ({ ...prev, BTC: { ...prev.BTC, balance: parseFloat(balance) } }));
+    } catch (err) {
+      console.warn('refreshBitcoinBalance error', err.message);
+    }
+  }, [bitcoinAddr]);
+
+  useEffect(() => { refreshBitcoinBalance(); }, [refreshBitcoinBalance]);
 
   // Historique — données publiques de la blockchain (Etherscan), aucune clé
   // impliquée. Chargé à la demande, à l'ouverture de la modale "Activité".
@@ -2770,11 +2793,14 @@ export default function App() {
     setBuyLoading(true);
     try {
       const isSolanaBuy = buyToken === 'SOL';
+      const isBitcoinBuy = buyToken === 'BTC';
+      const buyNetwork = isSolanaBuy ? 'solana' : isBitcoinBuy ? 'bitcoin' : network;
+      const buyWalletAddress = isSolanaBuy ? solanaAddr : isBitcoinBuy ? bitcoinAddr : walletAddr;
       const res = await axios.post(`${API_BASE}/payments/create-checkout-session`, {
         amountUsd: Number(buyAmount),
         tokenSymbol: buyToken,
-        network: isSolanaBuy ? 'solana' : network,
-        walletAddress: isSolanaBuy ? solanaAddr : walletAddr,
+        network: buyNetwork,
+        walletAddress: buyWalletAddress,
         returnUrl: Platform.OS === 'web' ? window.location.origin : `exp://${HOST_OVERRIDE}:8087`,
       }, { timeout: 20000, headers: API_HEADERS });
 
@@ -2821,6 +2847,23 @@ export default function App() {
       if (amt > solBal) { showAlert('Solde insuffisant', `Tu as ${solBal.toFixed(6)} SOL`); return; }
       setSendStep('confirm');
       setSendFeeEstimate({ feeNative: '0.000005', nativeSymbol: 'SOL', approximate: true, tiers: null });
+      setSendFeeLoading(false);
+      return;
+    }
+
+    // Bitcoin — adresse bc1/1/3 (rien à voir avec le format 0x), frais
+    // calculés au moment de signer (dépend des UTXOs sélectionnés — voir
+    // signBitcoinTransferTx dans lib/wallet.js), donc juste un ordre de
+    // grandeur affiché ici.
+    if (sendToken === 'BTC') {
+      if (!localWallet.isValidBitcoinAddress(sendAddress)) {
+        showAlert('Adresse invalide', "Ce n'est pas une adresse Bitcoin valide.");
+        return;
+      }
+      const btcBal = parseFloat(bitcoinBalance || '0');
+      if (amt > btcBal) { showAlert('Solde insuffisant', `Tu as ${btcBal.toFixed(8)} BTC`); return; }
+      setSendStep('confirm');
+      setSendFeeEstimate({ feeNative: '0.00005', nativeSymbol: 'BTC', approximate: true, tiers: null });
       setSendFeeLoading(false);
       return;
     }
@@ -2887,6 +2930,46 @@ export default function App() {
           return next;
         });
         await refreshSolanaBalance();
+        setShowSend(false);
+        setSendStep('form');
+        setSendAddress('');
+        setSendAmount('');
+        setSendFeeEstimate(null);
+      } catch (e) {
+        playTone('error');
+        showAlert('❌ Erreur', e.message || 'Transaction échouée');
+      }
+      setSendLoading(false);
+      return;
+    }
+
+    if (sendToken === 'BTC') {
+      setSendLoading(true);
+      try {
+        const { rawTx } = await localWallet.signBitcoinTransferTx({ mnemonic: unlockedMnemonic, to: sendAddress, amountBtc: sendAmount });
+        const response = await axios.post(`${API_BASE}/tx/broadcast-bitcoin`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+        if (!response.data?.success) throw new Error(response.data?.error || 'Échec du transfert');
+
+        const txHash = response.data.txHash;
+        playTone('success');
+        showAlert(
+          '✅ Transaction Soumise!',
+          `BTC envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: Bitcoin`,
+          [
+            { text: 'Copier Hash', onPress: () => copyToClipboard(txHash, 'Hash copié'), style: 'default' },
+            { text: 'OK' }
+          ]
+        );
+        addRecentAddress(sendAddress);
+        const sendRecord = { address: sendAddress, token: 'BTC', amount: sendAmount, network: 'bitcoin' };
+        setLastSend(sendRecord);
+        saveLastSend(sendRecord);
+        setTokenUsage(prev => {
+          const next = { ...prev, BTC: (prev.BTC || 0) + 1 };
+          saveTokenUsage(next);
+          return next;
+        });
+        await refreshBitcoinBalance();
         setShowSend(false);
         setSendStep('form');
         setSendAddress('');
@@ -3947,7 +4030,7 @@ export default function App() {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <View style={st.network_badge}>
               <Text style={{ color: T.orange, fontSize: 12, fontWeight: 'bold' }}>
-                ⛓️ {sendToken === 'SOL' ? 'SOLANA' : activeNetwork.label.toUpperCase()} • SOLDE RÉEL
+                ⛓️ {{ SOL: 'SOLANA', BTC: 'BITCOIN' }[sendToken] || activeNetwork.label.toUpperCase()} • SOLDE RÉEL
               </Text>
             </View>
 
@@ -3961,10 +4044,10 @@ export default function App() {
               ))}
             </ScrollView>
 
-            <Text style={st.form_label}>{sendToken === 'SOL' ? 'Adresse Solana' : 'Adresse (0x...)'}</Text>
+            <Text style={st.form_label}>{{ SOL: 'Adresse Solana', BTC: 'Adresse Bitcoin' }[sendToken] || 'Adresse (0x...)'}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
-                placeholder={sendToken === 'SOL' ? 'Adresse Solana (base58)' : '0x123...abc'} placeholderTextColor={T.text3} autoCapitalize="none" />
+                placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc'} placeholderTextColor={T.text3} autoCapitalize="none" />
               {Platform.OS === 'web' && (
                 <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
                   <Text style={{ fontSize: 18 }}>📋</Text>
@@ -4101,11 +4184,13 @@ export default function App() {
     // uniquement (ETH/BNB) — encoder un montant de token ERC20 demanderait
     // un URI beaucoup plus complexe (appel de contrat transfer()).
     const isSolana = receiveChain === 'solana';
-    const displayAddr = isSolana ? solanaAddr : walletAddr;
+    const isBitcoin = receiveChain === 'bitcoin';
+    const isEvm = !isSolana && !isBitcoin;
+    const displayAddr = isSolana ? solanaAddr : isBitcoin ? bitcoinAddr : walletAddr;
     const amt = parseFloat(receiveAmount);
     let qrValue = displayAddr;
     let paymentUri = null;
-    if (!isSolana && walletAddr && amt > 0) {
+    if (isEvm && walletAddr && amt > 0) {
       try {
         const wei = ethers.utils.parseEther(receiveAmount).toString();
         paymentUri = `ethereum:${walletAddr}@${activeNetwork.chainId}?value=${wei}`;
@@ -4123,17 +4208,22 @@ export default function App() {
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', padding: 24 }}>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-            <TouchableOpacity style={[st.chain_tab_sm, !isSolana && st.chain_tab_sm_on]} onPress={() => setReceiveChain('evm')}>
-              <Text style={[st.chain_tab_sm_txt, !isSolana && st.chain_tab_sm_txt_on]}>EVM (ETH/BNB/USDT/USDC)</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <TouchableOpacity style={[st.chain_tab_sm, isEvm && st.chain_tab_sm_on]} onPress={() => setReceiveChain('evm')}>
+              <Text style={[st.chain_tab_sm_txt, isEvm && st.chain_tab_sm_txt_on]}>EVM (ETH/BNB/MATIC/USDT/USDC)</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[st.chain_tab_sm, isSolana && st.chain_tab_sm_on]} onPress={() => setReceiveChain('solana')}>
               <Text style={[st.chain_tab_sm_txt, isSolana && st.chain_tab_sm_txt_on]}>Solana (SOL)</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={[st.chain_tab_sm, isBitcoin && st.chain_tab_sm_on]} onPress={() => setReceiveChain('bitcoin')}>
+              <Text style={[st.chain_tab_sm_txt, isBitcoin && st.chain_tab_sm_txt_on]}>Bitcoin (BTC)</Text>
+            </TouchableOpacity>
           </View>
           <View style={st.network_badge}>
             <Text style={{ color: T.blue, fontSize: 11 }}>
-              {isSolana ? 'Réseau Solana • adresse distincte de ton adresse EVM' : 'EVM Compatible • Ethereum, Polygon, BNB…'}
+              {isSolana ? 'Réseau Solana • adresse distincte de ton adresse EVM'
+                : isBitcoin ? 'Réseau Bitcoin • adresse distincte de ton adresse EVM'
+                : 'EVM Compatible • Ethereum, Polygon, BNB…'}
             </Text>
           </View>
           <View style={st.qr_wrap}><QRCodeMock address={qrValue} /></View>
@@ -4145,7 +4235,7 @@ export default function App() {
             <Text style={st.green_btn_txt}>📋 Copier</Text>
           </AnimPressable>
 
-          {!isSolana && (
+          {isEvm && (
             <View style={{ width: '100%', marginTop: 20 }}>
               <Text style={st.form_label}>Demander un montant précis (optionnel)</Text>
               <TextInput
@@ -5140,7 +5230,7 @@ export default function App() {
         <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={st.form_label}>Token</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
-            {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana].map((sym) => {
+            {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
               const t = tokens[sym];
               if (!t) return null;
               return (
@@ -5158,7 +5248,7 @@ export default function App() {
 
           <View style={st.send_info_box}>
             <Text style={st.send_info_line}>≈ {fmt((parseFloat(buyAmount) || 0) / (tokens[buyToken]?.price || 1))} {buyToken}</Text>
-            <Text style={st.send_info_line}>Réseau: {buyToken === 'SOL' ? 'Solana' : activeNetwork.label}</Text>
+            <Text style={st.send_info_line}>Réseau: {{ SOL: 'Solana', BTC: 'Bitcoin' }[buyToken] || activeNetwork.label}</Text>
             <Text style={st.send_info_line}>Paiement sécurisé par carte (MoonPay)</Text>
           </View>
 

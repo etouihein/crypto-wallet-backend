@@ -16,6 +16,11 @@ const { ethers } = require('ethers');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const { Keypair, PublicKey, Connection, SystemProgram, Transaction } = require('@solana/web3.js');
+const { BIP32Factory } = require('bip32');
+const bitcoinEcc = require('@bitcoinerlab/secp256k1');
+const bitcoin = require('bitcoinjs-lib');
+
+const bip32 = BIP32Factory(bitcoinEcc);
 
 // Mêmes RPC publics que ceux utilisés par défaut côté backend
 // (crypto-wallet/src/routes/wallet.js) — gardés synchronisés à la main.
@@ -377,6 +382,111 @@ async function signSolanaTransferTx({ mnemonic, to, amountSol }) {
   return { rawTx: tx.serialize().toString('base64') };
 }
 
+// ── Bitcoin — chaîne non-EVM : adresse dérivée de LA MÊME mnémonique via
+//    BIP84 (native segwit, adresses "bc1..."), le standard actuel pour les
+//    wallets grand public (Trust Wallet, Ledger...) — frais les plus bas.
+//    Aucune clé privée ni la mnémonique ne quittent l'appareil ; seule une
+//    transaction déjà signée (hex) part vers le backend pour être relayée.
+const BITCOIN_DERIVATION_PATH = "m/84'/0'/0'/0/0";
+const BITCOIN_NETWORK = bitcoin.networks.bitcoin;
+
+// API publique Blockstream (pas de clé nécessaire, données publiques de la
+// blockchain) — même principe que les RPC EVM/Solana publics utilisés plus haut.
+const BLOCKSTREAM_API_URL = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_BLOCKSTREAM_API_URL)
+  || 'https://blockstream.info/api';
+
+function bitcoinKeyPairFromMnemonic(mnemonic) {
+  const seed = bip39.mnemonicToSeedSync(mnemonic.trim().toLowerCase());
+  const root = bip32.fromSeed(seed, BITCOIN_NETWORK);
+  return root.derivePath(BITCOIN_DERIVATION_PATH);
+}
+
+function getBitcoinAddress(mnemonic) {
+  const keyPair = bitcoinKeyPairFromMnemonic(mnemonic);
+  const { address } = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(keyPair.publicKey), network: BITCOIN_NETWORK });
+  return address;
+}
+
+function isValidBitcoinAddress(address) {
+  try { bitcoin.address.toOutputScript(address, BITCOIN_NETWORK); return true; } catch { return false; }
+}
+
+async function getBitcoinUtxos(address) {
+  const res = await fetch(`${BLOCKSTREAM_API_URL}/address/${address}/utxo`);
+  if (!res.ok) throw new Error('Impossible de récupérer les UTXOs Bitcoin.');
+  return res.json();
+}
+
+async function getBitcoinBalance(address) {
+  const utxos = await getBitcoinUtxos(address);
+  const totalSats = utxos.reduce((sum, u) => sum + u.value, 0);
+  return (totalSats / 1e8).toString();
+}
+
+// Estimation de frais réelle (sat/vByte) via l'endpoint public Blockstream,
+// repli sur 15 sat/vByte (ordre de grandeur raisonnable) si l'API échoue —
+// juste pour ne pas bloquer l'envoi, pas une promesse de précision absolue.
+async function getBitcoinFeeRate() {
+  try {
+    const res = await fetch(`${BLOCKSTREAM_API_URL}/fee-estimates`);
+    const data = await res.json();
+    return Math.ceil(data['6'] || data['3'] || 15);
+  } catch {
+    return 15;
+  }
+}
+
+// Construit + signe un transfert BTC natif (P2WPKH) en local ; retourne une
+// transaction sérialisée en hex, diffusée ensuite par le backend (POST
+// /wallet/tx/broadcast-bitcoin) exactement comme un rawTx EVM/Solana.
+// Sélection d'UTXOs simple (accumulation jusqu'à couvrir montant + frais) et
+// estimation de taille approximative (P2WPKH : ~68 vB/entrée, ~31 vB/sortie)
+// — suffisant pour un wallet grand public, pas un optimiseur de frais.
+async function signBitcoinTransferTx({ mnemonic, to, amountBtc }) {
+  if (!isValidBitcoinAddress(to)) throw new Error("L'adresse Bitcoin de destination n'est pas valide.");
+  const keyPair = bitcoinKeyPairFromMnemonic(mnemonic);
+  const { address: fromAddress, output: fromScript } = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(keyPair.publicKey), network: BITCOIN_NETWORK });
+
+  const amountSats = Math.round(parseFloat(amountBtc) * 1e8);
+  const utxos = await getBitcoinUtxos(fromAddress);
+  const feeRate = await getBitcoinFeeRate();
+
+  const sorted = [...utxos].sort((a, b) => b.value - a.value);
+  const selected = [];
+  let inputSum = 0;
+  let estFeeSats = 0;
+  for (const utxo of sorted) {
+    selected.push(utxo);
+    inputSum += utxo.value;
+    estFeeSats = Math.ceil((10 + selected.length * 68 + 2 * 31) * feeRate);
+    if (inputSum >= amountSats + estFeeSats) break;
+  }
+  if (inputSum < amountSats + estFeeSats) throw new Error('Fonds BTC insuffisants (montant + frais réseau).');
+
+  const psbt = new bitcoin.Psbt({ network: BITCOIN_NETWORK });
+  for (const utxo of selected) {
+    psbt.addInput({
+      hash: utxo.txid,
+      index: utxo.vout,
+      witnessUtxo: { script: fromScript, value: utxo.value },
+    });
+  }
+  psbt.addOutput({ address: to, value: amountSats });
+  const changeSats = inputSum - amountSats - estFeeSats;
+  if (changeSats > 546) { // seuil de poussière standard, en dessous le réseau rejette la sortie
+    psbt.addOutput({ address: fromAddress, value: changeSats });
+  }
+
+  const signer = {
+    publicKey: Buffer.from(keyPair.publicKey),
+    sign: (hash) => Buffer.from(keyPair.sign(hash)),
+  };
+  selected.forEach((_, i) => psbt.signInput(i, signer));
+  psbt.finalizeAllInputs();
+
+  return { rawTx: psbt.extractTransaction().toHex() };
+}
+
 module.exports = {
   NETWORKS,
   ERC20_TOKENS,
@@ -394,6 +504,10 @@ module.exports = {
   isValidSolanaAddress,
   getSolanaBalance,
   signSolanaTransferTx,
+  getBitcoinAddress,
+  isValidBitcoinAddress,
+  getBitcoinBalance,
+  signBitcoinTransferTx,
   getCustomTokenInfo,
   estimateSendFee,
   signNativeTx,

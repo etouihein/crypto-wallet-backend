@@ -49,13 +49,24 @@ const MOONPAY_CURRENCY_CODES = {
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
   polygon:  { MATIC: 'matic_polygon' },
   solana:   { SOL: 'sol' },
+  bitcoin:  { BTC: 'btc' },
 };
 
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const solanaConnection = new SolanaConnection(SOLANA_RPC_URL, 'confirmed');
 
+const BLOCKSTREAM_API_URL = process.env.BLOCKSTREAM_API_URL || 'https://blockstream.info/api';
+
 function isValidSolanaAddress(address) {
   try { new SolanaPublicKey(address); return true; } catch { return false; }
+}
+
+// Vérification par regex (pas de librairie Bitcoin côté backend — la vraie
+// validation avec vérification de checksum se fait déjà côté client avant
+// signature, voir isValidBitcoinAddress dans wallet-final/lib/wallet.js).
+// Couvre legacy (1...), P2SH (3...) et bech32/bech32m natif segwit (bc1...).
+function isValidBitcoinAddress(address) {
+  return /^(bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(address || '');
 }
 
 function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redirectURL }) {
@@ -137,6 +148,8 @@ const NETWORK_ALIASES = {
   sepolia: 'sepolia',
   solana: 'solana',
   sol: 'solana',
+  bitcoin: 'bitcoin',
+  btc: 'bitcoin',
 };
 
 const providers = Object.fromEntries(
@@ -671,9 +684,11 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
     if (!amountUsd || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
     }
-    const isSolanaPurchase = normalizeNetwork(network) === 'solana';
-    const walletAddressValid = isSolanaPurchase
+    const normalizedBuyNetwork = normalizeNetwork(network);
+    const walletAddressValid = normalizedBuyNetwork === 'solana'
       ? isValidSolanaAddress(walletAddress || '')
+      : normalizedBuyNetwork === 'bitcoin'
+      ? isValidBitcoinAddress(walletAddress || '')
       : ethers.utils.isAddress(walletAddress || '');
     if (PAYMENT_PROVIDER === 'moonpay' && !walletAddressValid) {
       return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
@@ -881,6 +896,30 @@ router.post('/tx/broadcast-solana', sensitiveLimiter, async (req, res) => {
   } catch (error) {
     console.error('Solana broadcast error:', error);
     res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Solana impossible.' });
+  }
+});
+
+// Même principe que /tx/broadcast-solana mais pour Bitcoin : la transaction
+// est construite et signée en local (client, format hex — voir
+// signBitcoinTransferTx dans wallet-final/lib/wallet.js) ; ce backend relaie
+// juste le hex à l'API publique Blockstream, aucune librairie Bitcoin
+// nécessaire ici (évite de répéter l'incident uuid/@solana/web3.js sur une
+// dépendance backend supplémentaire).
+router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
+  try {
+    const { rawTx } = req.body;
+    if (!rawTx || typeof rawTx !== 'string') {
+      return res.status(400).json({ success: false, error: 'Transaction signée (rawTx) requise.' });
+    }
+    const response = await fetch(`${BLOCKSTREAM_API_URL}/tx`, { method: 'POST', body: rawTx });
+    const text = await response.text();
+    if (!response.ok) {
+      return res.status(400).json({ success: false, error: text || 'Diffusion de la transaction Bitcoin impossible.' });
+    }
+    res.json({ success: true, txHash: text.trim(), network: 'bitcoin' });
+  } catch (error) {
+    console.error('Bitcoin broadcast error:', error);
+    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Bitcoin impossible.' });
   }
 });
 
