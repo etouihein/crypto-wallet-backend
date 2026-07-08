@@ -47,6 +47,7 @@ const MOONPAY_BASE_URL = process.env.MOONPAY_ENV === 'production'
 const MOONPAY_CURRENCY_CODES = {
   ethereum: { ETH: 'eth', USDT: 'usdt_eth', USDC: 'usdc_eth' },
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
+  polygon:  { MATIC: 'matic_polygon' },
   solana:   { SOL: 'sol' },
 };
 

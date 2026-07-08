@@ -219,11 +219,12 @@ const COIN_LOGOS = {
 };
 
 // Tokens affichés dans "Mes Tokens" à l'accueil, avec prix réels CoinGecko.
-// ETH/BNB/USDT/USDC (adresse EVM) et SOL (adresse Solana, dérivée de la même
-// mnémonique — voir getSolanaAddress dans lib/wallet.js) sont entièrement
-// actifs : solde réel, envoi, réception, achat. BTC/ADA/MATIC sont affichés
-// pour la vue d'ensemble (prix réels, style Trust Wallet) mais ne sont pas
-// envoyables depuis ce wallet ("Token non supporté" à l'envoi/achat).
+// ETH/BNB/MATIC/USDT/USDC (adresse EVM, MATIC via le réseau Polygon dans le
+// sélecteur réseau) et SOL (adresse Solana, dérivée de la même mnémonique —
+// voir getSolanaAddress dans lib/wallet.js) sont entièrement actifs : solde
+// réel, envoi, réception, achat. BTC/ADA sont affichés pour la vue
+// d'ensemble (prix réels, style Trust Wallet) mais ne sont pas envoyables
+// depuis ce wallet ("Token non supporté" à l'envoi/achat).
 const WALLET_TOKENS = {
   ETH:  { name: 'Ethereum', cgId: 'ethereum',      balance: 0,   icon: '🔷', color: '#5B8DEF', logo: COIN_LOGOS.ethereum },
   BTC:  { name: 'Bitcoin',  cgId: 'bitcoin',       balance: 0,   icon: '🟠', color: '#F7931A', logo: COIN_LOGOS.bitcoin, readOnly: true },
@@ -232,7 +233,7 @@ const WALLET_TOKENS = {
   USDT: { name: 'Tether',   cgId: 'tether',        balance: 0,   icon: '💚', color: '#26A17B', logo: COIN_LOGOS.tether },
   USDC: { name: 'USD Coin', cgId: 'usd-coin',      balance: 0,   icon: '🟦', color: '#2775CA', logo: COIN_LOGOS['usd-coin'] },
   ADA:  { name: 'Cardano',  cgId: 'cardano',       balance: 0,   icon: '🔵', color: '#0033AD', logo: COIN_LOGOS.cardano, readOnly: true },
-  MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,   icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'], readOnly: true },
+  MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,   icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'] },
 };
 
 // Le wallet a une adresse EVM (0x...) et une adresse Solana (dérivée de la
@@ -241,6 +242,7 @@ const WALLET_TOKENS = {
 const BUYABLE_TOKENS = {
   ethereum: ['ETH', 'USDT', 'USDC'],
   bsc: ['BNB', 'USDT', 'USDC'],
+  polygon: ['MATIC'],
   solana: ['SOL'],
 };
 
@@ -1625,13 +1627,16 @@ export default function App() {
 
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
-  const activeNetwork = network === 'bsc'
-    ? { label: 'BNB Smart Chain', network: 'bsc', chainId: 56, explorer: 'https://bscscan.com' }
-    : { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1, explorer: 'https://etherscan.io' };
+  const NETWORK_INFO = {
+    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1, explorer: 'https://etherscan.io' },
+    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,  explorer: 'https://bscscan.com' },
+    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137, explorer: 'https://polygonscan.com' },
+  };
+  const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
   // Symbole du token natif du réseau actif — recalculé souvent ailleurs
   // avant cette factorisation (envoi, swap, achat, affichage du solde) ;
-  // une seule source évite un oubli si BSC/Ethereum est un jour remplacé.
-  const nativeSymbol = network === 'bsc' ? 'BNB' : 'ETH';
+  // une seule source évite un oubli si un réseau EVM est un jour ajouté/retiré.
+  const nativeSymbol = { bsc: 'BNB', polygon: 'MATIC' }[network] || 'ETH';
 
   // ── FORMATAGE DEVISE ──
   const fmt = useCallback((usdVal, dec = 2) => {
@@ -1743,7 +1748,7 @@ export default function App() {
   const refreshPortfolio = useCallback(async (selectedNetwork = network) => {
     if (!walletAddr) return;
     try {
-      const nativeSymbol = selectedNetwork === 'bsc' ? 'BNB' : 'ETH';
+      const nativeSymbol = { bsc: 'BNB', polygon: 'MATIC' }[selectedNetwork] || 'ETH';
       const nativeBalance = await localWallet.getNativeBalance(walletAddr, selectedNetwork);
       setWalletBalance(nativeBalance);
       setTokens(prev => ({
@@ -3415,6 +3420,9 @@ export default function App() {
               <TouchableOpacity style={[st.network_chip, network === 'bsc' && st.network_chip_on]} onPress={() => setNetwork('bsc')}>
                 <Text style={[st.network_chip_txt, network === 'bsc' && { color: T.text }]}>BNB Smart Chain</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'polygon' && st.network_chip_on]} onPress={() => setNetwork('polygon')}>
+                <Text style={[st.network_chip_txt, network === 'polygon' && { color: T.text }]}>Polygon</Text>
+              </TouchableOpacity>
             </View>
 
             {Platform.OS === 'web' && (
@@ -4458,6 +4466,14 @@ export default function App() {
               <Text style={st.settings_row_sub}>Chain ID: 56 • Mainnet</Text>
             </View>
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('polygon')}>
+            <Text style={{ fontSize: 22 }}>🟪</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Polygon</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 137 • Mainnet</Text>
+            </View>
+            {network === 'polygon' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
 
           {!!favorites.length && (

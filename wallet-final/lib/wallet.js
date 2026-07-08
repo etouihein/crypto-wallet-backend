@@ -30,6 +30,11 @@ const NETWORKS = {
     nativeSymbol: 'BNB',
     rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_BSC_RPC_URL) || 'https://bsc-rpc.publicnode.com',
   },
+  polygon: {
+    chainId: 137,
+    nativeSymbol: 'MATIC',
+    rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_POLYGON_RPC_URL) || 'https://polygon-bor-rpc.publicnode.com',
+  },
 };
 
 // Adresses vérifiées sur Etherscan/BscScan (voir le plan de migration non-
