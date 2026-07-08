@@ -13,6 +13,9 @@
 'use strict';
 
 const { ethers } = require('ethers');
+const bip39 = require('bip39');
+const { derivePath } = require('ed25519-hd-key');
+const { Keypair, PublicKey, Connection, SystemProgram, Transaction } = require('@solana/web3.js');
 
 // Mêmes RPC publics que ceux utilisés par défaut côté backend
 // (crypto-wallet/src/routes/wallet.js) — gardés synchronisés à la main.
@@ -315,6 +318,60 @@ async function waitForTx(txHash, network = 'ethereum', timeoutMs = 120_000) {
   return getProvider(network).waitForTransaction(txHash, 1, timeoutMs);
 }
 
+// ── Solana — chaîne non-EVM : adresse et clé dérivées de LA MÊME
+//    mnémonique BIP39 que l'adresse Ethereum, via SLIP-0010 (ed25519),
+//    chemin standard m/44'/501'/0'/0' (utilisé par la plupart des
+//    wallets Solana JS : Phantom, Solflare, Solana Cookbook). La
+//    mnémonique reste donc la SEULE chose à sauvegarder pour tout
+//    récupérer, EVM et Solana.
+const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
+
+const SOLANA_RPC_URL = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_SOLANA_RPC_URL)
+  || 'https://api.mainnet-beta.solana.com';
+
+function getSolanaConnection() {
+  return new Connection(SOLANA_RPC_URL, 'confirmed');
+}
+
+function solanaKeypairFromMnemonic(mnemonic) {
+  const seed = bip39.mnemonicToSeedSync(mnemonic.trim().toLowerCase());
+  const derived = derivePath(SOLANA_DERIVATION_PATH, seed.toString('hex'));
+  return Keypair.fromSeed(derived.key);
+}
+
+function getSolanaAddress(mnemonic) {
+  return solanaKeypairFromMnemonic(mnemonic).publicKey.toBase58();
+}
+
+function isValidSolanaAddress(address) {
+  try { new PublicKey(address); return true; } catch { return false; }
+}
+
+async function getSolanaBalance(address) {
+  const lamports = await getSolanaConnection().getBalance(new PublicKey(address));
+  return (lamports / 1_000_000_000).toString();
+}
+
+// Construit + signe un transfert SOL natif en local ; retourne une
+// transaction sérialisée en base64, diffusée ensuite par le backend
+// (POST /wallet/tx/broadcast-solana) exactement comme un rawTx EVM.
+async function signSolanaTransferTx({ mnemonic, to, amountSol }) {
+  if (!isValidSolanaAddress(to)) throw new Error("L'adresse Solana de destination n'est pas valide.");
+  const keypair = solanaKeypairFromMnemonic(mnemonic);
+  const connection = getSolanaConnection();
+
+  const lamports = Math.round(parseFloat(amountSol) * 1_000_000_000);
+  const currentBalance = await connection.getBalance(keypair.publicKey);
+  if (currentBalance < lamports) throw new Error('Fonds SOL insuffisants sur le wallet.');
+
+  const { blockhash } = await connection.getLatestBlockhash();
+  const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey }).add(
+    SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: new PublicKey(to), lamports })
+  );
+  tx.sign(keypair);
+  return { rawTx: tx.serialize().toString('base64') };
+}
+
 module.exports = {
   NETWORKS,
   ERC20_TOKENS,
@@ -328,6 +385,10 @@ module.exports = {
   decryptWalletKeystore,
   getNativeBalance,
   getErc20Balance,
+  getSolanaAddress,
+  isValidSolanaAddress,
+  getSolanaBalance,
+  signSolanaTransferTx,
   getCustomTokenInfo,
   estimateSendFee,
   signNativeTx,

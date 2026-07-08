@@ -4,6 +4,7 @@ const { ethers } = require('ethers');
 const crypto = require('crypto');
 const Stripe = require('stripe');
 const rateLimit = require('express-rate-limit');
+const { Connection: SolanaConnection, PublicKey: SolanaPublicKey } = require('@solana/web3.js');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:8083';
@@ -28,18 +29,33 @@ const sensitiveLimiter = rateLimit({
 });
 
 // MoonPay — achat de crypto par carte, livré directement à l'adresse du wallet.
-// Le wallet de cette app n'a qu'UNE adresse EVM (0x...) : on ne propose donc
-// MoonPay que pour les tokens qui peuvent réellement arriver dessus. Acheter
-// du BTC/SOL/ADA vers une adresse 0x perdrait les fonds — pas question.
-const MOONPAY_API_KEY = process.env.MOONPAY_API_KEY || '';
-const MOONPAY_SECRET_KEY = process.env.MOONPAY_SECRET_KEY || '';
+// Le wallet a une adresse EVM (0x...) et, depuis l'ajout du support Solana,
+// une adresse Solana dérivée de la même mnémonique (voir getSolanaAddress
+// dans wallet-final/lib/wallet.js) : on ne propose MoonPay que pour les
+// tokens qui ont réellement une adresse de destination correspondante.
+// Acheter du BTC vers une adresse 0x perdrait les fonds — pas question.
+// .trim() : un copier-coller depuis le dashboard MoonPay ou l'interface
+// Railway peut laisser un espace/retour à la ligne final invisible, qui
+// change silencieusement la clé HMAC et fait échouer la vérification de
+// signature côté MoonPay ("Signature check failed") sans qu'aucune erreur
+// ne remonte ici (la signature calculée est juste... fausse).
+const MOONPAY_API_KEY = (process.env.MOONPAY_API_KEY || '').trim();
+const MOONPAY_SECRET_KEY = (process.env.MOONPAY_SECRET_KEY || '').trim();
 const MOONPAY_BASE_URL = process.env.MOONPAY_ENV === 'production'
   ? 'https://buy.moonpay.com'
   : 'https://buy-sandbox.moonpay.com';
 const MOONPAY_CURRENCY_CODES = {
   ethereum: { ETH: 'eth', USDT: 'usdt_eth', USDC: 'usdc_eth' },
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
+  solana:   { SOL: 'sol' },
 };
+
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+const solanaConnection = new SolanaConnection(SOLANA_RPC_URL, 'confirmed');
+
+function isValidSolanaAddress(address) {
+  try { new SolanaPublicKey(address); return true; } catch { return false; }
+}
 
 function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redirectURL }) {
   const fields = {
@@ -70,7 +86,7 @@ function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redi
 // côté serveur (utile pour logs/support), le solde réel reste vérifiable sur
 // la blockchain via /wallet/info comme pour n'importe quelle transaction.
 // Clé distincte de MOONPAY_SECRET_KEY — dashboard.moonpay.com > Developers > Webhooks.
-const MOONPAY_WEBHOOK_KEY = process.env.MOONPAY_WEBHOOK_KEY || '';
+const MOONPAY_WEBHOOK_KEY = (process.env.MOONPAY_WEBHOOK_KEY || '').trim();
 
 function verifyMoonPayWebhook(req) {
   const header = req.header('moonpay-signature-v2');
@@ -118,6 +134,8 @@ const NETWORK_ALIASES = {
   polygon: 'polygon',
   matic: 'polygon',
   sepolia: 'sepolia',
+  solana: 'solana',
+  sol: 'solana',
 };
 
 const providers = Object.fromEntries(
@@ -652,7 +670,11 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
     if (!amountUsd || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
     }
-    if (PAYMENT_PROVIDER === 'moonpay' && !ethers.utils.isAddress(walletAddress || '')) {
+    const isSolanaPurchase = normalizeNetwork(network) === 'solana';
+    const walletAddressValid = isSolanaPurchase
+      ? isValidSolanaAddress(walletAddress || '')
+      : ethers.utils.isAddress(walletAddress || '');
+    if (PAYMENT_PROVIDER === 'moonpay' && !walletAddressValid) {
       return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
     }
 
@@ -839,6 +861,25 @@ router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
   } catch (error) {
     console.error('Broadcast error:', error);
     res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction impossible.' });
+  }
+});
+
+// Même principe que /tx/broadcast mais pour Solana : la transaction est
+// signée en local (client) et sérialisée en base64 (voir signSolanaTransferTx
+// dans wallet-final/lib/wallet.js) ; ce backend ne fait que la relayer au
+// RPC Solana. Route distincte car le format de transaction (et le client
+// RPC) n'a rien à voir avec une rawTx EVM.
+router.post('/tx/broadcast-solana', sensitiveLimiter, async (req, res) => {
+  try {
+    const { rawTx } = req.body;
+    if (!rawTx || typeof rawTx !== 'string') {
+      return res.status(400).json({ success: false, error: 'Transaction signée (rawTx) requise.' });
+    }
+    const signature = await solanaConnection.sendRawTransaction(Buffer.from(rawTx, 'base64'));
+    res.json({ success: true, txHash: signature, network: 'solana' });
+  } catch (error) {
+    console.error('Solana broadcast error:', error);
+    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Solana impossible.' });
   }
 });
 

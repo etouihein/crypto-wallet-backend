@@ -6,6 +6,11 @@ if (typeof global.crypto !== 'object') global.crypto = {};
 if (typeof global.crypto.getRandomValues !== 'function') {
   global.crypto.getRandomValues = Crypto.getRandomValues;
 }
+// Requis par bip39/@solana/web3.js (dérivation de l'adresse Solana) : ces
+// libs appellent Buffer.from(...) directement, absent de Hermes/RN/web sans
+// ce polyfill (sinon "ReferenceError: Buffer is not defined").
+import { Buffer } from 'buffer';
+if (typeof global.Buffer === 'undefined') global.Buffer = Buffer;
 import '@ethersproject/shims';
 
 import { registerRootComponent } from 'expo';
