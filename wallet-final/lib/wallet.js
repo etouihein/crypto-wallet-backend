@@ -15,7 +15,10 @@
 const { ethers } = require('ethers');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
-const { Keypair, PublicKey, Connection, SystemProgram, Transaction } = require('@solana/web3.js');
+const {
+  Keypair, PublicKey, Connection, SystemProgram, Transaction,
+  StakeProgram, Authorized, Lockup,
+} = require('@solana/web3.js');
 const { BIP32Factory } = require('bip32');
 const bitcoinEcc = require('@bitcoinerlab/secp256k1');
 const bitcoin = require('bitcoinjs-lib');
@@ -336,8 +339,16 @@ async function waitForTx(txHash, network = 'ethereum', timeoutMs = 120_000) {
 //    récupérer, EVM et Solana.
 const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
 
+// Le RPC public officiel (api.mainnet-beta.solana.com) rejette TOUTE requête
+// portant un header Origin avec 403 "Access forbidden" — vérifié : ça passe
+// sans Origin (Node, curl) mais échoue pour n'importe quel Origin de
+// navigateur (localhost, nexiawallet.pages.dev, autre...). Ça cassait
+// silencieusement le solde SOL ET l'envoi depuis la version web déployée,
+// jamais repéré car les vérifications précédentes utilisaient curl/Node, pas
+// un vrai navigateur. publicnode.com (déjà utilisé pour ETH/BSC/Polygon plus
+// haut) accepte les requêtes cross-origin.
 const SOLANA_RPC_URL = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_SOLANA_RPC_URL)
-  || 'https://api.mainnet-beta.solana.com';
+  || 'https://solana-rpc.publicnode.com';
 
 function getSolanaConnection() {
   return new Connection(SOLANA_RPC_URL, 'confirmed');
@@ -377,6 +388,149 @@ async function signSolanaTransferTx({ mnemonic, to, amountSol }) {
   const { blockhash } = await connection.getLatestBlockhash();
   const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey }).add(
     SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: new PublicKey(to), lamports })
+  );
+  tx.sign(keypair);
+  return { rawTx: tx.serialize().toString('base64') };
+}
+
+// ── Staking natif Solana — délégation à un validateur via le programme Stake
+//    intégré au protocole (pas de protocole tiers type Lido/Marinade : moins
+//    de rendement, mais aucun risque de smart contract supplémentaire, et
+//    reste 100% non-custodial comme le reste du wallet). Cycle de vie d'un
+//    compte de stake : création+délégation -> activation (~1 epoch, 2-3 jours)
+//    -> actif (touche les récompenses) -> désactivation demandée -> désactivé
+//    (~1 epoch) -> retrait possible.
+const STAKE_ACCOUNT_SEED_PREFIX = 'nexia-stake-';
+
+// Les validateurs changent de commission/stake au fil du temps : on interroge
+// le réseau à chaque fois plutôt que de figer une liste en dur (qui finirait
+// par pointer vers un validateur devenu peu fiable sans qu'on s'en rende compte).
+async function getSolanaValidators() {
+  const connection = getSolanaConnection();
+  const { current } = await connection.getVoteAccounts();
+  return current
+    .filter((v) => v.commission <= 10 && v.epochVoteAccount)
+    .sort((a, b) => b.activatedStake - a.activatedStake)
+    .slice(0, 10)
+    .map((v) => ({
+      votePubkey: v.votePubkey,
+      commission: v.commission,
+      activatedStakeSol: v.activatedStake / 1_000_000_000,
+    }));
+}
+
+// Récupère l'état actuel d'une liste de comptes de stake déjà connus (voir
+// `stakePubkey` retourné par createAndDelegateStake ci-dessous, à conserver
+// côté client — App.js les persiste par adresse de wallet). Volontairement
+// PAS un scan "trouve tous les comptes de stake de cette adresse" via
+// getProgramAccounts : cette méthode est désactivée ou très instable sur la
+// plupart des RPC publics/gratuits (vérifié : timeout systématique sur
+// publicnode.com avec un filtre memcmp), alors qu'un getMultipleAccounts sur
+// une liste de pubkeys connus est un appel bien plus léger, supporté partout.
+async function getSolanaStakeAccountsInfo(stakePubkeys) {
+  if (!stakePubkeys?.length) return [];
+  const connection = getSolanaConnection();
+  const pubkeys = stakePubkeys.map((s) => new PublicKey(s));
+  const [accounts, epochInfo] = await Promise.all([
+    connection.getMultipleParsedAccounts(pubkeys),
+    connection.getEpochInfo(),
+  ]);
+
+  return accounts.value
+    .map((account, i) => {
+      if (!account) return null; // compte fermé (déjà entièrement retiré)
+      const info = account.data.parsed?.info;
+      const delegation = info?.stake?.delegation;
+      const lamports = account.lamports;
+      let status = 'inactive';
+      if (delegation) {
+        const activationEpoch = Number(delegation.activationEpoch);
+        const deactivationEpoch = Number(delegation.deactivationEpoch);
+        const maxEpoch = 18446744073709552000; // u64::MAX renvoyé par le RPC quand jamais désactivé
+        if (deactivationEpoch < maxEpoch && epochInfo.epoch > deactivationEpoch) status = 'inactive';
+        else if (deactivationEpoch < maxEpoch) status = 'deactivating';
+        else if (epochInfo.epoch > activationEpoch) status = 'active';
+        else status = 'activating';
+      }
+      return {
+        stakePubkey: stakePubkeys[i],
+        lamports,
+        amountSol: lamports / 1_000_000_000,
+        status,
+        votePubkey: delegation?.voter || null,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Crée le compte de stake ET délègue en une seule transaction (un seul frais
+// réseau, une seule signature) — l'adresse du compte de stake est dérivée
+// déterministiquement de la clé publique + d'un seed unique, donc jamais
+// besoin de la stocker : `getSolanaStakeAccounts` la retrouve toujours via
+// le réseau.
+async function createAndDelegateStake({ mnemonic, votePubkey, amountSol }) {
+  const keypair = solanaKeypairFromMnemonic(mnemonic);
+  const connection = getSolanaConnection();
+  const seed = `${STAKE_ACCOUNT_SEED_PREFIX}${Date.now()}`;
+  const stakePubkey = await PublicKey.createWithSeed(keypair.publicKey, seed, StakeProgram.programId);
+
+  const lamportsToStake = Math.round(parseFloat(amountSol) * 1_000_000_000);
+  const rentExempt = await connection.getMinimumBalanceForRentExemption(StakeProgram.space);
+  const totalLamports = lamportsToStake + rentExempt;
+
+  const currentBalance = await connection.getBalance(keypair.publicKey);
+  if (currentBalance < totalLamports) throw new Error('Fonds SOL insuffisants (montant + réserve de loyer du compte de stake).');
+
+  const createIx = StakeProgram.createAccountWithSeed({
+    fromPubkey: keypair.publicKey,
+    stakePubkey,
+    basePubkey: keypair.publicKey,
+    seed,
+    authorized: new Authorized(keypair.publicKey, keypair.publicKey),
+    lockup: new Lockup(0, 0, PublicKey.default),
+    lamports: totalLamports,
+  });
+  const delegateIx = StakeProgram.delegate({
+    stakePubkey,
+    authorizedPubkey: keypair.publicKey,
+    votePubkey: new PublicKey(votePubkey),
+  });
+
+  const { blockhash } = await connection.getLatestBlockhash();
+  const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey });
+  tx.add(...createIx.instructions, ...delegateIx.instructions);
+  tx.sign(keypair);
+  return { rawTx: tx.serialize().toString('base64'), stakePubkey: stakePubkey.toBase58() };
+}
+
+// Démarre la désactivation (le SOL délégué reste bloqué ~1 epoch de plus
+// avant de pouvoir être retiré — c'est une règle du protocole Solana, pas une
+// contrainte de ce wallet).
+async function deactivateStake({ mnemonic, stakePubkey }) {
+  const keypair = solanaKeypairFromMnemonic(mnemonic);
+  const connection = getSolanaConnection();
+  const { blockhash } = await connection.getLatestBlockhash();
+  const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey }).add(
+    StakeProgram.deactivate({ stakePubkey: new PublicKey(stakePubkey), authorizedPubkey: keypair.publicKey })
+  );
+  tx.sign(keypair);
+  return { rawTx: tx.serialize().toString('base64') };
+}
+
+// Retire la totalité du compte de stake (doit être "inactive", voir
+// getSolanaStakeAccounts) vers le wallet — le compte de stake lui-même est
+// alors fermé automatiquement par le programme.
+async function withdrawStake({ mnemonic, stakePubkey, lamports }) {
+  const keypair = solanaKeypairFromMnemonic(mnemonic);
+  const connection = getSolanaConnection();
+  const { blockhash } = await connection.getLatestBlockhash();
+  const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey }).add(
+    StakeProgram.withdraw({
+      stakePubkey: new PublicKey(stakePubkey),
+      authorizedPubkey: keypair.publicKey,
+      toPubkey: keypair.publicKey,
+      lamports,
+    })
   );
   tx.sign(keypair);
   return { rawTx: tx.serialize().toString('base64') };
@@ -504,6 +658,11 @@ module.exports = {
   isValidSolanaAddress,
   getSolanaBalance,
   signSolanaTransferTx,
+  getSolanaValidators,
+  getSolanaStakeAccountsInfo,
+  createAndDelegateStake,
+  deactivateStake,
+  withdrawStake,
   getBitcoinAddress,
   isValidBitcoinAddress,
   getBitcoinBalance,

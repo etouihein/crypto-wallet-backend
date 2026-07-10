@@ -563,6 +563,32 @@ const saveLocale = async (locale) => {
   try { await AsyncStorage.setItem(LOCALE_KEY, locale); } catch { /* rien à faire */ }
 };
 
+// Comptes de stake Solana connus de cet appareil, par adresse de wallet (EVM,
+// sert d'identifiant de "compte" partout ailleurs dans l'app — voir comptes
+// multiples) : { [walletAddr]: [{ stakePubkey, createdAt }] }. Le réseau reste
+// la source de vérité pour le SOLDE/STATUT de chaque compte (voir
+// getSolanaStakeAccountsInfo dans lib/wallet.js) — ce qu'on stocke ici, c'est
+// juste la LISTE des pubkeys à interroger, pour éviter un scan réseau coûteux
+// (getProgramAccounts, peu fiable sur les RPC publics/gratuits).
+const STAKE_REFS_KEY = 'wallet-pro-stake-refs-v1';
+
+const loadStakeRefs = async (walletAddr) => {
+  try {
+    const raw = await AsyncStorage.getItem(STAKE_REFS_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    return all[walletAddr] || [];
+  } catch { return []; }
+};
+
+const saveStakeRefs = async (walletAddr, refs) => {
+  try {
+    const raw = await AsyncStorage.getItem(STAKE_REFS_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[walletAddr] = refs;
+    await AsyncStorage.setItem(STAKE_REFS_KEY, JSON.stringify(all));
+  } catch { /* rien à faire */ }
+};
+
 // Période affichée sous le solde total de l'accueil (24h / 7j / 30j).
 const BALANCE_PERIOD_KEY = 'wallet-pro-balance-period-v1';
 
@@ -1599,6 +1625,16 @@ export default function App() {
   const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
   const [wcRequestLoading, setWcRequestLoading] = useState(false);
   const [wcRequestError, setWcRequestError]     = useState(null);
+  // Staking natif Solana — voir getSolanaValidators/getSolanaStakeAccounts/
+  // createAndDelegateStake/deactivateStake/withdrawStake dans lib/wallet.js.
+  const [showStaking, setShowStaking]           = useState(false);
+  const [stakeAccounts, setStakeAccounts]       = useState([]);
+  const [stakeAccountsLoading, setStakeAccountsLoading] = useState(false);
+  const [validators, setValidators]             = useState([]);
+  const [selectedValidator, setSelectedValidator] = useState(null);
+  const [stakeAmount, setStakeAmount]           = useState('');
+  const [stakeLoading, setStakeLoading]         = useState(false);
+  const [stakeError, setStakeError]             = useState(null);
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -2462,6 +2498,108 @@ export default function App() {
     try { await walletConnect.disconnectSession(topic); } catch (err) { console.warn('disconnectSession error', err.message); }
     refreshWcSessions();
   }, [refreshWcSessions]);
+
+  // ── Staking natif Solana ──
+  // La liste des comptes de stake connus de cet appareil (par adresse de
+  // wallet, voir STAKE_REFS_KEY) fait foi pour QUELS comptes interroger ;
+  // getSolanaStakeAccountsInfo fait foi pour leur solde/statut ACTUEL. Un
+  // compte disparu du résultat (entièrement retiré) est retiré de la liste
+  // locale au passage, pour ne pas s'accumuler indéfiniment.
+  const loadStakeAccounts = useCallback(async () => {
+    if (!walletAddr) return;
+    setStakeAccountsLoading(true);
+    try {
+      const refs = await loadStakeRefs(walletAddr);
+      const accounts = await localWallet.getSolanaStakeAccountsInfo(refs.map(r => r.stakePubkey));
+      setStakeAccounts(accounts);
+      const stillExisting = new Set(accounts.map(a => a.stakePubkey));
+      const prunedRefs = refs.filter(r => stillExisting.has(r.stakePubkey));
+      if (prunedRefs.length !== refs.length) await saveStakeRefs(walletAddr, prunedRefs);
+    } catch (err) {
+      console.warn('getSolanaStakeAccountsInfo error', err.message);
+    } finally {
+      setStakeAccountsLoading(false);
+    }
+  }, [walletAddr]);
+
+  const openStaking = useCallback(async () => {
+    setShowStaking(true);
+    setStakeError(null);
+    loadStakeAccounts();
+    try {
+      const list = await localWallet.getSolanaValidators();
+      setValidators(list);
+      if (list.length && !selectedValidator) setSelectedValidator(list[0].votePubkey);
+    } catch (err) {
+      console.warn('getSolanaValidators error', err.message);
+    }
+  }, [loadStakeAccounts, selectedValidator]);
+
+  const handleCreateStake = useCallback(async () => {
+    if (!stakeAmount || isNaN(Number(stakeAmount)) || Number(stakeAmount) <= 0) {
+      setStakeError('Entre un montant de SOL valide.');
+      return;
+    }
+    if (!selectedValidator) {
+      setStakeError('Choisis un validateur.');
+      return;
+    }
+    setStakeLoading(true);
+    setStakeError(null);
+    try {
+      const { rawTx, stakePubkey } = await localWallet.createAndDelegateStake({
+        mnemonic: unlockedMnemonic, votePubkey: selectedValidator, amountSol: stakeAmount,
+      });
+      const response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+      if (!response.data?.success) throw new Error(response.data?.error || 'Échec de la mise en stake.');
+      const refs = await loadStakeRefs(walletAddr);
+      await saveStakeRefs(walletAddr, [...refs, { stakePubkey, createdAt: Date.now() }]);
+      showToast('✓ Stake créé — activation sous ~1 epoch (2-3 jours)', 'success');
+      setStakeAmount('');
+      await loadStakeAccounts();
+      await refreshSolanaBalance();
+    } catch (err) {
+      setStakeError(err.message || 'Impossible de créer le stake.');
+    } finally {
+      setStakeLoading(false);
+    }
+  }, [stakeAmount, selectedValidator, unlockedMnemonic, walletAddr, loadStakeAccounts, showToast]);
+
+  const handleDeactivateStake = useCallback((stakePubkey) => {
+    showAlert(
+      'Désactiver ce stake ?',
+      'Le SOL restera bloqué encore ~1 epoch (2-3 jours) avant de pouvoir être retiré.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Désactiver', onPress: async () => {
+            try {
+              const { rawTx } = await localWallet.deactivateStake({ mnemonic: unlockedMnemonic, stakePubkey });
+              const response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+              if (!response.data?.success) throw new Error(response.data?.error || 'Échec de la désactivation.');
+              showToast('✓ Désactivation en cours', 'success');
+              await loadStakeAccounts();
+            } catch (err) {
+              showAlert('Erreur', err.message || 'Impossible de désactiver ce stake.');
+            }
+          },
+        },
+      ]
+    );
+  }, [unlockedMnemonic, loadStakeAccounts, showToast]);
+
+  const handleWithdrawStake = useCallback(async (stakePubkey, lamports) => {
+    try {
+      const { rawTx } = await localWallet.withdrawStake({ mnemonic: unlockedMnemonic, stakePubkey, lamports });
+      const response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+      if (!response.data?.success) throw new Error(response.data?.error || 'Échec du retrait.');
+      showToast('✓ SOL retiré vers ton wallet', 'success');
+      await loadStakeAccounts();
+      await refreshSolanaBalance();
+    } catch (err) {
+      showAlert('Erreur', err.message || 'Impossible de retirer ce stake.');
+    }
+  }, [unlockedMnemonic, loadStakeAccounts, showToast]);
 
   // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
   // sans ça, les marges de chaque côté restent d'un blanc par défaut du
@@ -4087,6 +4225,7 @@ export default function App() {
                 { icon: '↑', label: 'Envoyer',  onPress: () => { setSelectedToken(null); setSendToken(selectedToken); setShowSend(true); } },
                 { icon: '↓', label: 'Recevoir', onPress: () => { setSelectedToken(null); setShowReceive(true); } },
                 { icon: '⇄', label: 'Swap',     onPress: () => { setSelectedToken(null); setSwapFrom(selectedToken); setTab('swap'); } },
+                ...(selectedToken === 'SOL' ? [{ icon: '🌱', label: 'Staker', onPress: () => { setSelectedToken(null); openStaking(); } }] : []),
               ].map(a => (
                 <AnimPressable key={a.label} style={st.detail_action_btn} onPress={a.onPress}>
                   <View style={st.detail_action_icon}>
@@ -5054,6 +5193,89 @@ export default function App() {
       </Modal>
     );
   };
+
+  const renderStaking = () => (
+    <Modal visible={showStaking} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => setShowStaking(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Staking Solana</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 13, marginBottom: 16, lineHeight: 19 }}>
+            Délègue du SOL à un validateur pour toucher des récompenses (~5-7%/an) — staking natif du protocole Solana, pas de protocole tiers. Le SOL délégué reste bloqué environ 1 epoch (2-3 jours) à l'activation et à la désactivation.
+          </Text>
+
+          <Text style={st.form_label}>Mes stakes</Text>
+          {stakeAccountsLoading ? (
+            <ActivityIndicator color={T.gold} style={{ marginVertical: 16 }} />
+          ) : stakeAccounts.length === 0 ? (
+            <Text style={{ color: T.text3, fontSize: 13, marginBottom: 16 }}>Aucun stake pour l'instant.</Text>
+          ) : (
+            stakeAccounts.map(acc => {
+              const statusLabel = {
+                activating: 'Activation en cours', active: 'Actif',
+                deactivating: 'Désactivation en cours', inactive: 'Retirable',
+              }[acc.status];
+              const statusColor = {
+                activating: T.orange, active: T.up, deactivating: T.orange, inactive: T.gold,
+              }[acc.status];
+              return (
+                <View key={acc.stakePubkey} style={[st.settings_row, { justifyContent: 'space-between' }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={st.settings_row_title}>{acc.amountSol.toFixed(4)} SOL</Text>
+                    <Text style={[st.settings_row_sub, { color: statusColor }]}>{statusLabel}</Text>
+                  </View>
+                  {acc.status === 'active' && (
+                    <TouchableOpacity onPress={() => handleDeactivateStake(acc.stakePubkey)} style={st.max_btn}>
+                      <Text style={st.max_btn_txt}>Désactiver</Text>
+                    </TouchableOpacity>
+                  )}
+                  {acc.status === 'inactive' && (
+                    <TouchableOpacity onPress={() => handleWithdrawStake(acc.stakePubkey, acc.lamports)} style={st.max_btn}>
+                      <Text style={st.max_btn_txt}>Retirer</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })
+          )}
+
+          <Text style={[st.form_label, { marginTop: 24 }]}>Nouveau stake</Text>
+          <Text style={{ color: T.text3, fontSize: 12, marginBottom: 8 }}>Validateur (triés par stake total, commission ≤ 10%)</Text>
+          {validators.map(v => (
+            <TouchableOpacity
+              key={v.votePubkey}
+              style={[st.settings_row, selectedValidator === v.votePubkey && st.settings_row_on]}
+              onPress={() => setSelectedValidator(v.votePubkey)}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={st.settings_row_title}>{v.votePubkey.slice(0, 8)}…{v.votePubkey.slice(-6)}</Text>
+                <Text style={st.settings_row_sub}>Commission {v.commission}% • {Math.round(v.activatedStakeSol).toLocaleString()} SOL délégués</Text>
+              </View>
+              {selectedValidator === v.votePubkey && <Text style={{ color: T.gold }}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+
+          <TextInput
+            style={[st.form_input, { marginTop: 16, marginBottom: 10 }]}
+            value={stakeAmount}
+            onChangeText={setStakeAmount}
+            placeholder="Montant en SOL"
+            placeholderTextColor={T.text3}
+            keyboardType="decimal-pad"
+          />
+          {!!stakeError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{stakeError}</Text>}
+          <AnimPressable style={[st.green_btn, { opacity: stakeLoading ? 0.7 : 1 }]} disabled={stakeLoading} onPress={handleCreateStake}>
+            {stakeLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Staker</Text>}
+          </AnimPressable>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
 
   const renderSettings = () => (
     <Modal visible={showSettings} animationType="slide" transparent>
@@ -6028,6 +6250,7 @@ export default function App() {
       {renderWalletConnect()}
       {!!wcProposal && renderWcProposal()}
       {!!wcRequest && renderWcRequest()}
+      {renderStaking()}
       {renderLegal()}
       {renderMnemonicBackup()}
       {renderOnboarding()}
