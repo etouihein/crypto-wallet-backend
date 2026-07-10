@@ -27,6 +27,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
+import * as walletConnect from './lib/walletconnect';
 import { ethers } from 'ethers';
 
 const { width } = Dimensions.get('window');
@@ -1571,6 +1572,16 @@ export default function App() {
   const [addAccountError, setAddAccountError]   = useState(null);
   const [accountRenameFor, setAccountRenameFor] = useState(null); // id du compte en cours de renommage, ou null
   const [accountRenameInput, setAccountRenameInput] = useState('');
+  // WalletConnect (se connecter à des dApps tierces) — voir lib/walletconnect.js.
+  const [showWalletConnect, setShowWalletConnect] = useState(false);
+  const [wcUri, setWcUri]                       = useState('');
+  const [wcConnecting, setWcConnecting]         = useState(false);
+  const [wcError, setWcError]                   = useState(null);
+  const [wcSessions, setWcSessions]             = useState([]);
+  const [wcProposal, setWcProposal]             = useState(null); // proposition de connexion en attente
+  const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
+  const [wcRequestLoading, setWcRequestLoading] = useState(false);
+  const [wcRequestError, setWcRequestError]     = useState(null);
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -2329,6 +2340,105 @@ export default function App() {
     }
   }, [addAccountValue, addAccountType, accounts]);
 
+  // ── WalletConnect (mode wallet : se connecter à des dApps tierces) ──
+  // Toute la logique protocolaire vit dans lib/walletconnect.js ; ici on ne
+  // fait que garder l'UI synchronisée et fournir la clé privée déjà
+  // déverrouillée en mémoire au moment de signer — jamais avant, jamais
+  // stockée ailleurs.
+  const refreshWcSessions = useCallback(async () => {
+    try {
+      const sessions = await walletConnect.getActiveSessions();
+      setWcSessions(sessions);
+    } catch (err) {
+      console.warn('getActiveSessions error', err.message);
+    }
+  }, []);
+
+  // Écoute les propositions/demandes WalletConnect uniquement pendant que le
+  // wallet est déverrouillé (il faut la clé privée en mémoire pour signer) —
+  // se désabonne dès qu'il se reverrouille ou que le compte actif change,
+  // pour ne jamais approuver une demande avec la mauvaise clé.
+  useEffect(() => {
+    if (!isUnlocked || !unlockedPrivateKey || !walletAddr) return undefined;
+    let cleanup;
+    let cancelled = false;
+    walletConnect.subscribeToWalletKitEvents({
+      onSessionProposal: (proposal) => { if (!cancelled) { setWcProposal(proposal); setShowWalletConnect(false); } },
+      onSessionRequest: (request) => { if (!cancelled) setWcRequest(request); },
+      onSessionDelete: () => { if (!cancelled) refreshWcSessions(); },
+    }).then((fn) => { if (cancelled) fn(); else cleanup = fn; })
+      .catch((err) => console.warn('WalletConnect subscribe error', err.message));
+    refreshWcSessions();
+    return () => { cancelled = true; if (cleanup) cleanup(); };
+  }, [isUnlocked, unlockedPrivateKey, walletAddr, refreshWcSessions]);
+
+  const handleWcConnect = useCallback(async (uriOverride) => {
+    const uri = (uriOverride || wcUri).trim();
+    if (!uri) { setWcError('Colle un lien WalletConnect (commence par "wc:").'); return; }
+    setWcConnecting(true);
+    setWcError(null);
+    try {
+      await walletConnect.pairWithUri(uri);
+      setWcUri('');
+    } catch (err) {
+      setWcError(err.message || 'Connexion WalletConnect impossible.');
+    } finally {
+      setWcConnecting(false);
+    }
+  }, [wcUri]);
+
+  const handleWcApproveProposal = useCallback(async () => {
+    if (!wcProposal || !walletAddr) return;
+    try {
+      await walletConnect.approveSessionProposal(wcProposal, walletAddr);
+      showToast('✓ dApp connectée', 'success');
+    } catch (err) {
+      showAlert('Connexion refusée', err.message || 'Cette dApp demande une chaîne non supportée par NexiaWallet.');
+    } finally {
+      setWcProposal(null);
+      refreshWcSessions();
+    }
+  }, [wcProposal, walletAddr, showToast, refreshWcSessions]);
+
+  const handleWcRejectProposal = useCallback(async () => {
+    if (!wcProposal) return;
+    try { await walletConnect.rejectSessionProposal(wcProposal); } catch (err) { console.warn('rejectSessionProposal error', err.message); }
+    setWcProposal(null);
+  }, [wcProposal]);
+
+  const handleWcApproveRequest = useCallback(async () => {
+    if (!wcRequest || !unlockedPrivateKey) return;
+    setWcRequestLoading(true);
+    setWcRequestError(null);
+    try {
+      const { topic, id, params } = wcRequest;
+      const result = await walletConnect.executeSessionRequest(
+        { chainId: params.chainId, method: params.request.method, params: params.request.params },
+        unlockedPrivateKey
+      );
+      await walletConnect.respondToSessionRequest(topic, id, result);
+      showToast('✓ Signé', 'success');
+      setWcRequest(null);
+    } catch (err) {
+      setWcRequestError(err.message || 'Impossible de traiter cette demande.');
+      try { await walletConnect.rejectSessionRequest(wcRequest.topic, wcRequest.id, err.message); } catch { /* rien à faire */ }
+    } finally {
+      setWcRequestLoading(false);
+    }
+  }, [wcRequest, unlockedPrivateKey, showToast]);
+
+  const handleWcRejectRequest = useCallback(async () => {
+    if (!wcRequest) return;
+    try { await walletConnect.rejectSessionRequest(wcRequest.topic, wcRequest.id); } catch { /* rien à faire */ }
+    setWcRequest(null);
+    setWcRequestError(null);
+  }, [wcRequest]);
+
+  const handleWcDisconnect = useCallback(async (topic) => {
+    try { await walletConnect.disconnectSession(topic); } catch (err) { console.warn('disconnectSession error', err.message); }
+    refreshWcSessions();
+  }, [refreshWcSessions]);
+
   // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
   // sans ça, les marges de chaque côté restent d'un blanc par défaut du
   // navigateur au lieu de suivre le thème sombre.
@@ -2452,15 +2562,23 @@ export default function App() {
 
   const handleQrScanned = useCallback(({ data }) => {
     if (!data) return;
+    const trimmed = data.trim();
+    if (trimmed.startsWith('wc:')) {
+      // QR WalletConnect (bouton "Connecter" d'une dApp) — traité comme si
+      // l'utilisateur l'avait collé dans l'écran WalletConnect.
+      setShowQrScanner(false);
+      handleWcConnect(trimmed);
+      return;
+    }
     // Gère une adresse brute 0x... ou un URI "ethereum:0x...".
-    const match = data.match(/0x[a-fA-F0-9]{40}/);
+    const match = trimmed.match(/0x[a-fA-F0-9]{40}/);
     if (match) {
       setSendAddress(match[0]);
       setShowQrScanner(false);
     } else {
       showToast('QR non reconnu', 'error');
     }
-  }, [showToast]);
+  }, [showToast, handleWcConnect]);
 
   const pasteAddressFromClipboard = useCallback(async () => {
     try {
@@ -4765,6 +4883,153 @@ export default function App() {
   // ════════════════════════════════════════════════════════
   //  MODAL: PARAMÈTRES
   // ════════════════════════════════════════════════════════
+  const renderWalletConnect = () => (
+    <Modal visible={showWalletConnect} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Connecter une dApp</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 13, marginBottom: 16, lineHeight: 19 }}>
+            Sur le site ou l'appli de la dApp (Uniswap, OpenSea...), choisis « WalletConnect » puis copie le lien (commence par « wc: ») ou scanne le QR code affiché.
+          </Text>
+          <TextInput
+            style={[st.form_input, { marginBottom: 10, minHeight: 70 }]}
+            value={wcUri}
+            onChangeText={setWcUri}
+            placeholder="wc:..."
+            placeholderTextColor={T.text3}
+            autoCapitalize="none"
+            multiline
+          />
+          {!!wcError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{wcError}</Text>}
+          <AnimPressable
+            style={[st.green_btn, { opacity: wcConnecting ? 0.7 : 1, marginBottom: 10 }]}
+            disabled={wcConnecting}
+            onPress={() => handleWcConnect()}
+          >
+            {wcConnecting ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Connecter</Text>}
+          </AnimPressable>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => { setShowWalletConnect(false); setShowQrScanner(true); }}
+          >
+            <Text style={{ fontSize: 22 }}>📷</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Scanner un QR code</Text>
+              <Text style={st.settings_row_sub}>Utilise la caméra</Text>
+            </View>
+          </AnimPressable>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderWcProposal = () => {
+    const meta = wcProposal?.params?.proposer?.metadata || {};
+    return (
+      <Modal visible={!!wcProposal} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <View style={{ width: 40 }} />
+            <Text style={st.modal_title}>Demande de connexion</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }} contentContainerStyle={{ alignItems: 'center' }}>
+            {meta.icons?.[0] ? (
+              <Image source={{ uri: meta.icons[0] }} style={{ width: 64, height: 64, borderRadius: 14, marginTop: 20, marginBottom: 16 }} />
+            ) : (
+              <Text style={{ fontSize: 48, marginTop: 20, marginBottom: 16 }}>🔗</Text>
+            )}
+            <Text style={[st.settings_row_title, { fontSize: 18, textAlign: 'center' }]}>{meta.name || 'Une dApp'}</Text>
+            <Text style={[st.settings_row_sub, { textAlign: 'center', marginBottom: 20 }]}>{meta.url}</Text>
+            <View style={[st.warning_box, { width: '100%' }]}>
+              <Text style={st.warning_txt}>
+                Cette dApp va pouvoir te demander de signer des messages et des transactions sur Ethereum, BNB Smart Chain et Polygon avec l'adresse {walletAddr.slice(0, 6)}…{walletAddr.slice(-4)}. Rien n'est signé sans ta confirmation explicite à chaque demande.
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', width: '100%', marginTop: 24 }}>
+              <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleWcRejectProposal}>
+                <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
+              </TouchableOpacity>
+              <AnimPressable style={[st.green_btn, { flex: 1 }]} onPress={handleWcApproveProposal}>
+                <Text style={st.green_btn_txt}>Connecter</Text>
+              </AnimPressable>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  const renderWcRequest = () => {
+    const method = wcRequest?.params?.request?.method;
+    const chainId = wcRequest?.params?.chainId;
+    const network = walletConnect.SUPPORTED_EVM_CHAINS[chainId] || 'ethereum';
+    const reqParams = wcRequest?.params?.request?.params || [];
+
+    let title = 'Demande de signature';
+    let detail = null;
+    if (method === 'personal_sign' || method === 'eth_sign') {
+      const hex = method === 'personal_sign' ? reqParams[0] : reqParams[1];
+      let text = hex;
+      try { text = ethers.utils.toUtf8String(hex); } catch { /* reste en hex si pas de l'UTF-8 valide */ }
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>{text}</Text>;
+    } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+      title = 'Signature de données typées';
+      const raw = reqParams[1];
+      detail = <Text style={{ color: T.text3, fontSize: 12 }} numberOfLines={8}>{typeof raw === 'string' ? raw : JSON.stringify(raw)}</Text>;
+    } else if (method === 'eth_sendTransaction') {
+      title = 'Demande de transaction';
+      const tx = reqParams[0] || {};
+      detail = (
+        <View style={{ width: '100%' }}>
+          <Text style={st.settings_row_sub}>Vers</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>{tx.to}</Text>
+          <Text style={st.settings_row_sub}>Montant</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>
+            {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+          </Text>
+          {!!tx.data && tx.data !== '0x' && (
+            <>
+              <Text style={st.settings_row_sub}>Données</Text>
+              <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={3}>{tx.data}</Text>
+            </>
+          )}
+        </View>
+      );
+    }
+
+    return (
+      <Modal visible={!!wcRequest} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <View style={{ width: 40 }} />
+            <Text style={st.modal_title}>{title}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={[st.settings_row_sub, { marginBottom: 10 }]}>Réseau : {network}</Text>
+            <View style={st.alert_form}>{detail}</View>
+            {!!wcRequestError && <Text style={[st.auth_error, { marginTop: 10 }]}>{wcRequestError}</Text>}
+            <View style={{ flexDirection: 'row', marginTop: 24 }}>
+              <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleWcRejectRequest} disabled={wcRequestLoading}>
+                <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
+              </TouchableOpacity>
+              <AnimPressable style={[st.green_btn, { flex: 1, opacity: wcRequestLoading ? 0.7 : 1 }]} onPress={handleWcApproveRequest} disabled={wcRequestLoading}>
+                {wcRequestLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Signer</Text>}
+              </AnimPressable>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   const renderSettings = () => (
     <Modal visible={showSettings} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -4981,6 +5246,34 @@ export default function App() {
                   </View>
                 </AnimPressable>
               )}
+
+              <Text style={[st.settings_section, { marginTop: 24 }]}>🔗 WalletConnect</Text>
+              {wcSessions.map(session => {
+                const meta = session.peer?.metadata || {};
+                return (
+                  <View key={session.topic} style={[st.settings_row, { justifyContent: 'space-between' }]}>
+                    {meta.icons?.[0] ? (
+                      <Image source={{ uri: meta.icons[0] }} style={{ width: 28, height: 28, borderRadius: 6 }} />
+                    ) : (
+                      <Text style={{ fontSize: 22 }}>🔗</Text>
+                    )}
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <Text style={st.settings_row_title}>{meta.name || 'dApp inconnue'}</Text>
+                      <Text style={st.settings_row_sub} numberOfLines={1}>{meta.url || session.topic.slice(0, 12)}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => handleWcDisconnect(session.topic)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+              <AnimPressable style={st.settings_row} onPress={() => { setShowWalletConnect(true); refreshWcSessions(); }}>
+                <Text style={{ fontSize: 22 }}>➕</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Connecter une dApp</Text>
+                  <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
+                </View>
+              </AnimPressable>
 
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
               {!!unlockedMnemonic && (
@@ -5696,6 +5989,9 @@ export default function App() {
       {renderReceive()}
       {renderHistory()}
       {renderSettings()}
+      {renderWalletConnect()}
+      {!!wcProposal && renderWcProposal()}
+      {!!wcRequest && renderWcRequest()}
       {renderLegal()}
       {renderMnemonicBackup()}
       {renderOnboarding()}

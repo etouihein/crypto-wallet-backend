@@ -13,6 +13,17 @@ import { Buffer } from 'buffer';
 if (typeof global.Buffer === 'undefined') global.Buffer = Buffer;
 import '@ethersproject/shims';
 
+// WalletConnect (mode wallet, pour se connecter aux dApps tierces) a besoin
+// de ce shim RN — MAIS il importe lui-même `react-native-get-random-values`,
+// qui sur natif exige un module natif absent d'Expo Go (build de dev requis).
+// Ordre CRITIQUE : en l'important ICI, après le polyfill expo-crypto
+// ci-dessus, son propre garde-fou (`if (typeof global.crypto.getRandomValues
+// !== 'function')`) le trouve déjà défini et ne fait RIEN — on reste sur
+// l'implémentation expo-crypto (Expo Go), sans jamais toucher au module
+// natif. Si ce shim est un jour importé AVANT le bloc expo-crypto ci-dessus,
+// cette protection disparaît et Expo Go plante au démarrage.
+import '@walletconnect/react-native-compat';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';
