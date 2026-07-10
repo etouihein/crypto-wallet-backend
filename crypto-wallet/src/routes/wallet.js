@@ -678,6 +678,42 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
   }
 });
 
+// Galerie NFT (lecture seule) — clé Alchemy côté serveur uniquement, même
+// principe que ZEROX_API_KEY ci-dessus : évite d'exposer une clé liée au
+// compte/quota personnel de Pablo dans le bundle client public (visible par
+// n'importe qui via les DevTools). L'envoi d'un NFT reste 100% côté client
+// (signature locale + POST /tx/broadcast existant, comme un envoi ERC20) —
+// cette route ne fait QUE lire les NFT déjà possédés, aucune clé privée ici.
+router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
+  try {
+    const apiKey = process.env.ALCHEMY_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ success: false, error: 'NFT non configuré (ALCHEMY_API_KEY manquante dans .env).' });
+    }
+    const { address } = req.params;
+    if (!ethers.utils.isAddress(address)) {
+      return res.status(400).json({ success: false, error: 'Adresse invalide.' });
+    }
+    const url = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) {
+      return res.status(400).json({ success: false, error: data?.message || 'Impossible de récupérer les NFT.' });
+    }
+    const nfts = (data.ownedNfts || [])
+      .filter((n) => (n.id?.tokenMetadata?.tokenType || 'ERC721') === 'ERC721')
+      .map((n) => ({
+        contract: n.contract?.address,
+        tokenId: n.id?.tokenId,
+        title: n.title || n.metadata?.name || 'NFT',
+        image: (n.media?.[0]?.gateway || n.metadata?.image || '').replace('ipfs://', 'https://ipfs.io/ipfs/'),
+      }));
+    res.json({ success: true, nfts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, res) => {
   try {
     const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;

@@ -293,6 +293,21 @@ async function signErc20Tx({ privateKey, to, amount, symbol, network = 'ethereum
   return { rawTx };
 }
 
+// ── NFT (ERC721) — la galerie (lecture) passe par le backend (GET
+//    /wallet/nft/owned/:address, clé Alchemy côté serveur) ; l'envoi, lui,
+//    reste 100% local ici, exactement comme un envoi ERC20 classique.
+const ERC721_ABI = ['function safeTransferFrom(address from, address to, uint256 tokenId)'];
+
+async function signNftTransferTx({ privateKey, contractAddress, tokenId, to, network = 'ethereum' }) {
+  if (!ethers.utils.isAddress(to)) throw new Error("L'adresse de destination n'est pas valide.");
+  const wallet = walletFromPrivateKey(privateKey, network);
+  const contract = new ethers.Contract(contractAddress, ERC721_ABI, wallet);
+  const unsignedTx = await contract.populateTransaction.safeTransferFrom(wallet.address, to, tokenId);
+  const populated = await wallet.populateTransaction(unsignedTx);
+  const rawTx = await wallet.signTransaction(populated);
+  return { rawTx };
+}
+
 // ── Swap (agrégateur DEX 0x) — la signature reste ici, en local. Le backend
 //    ne fait QUE fournir un devis chiffré (voir GET /wallet/swap/quote) ; la
 //    transaction qu'il retourne est signée et diffusée exactement comme un
@@ -671,6 +686,7 @@ module.exports = {
   estimateSendFee,
   signNativeTx,
   signErc20Tx,
+  signNftTransferTx,
   signRawTx,
   signApproveTx,
   waitForTx,

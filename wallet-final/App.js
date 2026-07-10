@@ -1635,6 +1635,16 @@ export default function App() {
   const [stakeAmount, setStakeAmount]           = useState('');
   const [stakeLoading, setStakeLoading]         = useState(false);
   const [stakeError, setStakeError]             = useState(null);
+  // Galerie NFT (Ethereum, lecture via le backend — voir GET /wallet/nft/owned,
+  // clé Alchemy côté serveur) — l'envoi reste signé localement (signNftTransferTx).
+  const [showNftGallery, setShowNftGallery]     = useState(false);
+  const [nfts, setNfts]                         = useState([]);
+  const [nftsLoading, setNftsLoading]           = useState(false);
+  const [nftsError, setNftsError]               = useState(null);
+  const [selectedNft, setSelectedNft]           = useState(null);
+  const [nftSendAddress, setNftSendAddress]     = useState('');
+  const [nftSendLoading, setNftSendLoading]     = useState(false);
+  const [nftSendError, setNftSendError]         = useState(null);
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -2601,6 +2611,53 @@ export default function App() {
     }
   }, [unlockedMnemonic, loadStakeAccounts, showToast]);
 
+  // ── Galerie NFT (Ethereum) ──
+  const openNftGallery = useCallback(async () => {
+    setShowNftGallery(true);
+    setSelectedNft(null);
+    setNftsError(null);
+    if (!walletAddr) return;
+    setNftsLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE}/nft/owned/${walletAddr}`, { timeout: 25000, headers: API_HEADERS });
+      if (!response.data?.success) throw new Error(response.data?.error || 'Impossible de récupérer les NFT.');
+      setNfts(response.data.nfts || []);
+    } catch (err) {
+      setNftsError(err.message || 'Impossible de récupérer les NFT.');
+    } finally {
+      setNftsLoading(false);
+    }
+  }, [walletAddr]);
+
+  const handleSendNft = useCallback(async () => {
+    if (!selectedNft) return;
+    if (!ethers.utils.isAddress(nftSendAddress)) {
+      setNftSendError("L'adresse de destination n'est pas valide.");
+      return;
+    }
+    setNftSendLoading(true);
+    setNftSendError(null);
+    try {
+      const { rawTx } = await localWallet.signNftTransferTx({
+        privateKey: unlockedPrivateKey,
+        contractAddress: selectedNft.contract,
+        tokenId: selectedNft.tokenId,
+        to: nftSendAddress,
+        network: 'ethereum',
+      });
+      const response = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: 'ethereum' }, { timeout: 25000, headers: API_HEADERS });
+      if (!response.data?.success) throw new Error(response.data?.error || "Échec de l'envoi du NFT.");
+      showToast('✓ NFT envoyé', 'success');
+      setSelectedNft(null);
+      setNftSendAddress('');
+      setNfts(prev => prev.filter(n => !(n.contract === selectedNft.contract && n.tokenId === selectedNft.tokenId)));
+    } catch (err) {
+      setNftSendError(err.message || "Impossible d'envoyer ce NFT.");
+    } finally {
+      setNftSendLoading(false);
+    }
+  }, [selectedNft, nftSendAddress, unlockedPrivateKey, showToast]);
+
   // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
   // sans ça, les marges de chaque côté restent d'un blanc par défaut du
   // navigateur au lieu de suivre le thème sombre.
@@ -3208,6 +3265,7 @@ export default function App() {
     { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
     { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
+    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: openNftGallery },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
@@ -5277,6 +5335,77 @@ export default function App() {
     </Modal>
   );
 
+  const renderNftGallery = () => (
+    <Modal visible={showNftGallery} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity
+            onPress={() => (selectedNft ? setSelectedNft(null) : setShowNftGallery(false))}
+            style={st.back_btn}
+            accessibilityRole="button"
+            accessibilityLabel="Retour"
+          >
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>{selectedNft ? selectedNft.title : 'Mes NFT'}</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          {selectedNft ? (
+            <View>
+              {!!selectedNft.image && (
+                <Image source={{ uri: selectedNft.image }} style={{ width: '100%', aspectRatio: 1, borderRadius: 16, marginBottom: 16, backgroundColor: T.card2 }} resizeMode="cover" />
+              )}
+              <Text style={st.settings_row_sub}>Contrat</Text>
+              <Text style={{ color: T.text, marginBottom: 10 }}>{selectedNft.contract.slice(0, 10)}…{selectedNft.contract.slice(-8)}</Text>
+              <Text style={st.settings_row_sub}>Token ID</Text>
+              <Text style={{ color: T.text, marginBottom: 20 }}>{ethers.BigNumber.from(selectedNft.tokenId).toString()}</Text>
+
+              <Text style={st.form_label}>Envoyer à</Text>
+              <TextInput
+                style={[st.form_input, { marginBottom: 10 }]}
+                value={nftSendAddress}
+                onChangeText={setNftSendAddress}
+                placeholder="0x..."
+                placeholderTextColor={T.text3}
+                autoCapitalize="none"
+              />
+              {!!nftSendError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{nftSendError}</Text>}
+              <AnimPressable style={[st.green_btn, { opacity: nftSendLoading ? 0.7 : 1 }]} disabled={nftSendLoading} onPress={handleSendNft}>
+                {nftSendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Envoyer le NFT</Text>}
+              </AnimPressable>
+            </View>
+          ) : nftsLoading ? (
+            <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
+          ) : nftsError ? (
+            <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
+          ) : nfts.length === 0 ? (
+            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse (Ethereum).</Text>
+          ) : (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              {nfts.map((n) => (
+                <TouchableOpacity
+                  key={`${n.contract}-${n.tokenId}`}
+                  style={{ width: '48%', marginBottom: 16 }}
+                  onPress={() => { setSelectedNft(n); setNftSendAddress(''); setNftSendError(null); }}
+                >
+                  {n.image ? (
+                    <Image source={{ uri: n.image }} style={{ width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: T.card2 }} resizeMode="cover" />
+                  ) : (
+                    <View style={{ width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: T.card2, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 32 }}>🖼️</Text>
+                    </View>
+                  )}
+                  <Text style={{ color: T.text, fontSize: 12, marginTop: 6 }} numberOfLines={1}>{n.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderSettings = () => (
     <Modal visible={showSettings} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -6251,6 +6380,7 @@ export default function App() {
       {!!wcProposal && renderWcProposal()}
       {!!wcRequest && renderWcRequest()}
       {renderStaking()}
+      {renderNftGallery()}
       {renderLegal()}
       {renderMnemonicBackup()}
       {renderOnboarding()}
