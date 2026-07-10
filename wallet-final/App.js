@@ -282,6 +282,88 @@ const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || `http://${LOCAL_API_HOS
 const APP_API_KEY = process.env.EXPO_PUBLIC_APP_API_KEY || 'wallet-pro-dev-key-2026-7f3a9b2c';
 const API_HEADERS = { 'x-api-key': APP_API_KEY };
 const WALLET_STORAGE_KEY = 'wallet-pro-session-v1';
+// Comptes multiples : la session "active" ci-dessus reste la source de vérité
+// pour tout le code d'unlock/PIN existant (inchangé) ; ces deux clés
+// n'ajoutent qu'une couche par-dessus (liste des comptes + id actif). Un
+// appareil avec un seul wallet (ancien format) est migré vers un tableau à
+// une entrée ("Compte 1") la première fois que initWallet() tourne — voir
+// plus bas — sans jamais recréer ni perdre le wallet existant.
+const WALLET_ACCOUNTS_KEY = 'wallet-pro-accounts-v1';
+const ACTIVE_ACCOUNT_ID_KEY = 'wallet-pro-active-account-v1';
+
+const genAccountId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+const loadAccountsList = async () => {
+  try {
+    const raw = Platform.OS === 'web'
+      ? await AsyncStorage.getItem(WALLET_ACCOUNTS_KEY)
+      : await SecureStore.getItemAsync(WALLET_ACCOUNTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (error) {
+    console.warn('loadAccountsList failed', error);
+    return [];
+  }
+};
+
+const saveAccountsList = async (list) => {
+  try {
+    const serialized = JSON.stringify(list);
+    if (Platform.OS === 'web') {
+      await AsyncStorage.setItem(WALLET_ACCOUNTS_KEY, serialized);
+    } else {
+      await SecureStore.setItemAsync(WALLET_ACCOUNTS_KEY, serialized);
+    }
+  } catch (error) {
+    console.warn('saveAccountsList failed', error);
+  }
+};
+
+const clearAccountsList = async () => {
+  try {
+    if (Platform.OS === 'web') {
+      await AsyncStorage.removeItem(WALLET_ACCOUNTS_KEY);
+    } else {
+      await SecureStore.deleteItemAsync(WALLET_ACCOUNTS_KEY);
+    }
+  } catch (error) {
+    console.warn('clearAccountsList failed', error);
+  }
+};
+
+const loadActiveAccountId = async () => {
+  try {
+    return Platform.OS === 'web'
+      ? await AsyncStorage.getItem(ACTIVE_ACCOUNT_ID_KEY)
+      : await SecureStore.getItemAsync(ACTIVE_ACCOUNT_ID_KEY);
+  } catch (error) {
+    console.warn('loadActiveAccountId failed', error);
+    return null;
+  }
+};
+
+const saveActiveAccountId = async (id) => {
+  try {
+    if (Platform.OS === 'web') {
+      await AsyncStorage.setItem(ACTIVE_ACCOUNT_ID_KEY, id);
+    } else {
+      await SecureStore.setItemAsync(ACTIVE_ACCOUNT_ID_KEY, id);
+    }
+  } catch (error) {
+    console.warn('saveActiveAccountId failed', error);
+  }
+};
+
+const clearActiveAccountId = async () => {
+  try {
+    if (Platform.OS === 'web') {
+      await AsyncStorage.removeItem(ACTIVE_ACCOUNT_ID_KEY);
+    } else {
+      await SecureStore.deleteItemAsync(ACTIVE_ACCOUNT_ID_KEY);
+    }
+  } catch (error) {
+    console.warn('clearActiveAccountId failed', error);
+  }
+};
 
 const saveWalletSession = async (session) => {
   try {
@@ -1478,6 +1560,17 @@ export default function App() {
   const [network, setNetwork]             = useState('ethereum');
   const [walletSession, setWalletSession] = useState(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  // Comptes multiples : `accounts` = tous les wallets connus de cet appareil
+  // (chacun avec son propre keystore chiffré), `activeAccountId` pointe vers
+  // celui actuellement chargé dans `walletSession`/`walletAddr` ci-dessus.
+  const [accounts, setAccounts]                 = useState([]);
+  const [activeAccountId, setActiveAccountId]   = useState(null);
+  const [showAddAccount, setShowAddAccount]     = useState(false);
+  const [addAccountValue, setAddAccountValue]   = useState('');
+  const [addAccountType, setAddAccountType]     = useState('mnemonic');
+  const [addAccountError, setAddAccountError]   = useState(null);
+  const [accountRenameFor, setAccountRenameFor] = useState(null); // id du compte en cours de renommage, ou null
+  const [accountRenameInput, setAccountRenameInput] = useState('');
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -1907,11 +2000,11 @@ export default function App() {
   // l'import ne fait que préparer `pendingWalletForPin` — c'est
   // `finalizePinSetup` (déclenché une fois le PIN choisi et confirmé) qui
   // chiffre et persiste réellement la session.
-  const createWallet = useCallback(async () => {
+  const createWallet = useCallback(async (isNewAccount = false) => {
     try {
       setBackendError(null);
       const created = localWallet.createLocalWallet();
-      setPendingWalletForPin({ address: created.address, privateKey: created.privateKey, mnemonic: created.mnemonic, isImport: false, isMigration: false });
+      setPendingWalletForPin({ address: created.address, privateKey: created.privateKey, mnemonic: created.mnemonic, isImport: false, isMigration: false, isNewAccount });
       setPinCode(''); setPendingPinDigits(''); setPinError(null);
       setPinStage('choose');
       return true;
@@ -1956,6 +2049,27 @@ export default function App() {
         network,
         createdAt: Date.now(),
       };
+
+      // Ajoute/replace l'entrée correspondante dans la liste des comptes :
+      // `accountId` n'est présent que pour la migration d'un ancien wallet en
+      // clair (on garde son id et son label) ; sinon (nouveau wallet, import,
+      // ou "+ Ajouter un compte") on ajoute une nouvelle entrée et on bascule
+      // dessus, comme le reste de cette fonction le fait déjà pour la session.
+      let nextAccounts;
+      let nextActiveId;
+      if (pendingWalletForPin.accountId) {
+        nextAccounts = accounts.map(a => (a.id === pendingWalletForPin.accountId ? { ...a, ...nextSession } : a));
+        nextActiveId = pendingWalletForPin.accountId;
+      } else {
+        const newId = genAccountId();
+        nextAccounts = [...accounts, { id: newId, label: `Compte ${accounts.length + 1}`, ...nextSession }];
+        nextActiveId = newId;
+      }
+      await saveAccountsList(nextAccounts);
+      await saveActiveAccountId(nextActiveId);
+      setAccounts(nextAccounts);
+      setActiveAccountId(nextActiveId);
+
       await saveWalletSession(nextSession);
       setWalletSession(nextSession);
       setWalletAddr(pendingWalletForPin.address);
@@ -1988,7 +2102,7 @@ export default function App() {
     } finally {
       setIsVerifyingPin(false);
     }
-  }, [pendingWalletForPin, network, refreshPortfolio]);
+  }, [pendingWalletForPin, network, refreshPortfolio, accounts]);
 
   // Déverrouillage : déchiffre le keystore stocké avec le PIN saisi. Un
   // mauvais PIN fait simplement échouer le déchiffrement (aucune comparaison
@@ -2019,7 +2133,26 @@ export default function App() {
   const initWallet = useCallback(async () => {
     try {
       setBackendError(null);
-      const saved = await loadWalletSession();
+      let accountsList = await loadAccountsList();
+      let activeId = await loadActiveAccountId();
+
+      if (!accountsList.length) {
+        // Migration transparente : un wallet unique déjà présent (ancien
+        // format, avant l'ajout des comptes multiples) devient "Compte 1" —
+        // aucune donnée recréée ni perdue, juste enveloppée dans le tableau.
+        const legacy = await loadWalletSession();
+        if (legacy?.address) {
+          const migratedId = genAccountId();
+          accountsList = [{ id: migratedId, label: 'Compte 1', ...legacy }];
+          activeId = migratedId;
+          await saveAccountsList(accountsList);
+          await saveActiveAccountId(activeId);
+        }
+      }
+      setAccounts(accountsList);
+      setActiveAccountId(activeId);
+
+      const saved = accountsList.find(a => a.id === activeId) || accountsList[0] || null;
 
       if (saved?.address && saved.encryptedKeystore) {
         // Format sécurisé : on ne déchiffre rien tant que l'utilisateur n'a
@@ -2036,11 +2169,13 @@ export default function App() {
         // Ancien format (clé en clair, d'avant l'ajout du PIN réel) : sanity
         // check puis migration — on redemande un PIN pour re-chiffrer cette
         // session existante, sans rien perdre (pas de recréation forcée).
+        // `accountId` fait pointer finalizePinSetup vers CETTE entrée déjà
+        // créée ci-dessus, au lieu d'en ajouter une nouvelle en double.
         const wallet = localWallet.walletFromPrivateKey(saved.privateKey);
         if (wallet.address !== saved.address) {
           throw new Error('Session locale corrompue (adresse incohérente).');
         }
-        setPendingWalletForPin({ address: saved.address, privateKey: saved.privateKey, mnemonic: saved.mnemonic || null, isImport: true, isMigration: true });
+        setPendingWalletForPin({ address: saved.address, privateKey: saved.privateKey, mnemonic: saved.mnemonic || null, isImport: true, isMigration: true, accountId: saved.id });
         setPinCode(''); setPendingPinDigits(''); setPinError(null);
         setPinStage('choose');
         setWalletCreated(true);
@@ -2062,15 +2197,20 @@ export default function App() {
   // Efface le wallet de cet appareil (clé privée comprise). Irréversible sans
   // la phrase de récupération — d'où la double confirmation appuyée.
   const handleLogout = useCallback(() => {
+    const multi = accounts.length > 1;
     showAlert(
       '⚠️ Déconnexion',
-      'Ça efface le wallet de cet appareil. Sans ta phrase de récupération notée ailleurs, tu ne pourras PAS le récupérer.',
+      multi
+        ? `Ça efface les ${accounts.length} comptes de cet appareil. Sans leurs phrases de récupération notées ailleurs, tu ne pourras PAS les récupérer.`
+        : 'Ça efface le wallet de cet appareil. Sans ta phrase de récupération notée ailleurs, tu ne pourras PAS le récupérer.',
       [
         { text: 'Annuler', style: 'cancel' },
         {
           text: 'Déconnecter',
           onPress: async () => {
             await clearWalletSession();
+            await clearAccountsList();
+            await clearActiveAccountId();
             await clearBiometricPin();
             setBiometricEnabled(false);
             setWalletSession(null);
@@ -2086,12 +2226,108 @@ export default function App() {
             setPendingWalletForPin(null);
             setPendingPinDigits('');
             setPinError(null);
+            setAccounts([]);
+            setActiveAccountId(null);
             setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
           },
         },
       ]
     );
-  }, []);
+  }, [accounts]);
+
+  // Bascule vers un autre compte déjà connu de cet appareil : on charge sa
+  // session (adresse + keystore chiffré) mais on ne déchiffre RIEN — comme au
+  // lancement de l'app, il faut retaper le PIN de CE compte pour le
+  // déverrouiller. `refreshPortfolio`/`solanaAddr`/`bitcoinAddr` se
+  // recalculent tout seuls une fois déverrouillé (dérivés de walletAddr /
+  // unlockedMnemonic, voir plus haut).
+  const switchAccount = useCallback(async (id) => {
+    if (id === activeAccountId) { setShowSettings(false); return; }
+    const target = accounts.find(a => a.id === id);
+    if (!target) return;
+    const session = { address: target.address, encryptedKeystore: target.encryptedKeystore, network: target.network || network, createdAt: target.createdAt };
+    await saveActiveAccountId(id);
+    await saveWalletSession(session);
+    setActiveAccountId(id);
+    setWalletSession(session);
+    setWalletAddr(target.address);
+    setWalletBalance('0');
+    setNetwork(session.network);
+    setUnlockedPrivateKey(null);
+    setUnlockedMnemonic(null);
+    setIsUnlocked(false);
+    setPinCode('');
+    setPinError(null);
+    setHistoryItems(null);
+    setShowSettings(false);
+  }, [accounts, activeAccountId, network]);
+
+  const renameAccount = useCallback(async (id, label) => {
+    const trimmed = (label || '').trim();
+    if (!trimmed) return;
+    const next = accounts.map(a => (a.id === id ? { ...a, label: trimmed } : a));
+    setAccounts(next);
+    await saveAccountsList(next);
+  }, [accounts]);
+
+  // Suppression d'un compte : jamais celui actif (il faut d'abord basculer
+  // ailleurs — évite de supprimer une clé actuellement déchiffrée en
+  // mémoire), jamais le dernier restant (sinon l'appareil se retrouve sans
+  // wallet du tout sans passer par le vrai flux de "Déconnexion").
+  const deleteAccount = useCallback((id) => {
+    if (accounts.length <= 1) return;
+    if (id === activeAccountId) {
+      showAlert('Compte actif', "Bascule d'abord vers un autre compte avant de supprimer celui-ci.");
+      return;
+    }
+    const target = accounts.find(a => a.id === id);
+    showAlert(
+      'Supprimer ce compte ?',
+      `${target?.label || 'Ce compte'} sera retiré de cet appareil. Sans sa phrase de récupération notée ailleurs, il sera perdu définitivement.`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer', style: 'destructive', onPress: async () => {
+            const next = accounts.filter(a => a.id !== id);
+            setAccounts(next);
+            await saveAccountsList(next);
+          },
+        },
+      ]
+    );
+  }, [accounts, activeAccountId]);
+
+  // "+ Ajouter un compte" — deux entrées possibles, toutes deux réutilisent
+  // le flux PIN existant (createWallet/pendingWalletForPin) : la nouvelle
+  // entrée n'est écrite dans `accounts` qu'une fois le PIN confirmé, dans
+  // finalizePinSetup (voir plus haut), exactement comme le tout premier
+  // wallet de l'appareil.
+  const addAccountGenerate = useCallback(() => {
+    setShowAddAccount(false);
+    createWallet(true);
+  }, [createWallet]);
+
+  const addAccountImport = useCallback(() => {
+    try {
+      setAddAccountError(null);
+      if (!addAccountValue.trim()) {
+        setAddAccountError('Entrer une phrase mnémonique ou une clé privée.');
+        return;
+      }
+      const imported = localWallet.importLocalWallet(addAccountValue, addAccountType);
+      if (accounts.some(a => a.address.toLowerCase() === imported.address.toLowerCase())) {
+        setAddAccountError('Ce wallet est déjà un compte sur cet appareil.');
+        return;
+      }
+      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, isImport: true, isMigration: false, isNewAccount: true });
+      setPinCode(''); setPendingPinDigits(''); setPinError(null);
+      setPinStage('choose');
+      setShowAddAccount(false);
+      setAddAccountValue('');
+    } catch (err) {
+      setAddAccountError(err.message || 'Mnémonique ou clé privée invalide.');
+    }
+  }, [addAccountValue, addAccountType, accounts]);
 
   // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
   // sans ça, les marges de chaque côté restent d'un blanc par défaut du
@@ -3207,7 +3443,11 @@ export default function App() {
     const isConfirmStage = pinStage === 'confirm';
     const subtitle = isConfirmStage
       ? 'Ressaisis le même code pour confirmer'
-      : (pendingWalletForPin?.isMigration ? 'Choisis un code pour sécuriser ce wallet' : 'Choisis un code PIN à 6 chiffres');
+      : (pendingWalletForPin?.isMigration
+        ? 'Choisis un code pour sécuriser ce wallet'
+        : pendingWalletForPin?.isNewAccount
+          ? 'Choisis un code PIN pour ce nouveau compte'
+          : 'Choisis un code PIN à 6 chiffres');
     return (
       <SafeAreaView style={st.pin_screen}>
         <StatusBar barStyle="light-content" />
@@ -3244,6 +3484,14 @@ export default function App() {
             </TouchableOpacity>
             <View style={st.pin_key} />
           </View>
+        )}
+        {!!pendingWalletForPin?.isNewAccount && !isVerifyingPin && (
+          <TouchableOpacity
+            onPress={() => { setPinStage(null); setPendingWalletForPin(null); setPinCode(''); setPendingPinDigits(''); setPinError(null); }}
+            style={{ marginTop: 20 }}
+          >
+            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center' }}>Annuler</Text>
+          </TouchableOpacity>
         )}
       </SafeAreaView>
     );
@@ -4637,6 +4885,103 @@ export default function App() {
 
           {!!walletSession && (
             <>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>👤 Comptes</Text>
+              {accounts.map(acc => (
+                <View key={acc.id}>
+                  <AnimPressable
+                    style={[st.settings_row, acc.id === activeAccountId && st.settings_row_on]}
+                    onPress={() => switchAccount(acc.id)}
+                  >
+                    <Text style={{ fontSize: 22 }}>{acc.id === activeAccountId ? '👑' : '👤'}</Text>
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <Text style={st.settings_row_title}>{acc.label}</Text>
+                      <Text style={st.settings_row_sub}>{acc.address.slice(0, 8)}…{acc.address.slice(-6)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => { setAccountRenameFor(acc.id); setAccountRenameInput(acc.label); }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ marginRight: accounts.length > 1 && acc.id !== activeAccountId ? 16 : 0 }}
+                    >
+                      <Text style={{ fontSize: 16 }}>✏️</Text>
+                    </TouchableOpacity>
+                    {accounts.length > 1 && acc.id !== activeAccountId && (
+                      <TouchableOpacity onPress={() => deleteAccount(acc.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </AnimPressable>
+                  {accountRenameFor === acc.id && (
+                    <View style={[st.alert_form, { marginTop: -4, marginBottom: 10 }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TextInput
+                          style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+                          value={accountRenameInput}
+                          onChangeText={setAccountRenameInput}
+                          placeholder="Nom du compte"
+                          placeholderTextColor={T.text3}
+                          maxLength={24}
+                        />
+                        <TouchableOpacity
+                          style={[st.max_btn, { marginBottom: 0 }]}
+                          onPress={() => { renameAccount(acc.id, accountRenameInput); setAccountRenameFor(null); }}
+                        >
+                          <Text style={st.max_btn_txt}>OK</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <TouchableOpacity onPress={() => setAccountRenameFor(null)} style={{ marginTop: 10 }}>
+                        <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))}
+              {showAddAccount ? (
+                <View style={st.alert_form}>
+                  <AnimPressable style={[st.green_btn, { marginBottom: 10 }]} onPress={addAccountGenerate}>
+                    <Text style={st.green_btn_txt}>➕ Générer un nouveau compte</Text>
+                  </AnimPressable>
+                  <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8, textAlign: 'center' }}>— ou importer un wallet existant —</Text>
+                  <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+                    <TouchableOpacity
+                      style={[st.import_type_btn, addAccountType === 'mnemonic' && st.import_type_btn_on, { flex: 1, marginRight: 8 }]}
+                      onPress={() => setAddAccountType('mnemonic')}
+                    >
+                      <Text style={[st.import_type_txt, addAccountType === 'mnemonic' && { color: T.text }]}>Phrase (12 mots)</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[st.import_type_btn, addAccountType === 'privateKey' && st.import_type_btn_on, { flex: 1 }]}
+                      onPress={() => setAddAccountType('privateKey')}
+                    >
+                      <Text style={[st.import_type_txt, addAccountType === 'privateKey' && { color: T.text }]}>Clé privée</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={[st.form_input, { marginBottom: 10 }]}
+                    value={addAccountValue}
+                    onChangeText={setAddAccountValue}
+                    placeholder={addAccountType === 'mnemonic' ? 'mot1 mot2 mot3 ...' : '0x...'}
+                    placeholderTextColor={T.text3}
+                    autoCapitalize="none"
+                    multiline={addAccountType === 'mnemonic'}
+                  />
+                  {!!addAccountError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{addAccountError}</Text>}
+                  <AnimPressable style={st.green_btn} onPress={addAccountImport}>
+                    <Text style={st.green_btn_txt}>Importer</Text>
+                  </AnimPressable>
+                  <TouchableOpacity onPress={() => { setShowAddAccount(false); setAddAccountValue(''); setAddAccountError(null); }} style={{ marginTop: 10 }}>
+                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <AnimPressable style={st.settings_row} onPress={() => setShowAddAccount(true)}>
+                  <Text style={{ fontSize: 22 }}>➕</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Ajouter un compte</Text>
+                    <Text style={st.settings_row_sub}>Générer ou importer un autre wallet</Text>
+                  </View>
+                </AnimPressable>
+              )}
+
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
               {!!unlockedMnemonic && (
                 <AnimPressable
