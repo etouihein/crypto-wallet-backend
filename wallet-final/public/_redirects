@@ -1,0 +1,11 @@
+# Cloudflare Pages (Wrangler) refuses to upload any file whose path contains
+# "node_modules" (hardcoded ignore list, see cloudflare/workers-sdk#3615).
+# Expo's web export places vendor icon fonts (@expo/vector-icons) under
+# assets/node_modules/..., so without this they 404 -> SPA fallback serves
+# index.html instead of the font, and every Ionicons glyph in the app renders
+# blank. The Cloudflare Pages build command copies that folder to
+# assets/vendor/... (a path Wrangler does upload) after `expo export`; this
+# rewrite makes requests for the original (still-referenced-by-the-JS-bundle)
+# node_modules path transparently serve the copy instead. Status 200 = a
+# rewrite (keeps the original URL, serves the new file), not an HTTP redirect.
+/assets/node_modules/*  /assets/vendor/:splat  200

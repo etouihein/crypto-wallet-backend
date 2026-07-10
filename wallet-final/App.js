@@ -6412,13 +6412,6 @@ function AppContent({ themeMode, changeTheme }) {
     { id: 'swap',     icon: 'swap-horizontal',   label: t('nav_swap'), big: true },
   ];
 
-  const liveBar = (
-    <View style={st.live_bar}>
-      <PulseDot color={T.gold} size={7} />
-      <Text style={st.live_bar_txt}>Live • CoinGecko • {currency}</Text>
-    </View>
-  );
-
   // `key={tab}` force un nouveau montage à chaque changement d'onglet, donc
   // FadeInView rejoue son fondu — transition douce plutôt qu'un changement sec.
   const tabContent = (
@@ -6455,13 +6448,11 @@ function AppContent({ themeMode, changeTheme }) {
             </AnimPressable>
           </View>
           <View style={{ flex: 1 }}>
-            {liveBar}
             {tabContent}
           </View>
         </View>
       ) : (
         <>
-          {liveBar}
           {tabContent}
           <View style={st.bottom_nav}>
             {navItems.map(n => (
