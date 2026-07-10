@@ -28,6 +28,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
+import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
 
 const { width } = Dimensions.get('window');
@@ -544,6 +545,22 @@ const loadVibrationEnabled = async () => {
 
 const saveVibrationEnabled = async (enabled) => {
   try { await AsyncStorage.setItem(VIBRATION_ENABLED_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
+// Langue de l'interface (fr/en) — voir lib/i18n.js. Français par défaut
+// (langue d'origine de l'app), persistée dès que l'utilisateur en choisit
+// une autre dans Paramètres.
+const LOCALE_KEY = 'wallet-pro-locale-v1';
+
+const loadLocale = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(LOCALE_KEY);
+    return SUPPORTED_LOCALES.includes(raw) ? raw : 'fr';
+  } catch { return 'fr'; }
+};
+
+const saveLocale = async (locale) => {
+  try { await AsyncStorage.setItem(LOCALE_KEY, locale); } catch { /* rien à faire */ }
 };
 
 // Période affichée sous le solde total de l'accueil (24h / 7j / 30j).
@@ -1608,6 +1625,13 @@ export default function App() {
   const [simAmount, setSimAmount]               = useState('100'); // simulateur "et si le prix x2/x5/x10" sur la landing
   const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [locale, setLocale] = useState('fr');
+  // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
+  // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
+  // français uniquement). Défini ici, tout en haut, pour être utilisable par
+  // n'importe quel callback ou bloc JSX plus bas dans ce composant.
+  const t = useCallback((key, vars) => i18nTranslate(locale, key, vars), [locale]);
+  const changeLocale = useCallback((next) => { setLocale(next); saveLocale(next); }, []);
   const [balancePeriod, setBalancePeriod] = useState('24h');
   const [lastSend, setLastSend]           = useState(null);
   const [tokenUsage, setTokenUsage]       = useState({});
@@ -2461,6 +2485,7 @@ export default function App() {
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
+    loadLocale().then(setLocale);
     loadBalancePeriod().then(setBalancePeriod);
     loadLastSend().then(setLastSend);
     loadTokenUsage().then(setTokenUsage);
@@ -3041,10 +3066,10 @@ export default function App() {
   // raccourci "Répéter" n'apparaît que si un dernier envoi existe sur ce
   // même réseau (adresse/montant/token n'ont de sens que dans ce contexte).
   const QUICK_ACTIONS_BASE = [
-    { id: 'send',    icon: '↑',  label: 'Envoyer',  bg: T.card2, onPress: () => setShowSend(true) },
-    { id: 'buy',     icon: '💳', label: 'Acheter',  bg: T.gold, onPress: () => setShowBuy(true) },
-    { id: 'receive', icon: '+',  label: 'Recevoir', bg: T.card2, onPress: () => setShowReceive(true) },
-    { id: 'history', icon: '🕐', label: 'Activité', bg: T.card2, onPress: () => setShowHistory(true) },
+    { id: 'send',    icon: '↑',  label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
+    { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
+    { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
+    { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
@@ -3560,12 +3585,12 @@ export default function App() {
   if (pinStage === 'choose' || pinStage === 'confirm') {
     const isConfirmStage = pinStage === 'confirm';
     const subtitle = isConfirmStage
-      ? 'Ressaisis le même code pour confirmer'
+      ? t('pin_confirm_title')
       : (pendingWalletForPin?.isMigration
         ? 'Choisis un code pour sécuriser ce wallet'
         : pendingWalletForPin?.isNewAccount
           ? 'Choisis un code PIN pour ce nouveau compte'
-          : 'Choisis un code PIN à 6 chiffres');
+          : t('pin_choose_title'));
     return (
       <SafeAreaView style={st.pin_screen}>
         <StatusBar barStyle="light-content" />
@@ -3885,10 +3910,10 @@ export default function App() {
 
             <View style={st.land_cta_actions}>
               <AnimPressable style={st.land_cta_btn_primary} onPress={createWallet}>
-                <Text style={st.land_cta_btn_primary_txt}>Créer mon wallet</Text>
+                <Text style={st.land_cta_btn_primary_txt}>{t('onboarding_create')}</Text>
               </AnimPressable>
               <AnimPressable style={st.land_cta_btn_ghost} onPress={() => { setImportMode(true); setImportError(null); }}>
-                <Text style={st.land_cta_btn_ghost_txt}>J'ai déjà un wallet</Text>
+                <Text style={st.land_cta_btn_ghost_txt}>{t('onboarding_import')}</Text>
               </AnimPressable>
             </View>
 
@@ -4325,7 +4350,7 @@ export default function App() {
           <TouchableOpacity onPress={() => (sendStep === 'confirm' ? setSendStep('form') : closeSend())} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>{sendStep === 'confirm' ? 'Vérifie et confirme' : 'Envoyer'}</Text>
+          <Text style={st.modal_title}>{sendStep === 'confirm' ? 'Vérifie et confirme' : t('send_title')}</Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -4570,7 +4595,7 @@ export default function App() {
           <TouchableOpacity onPress={() => setShowReceive(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>Recevoir</Text>
+          <Text style={st.modal_title}>{t('receive_title')}</Text>
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', padding: 24 }}>
@@ -4890,7 +4915,7 @@ export default function App() {
           <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>Connecter une dApp</Text>
+          <Text style={st.modal_title}>{t('settings_connect_dapp')}</Text>
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
@@ -5037,11 +5062,11 @@ export default function App() {
           <TouchableOpacity onPress={() => setShowSettings(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>Paramètres</Text>
+          <Text style={st.modal_title}>{t('settings_title')}</Text>
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
-          <Text style={st.settings_section}>💱 Devise</Text>
+          <Text style={st.settings_section}>💱 {t('settings_currency')}</Text>
           {Object.entries(CURRENCIES).map(([code, cur]) => (
             <TouchableOpacity key={code} style={[st.settings_row, currency === code && st.settings_row_on]} onPress={() => setCurrency(code)}>
               <Text style={{ fontSize: 22 }}>{cur.flag}</Text>
@@ -5053,7 +5078,7 @@ export default function App() {
             </TouchableOpacity>
           ))}
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 Réseau</Text>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
           <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('ethereum')}>
             <Text style={{ fontSize: 22 }}>⛓️</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
@@ -5102,7 +5127,7 @@ export default function App() {
             </>
           )}
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 Tokens</Text>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 {t('settings_tokens')}</Text>
           {customTokens.filter(t => t.network === network).map(t => (
             <View key={t.address} style={[st.settings_row, { justifyContent: 'space-between' }]}>
               <View style={{ flex: 1 }}>
@@ -5150,7 +5175,7 @@ export default function App() {
 
           {!!walletSession && (
             <>
-              <Text style={[st.settings_section, { marginTop: 24 }]}>👤 Comptes</Text>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>👤 {t('settings_accounts')}</Text>
               {accounts.map(acc => (
                 <View key={acc.id}>
                   <AnimPressable
@@ -5241,13 +5266,13 @@ export default function App() {
                 <AnimPressable style={st.settings_row} onPress={() => setShowAddAccount(true)}>
                   <Text style={{ fontSize: 22 }}>➕</Text>
                   <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={st.settings_row_title}>Ajouter un compte</Text>
+                    <Text style={st.settings_row_title}>{t('settings_add_account')}</Text>
                     <Text style={st.settings_row_sub}>Générer ou importer un autre wallet</Text>
                   </View>
                 </AnimPressable>
               )}
 
-              <Text style={[st.settings_section, { marginTop: 24 }]}>🔗 WalletConnect</Text>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>🔗 {t('settings_walletconnect')}</Text>
               {wcSessions.map(session => {
                 const meta = session.peer?.metadata || {};
                 return (
@@ -5270,12 +5295,12 @@ export default function App() {
               <AnimPressable style={st.settings_row} onPress={() => { setShowWalletConnect(true); refreshWcSessions(); }}>
                 <Text style={{ fontSize: 22 }}>➕</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={st.settings_row_title}>Connecter une dApp</Text>
+                  <Text style={st.settings_row_title}>{t('settings_connect_dapp')}</Text>
                   <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
                 </View>
               </AnimPressable>
 
-              <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 Sécurité</Text>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
               {!!unlockedMnemonic && (
                 <AnimPressable
                   style={st.settings_row}
@@ -5290,7 +5315,7 @@ export default function App() {
                 >
                   <Text style={{ fontSize: 22 }}>🔑</Text>
                   <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={st.settings_row_title}>Afficher ma phrase de récupération</Text>
+                    <Text style={st.settings_row_title}>{t('settings_show_mnemonic')}</Text>
                     <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
                   </View>
                 </AnimPressable>
@@ -5317,14 +5342,14 @@ export default function App() {
               <AnimPressable style={st.settings_row} onPress={handleLogout}>
                 <Text style={{ fontSize: 22 }}>🚪</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={[st.settings_row_title, { color: T.red }]}>Déconnexion</Text>
-                  <Text style={st.settings_row_sub}>Efface le wallet de cet appareil</Text>
+                  <Text style={[st.settings_row_title, { color: T.red }]}>{t('settings_logout')}</Text>
+                  <Text style={st.settings_row_sub}>{t('settings_logout_sub')}</Text>
                 </View>
               </AnimPressable>
             </>
           )}
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 Actions rapides de l'accueil</Text>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 {t('settings_quick_actions')}</Text>
           {QUICK_ACTIONS_BASE.map(a => {
             const isHidden = hiddenQuickActions.includes(a.id);
             return (
@@ -5339,18 +5364,29 @@ export default function App() {
             );
           })}
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🔔 Notifications</Text>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🔔 {t('settings_notifications')}</Text>
           <AnimPressable
             style={st.settings_row}
             onPress={() => { const next = !vibrationEnabled; setVibrationEnabled(next); saveVibrationEnabled(next); }}
           >
             <Text style={{ fontSize: 22 }}>📳</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Sons et vibrations</Text>
+              <Text style={st.settings_row_title}>{t('settings_sounds_vibrations')}</Text>
               <Text style={st.settings_row_sub}>Alertes de prix, envois et swaps · {vibrationEnabled ? 'Activés' : 'Désactivés'}</Text>
             </View>
             <View style={[st.status_dot, { backgroundColor: vibrationEnabled ? T.gold : T.text3 }]} />
           </AnimPressable>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
+          {SUPPORTED_LOCALES.map(code => (
+            <TouchableOpacity key={code} style={[st.settings_row, locale === code && st.settings_row_on]} onPress={() => changeLocale(code)}>
+              <Text style={{ fontSize: 22 }}>{code === 'fr' ? '🇫🇷' : '🇬🇧'}</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>{code === 'fr' ? 'Français' : 'English'}</Text>
+              </View>
+              {locale === code && <Text style={{ color: T.gold }}>✓</Text>}
+            </TouchableOpacity>
+          ))}
 
           <View style={[st.warning_box, { marginTop: 24 }]}>
             <Text style={st.warning_txt}>
@@ -5358,7 +5394,7 @@ export default function App() {
             </Text>
           </View>
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>📋 Info</Text>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>📋 {t('settings_info')}</Text>
           <View style={st.settings_row}>
             <Text style={{ fontSize: 22 }}>📱</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
@@ -5369,14 +5405,14 @@ export default function App() {
           <AnimPressable style={st.settings_row} onPress={shareApp}>
             <Text style={{ fontSize: 22 }}>📤</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Partager NexiaWallet</Text>
+              <Text style={st.settings_row_title}>{t('settings_share_app')}</Text>
               <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
             </View>
           </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={exportUserData}>
             <Text style={{ fontSize: 22 }}>📦</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Exporter mes données</Text>
+              <Text style={st.settings_row_title}>{t('settings_export_data')}</Text>
               <Text style={st.settings_row_sub}>Favoris, carnet d'adresses, alertes — copiés en JSON</Text>
             </View>
           </AnimPressable>
@@ -5407,7 +5443,7 @@ export default function App() {
             <AnimPressable style={st.settings_row} onPress={() => setShowImportData(true)}>
               <Text style={{ fontSize: 22 }}>📥</Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>Importer mes données</Text>
+                <Text style={st.settings_row_title}>{t('settings_import_data')}</Text>
                 <Text style={st.settings_row_sub}>Depuis un JSON exporté sur un autre appareil</Text>
               </View>
             </AnimPressable>
@@ -5477,7 +5513,7 @@ export default function App() {
             end={{ x: 1, y: 1 }}
             style={st.balance_wrap}
           >
-            <Text style={st.balance_kicker}>Solde total</Text>
+            <Text style={st.balance_kicker}>{t('home_total_balance')}</Text>
             <Text style={st.balance_amount}>{fmt(totalUSD)}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: periodChange >= 0 ? T.up : T.down, fontSize: 14, fontWeight: '600' }}>
@@ -5539,8 +5575,8 @@ export default function App() {
         <TouchableOpacity style={st.favorites_hint} onPress={() => setTab('markets')} activeOpacity={0.8}>
           <Ionicons name="star" size={26} color={T.gold} style={st.favorites_hint_icon} />
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={st.favorites_hint_title}>Épingle tes cryptos préférées</Text>
-            <Text style={st.favorites_hint_desc}>Va dans Marché et appuie sur l'étoile pour les retrouver ici.</Text>
+            <Text style={st.favorites_hint_title}>{t('home_no_favorites_title')}</Text>
+            <Text style={st.favorites_hint_desc}>{t('home_no_favorites_sub')}</Text>
           </View>
         </TouchableOpacity>
       )}
@@ -5580,7 +5616,7 @@ export default function App() {
       )}
 
       <View style={st.section_hdr}>
-        <SectionTitle>Mes Tokens</SectionTitle>
+        <SectionTitle>{t('home_my_tokens')}</SectionTitle>
       </View>
 
       <View style={isWideWeb && st.token_grid}>
@@ -5904,10 +5940,10 @@ export default function App() {
   //  RENDER PRINCIPAL
   // ════════════════════════════════════════════════════════
   const navItems = [
-    { id: 'home',     icon: 'home',              label: 'Accueil'  },
-    { id: 'markets',  icon: 'trending-up',       label: 'Marché'   },
-    { id: 'stats',    icon: 'stats-chart',       label: 'Stats'    },
-    { id: 'swap',     icon: 'swap-horizontal',   label: 'Swap', big: true },
+    { id: 'home',     icon: 'home',              label: t('nav_home')   },
+    { id: 'markets',  icon: 'trending-up',       label: t('nav_market') },
+    { id: 'stats',    icon: 'stats-chart',       label: t('nav_stats')  },
+    { id: 'swap',     icon: 'swap-horizontal',   label: t('nav_swap'), big: true },
   ];
 
   const liveBar = (
@@ -5949,7 +5985,7 @@ export default function App() {
               <View style={{ width: 22, marginRight: 12, alignItems: 'center' }}>
                 <Ionicons name="settings-outline" size={18} color={T.text2} />
               </View>
-              <Text style={st.sidebar_lbl}>Paramètres</Text>
+              <Text style={st.sidebar_lbl}>{t('nav_settings')}</Text>
             </AnimPressable>
           </View>
           <View style={{ flex: 1 }}>
