@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:dev.moonpay.com)"
+      "WebFetch(domain:dev.moonpay.com)",
+      "Bash(node staticexporttest.js)"
     ]
   }
 }

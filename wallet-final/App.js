@@ -8,7 +8,7 @@
  * ✅ Erreurs et fallbacks robustes
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useContext, createContext } from 'react';
 import {
   StyleSheet, Text, View, SafeAreaView, TouchableOpacity,
   TextInput, ScrollView, Dimensions, ActivityIndicator,
@@ -43,7 +43,7 @@ const { width } = Dimensions.get('window');
 // "hausse" conventionnel). `gold` remplace l'ancien rôle de `green` pour
 // tout ce qui est bouton/onglet actif/coche — `up`/`down` sont réservés aux
 // variations de prix et au sens des transactions (reçu/envoyé).
-const T = {
+const DARK_THEME = {
   bg:      '#0a0d13',
   card:    '#0f131b',
   card2:   '#151b26',
@@ -69,7 +69,9 @@ const T = {
   yellow:  '#FFD166',
   purple:  '#8B5CF6',
   // Palette "Nexia" — utilisée uniquement pour la landing page publique
-  // (écran d'accueil avant création/import de wallet).
+  // (écran d'accueil avant création/import de wallet). Volontairement fixe
+  // dans les deux thèmes : effet vitrine dramatique assumé, indépendant du
+  // thème clair/sombre choisi pour le reste de l'app.
   deepBg:  '#05030e',
   violet:  '#7c3aed',
   cyan:    '#22d3ee',
@@ -80,6 +82,55 @@ const T = {
   fontBody:    Platform.select({ web: '"Manrope", -apple-system, "Segoe UI", sans-serif' }),
   fontMono:    Platform.select({ web: '"IBM Plex Mono", "SF Mono", Consolas, monospace', default: 'monospace' }),
 };
+
+// Thème clair "banque privée" : même accent champagne (assombri pour rester
+// lisible sur fond clair) et mêmes rôles sémantiques (up/down/red/blue/
+// orange assombris pour le contraste), fond papier chaud plutôt que blanc pur.
+const LIGHT_THEME = {
+  bg:      '#f7f5f0',
+  card:    '#ffffff',
+  card2:   '#f1efe7',
+  border:  '#e3ddd0',
+  borderSoft: '#ece7db',
+  gold:    '#9c7b3f',
+  goldBg:  'rgba(156, 123, 63, 0.10)',
+  goldLine:'rgba(156, 123, 63, 0.35)',
+  up:      '#4d8f6e',
+  upBg:    'rgba(77, 143, 110, 0.12)',
+  down:    '#b5605f',
+  downBg:  'rgba(181, 96, 95, 0.12)',
+  red:     '#b23b3a',
+  redBg:   'rgba(178, 59, 58, 0.10)',
+  blue:    '#3b6fe0',
+  blueBg:  '#eaf1ff',
+  orange:  '#c9791f',
+  orangeBg:'#fdf1e2',
+  text:    '#1c2129',
+  text2:   '#5b6472',
+  text3:   '#8b93a1',
+
+  yellow:  '#b8860b',
+  purple:  '#6d3fd1',
+  // Palette "Nexia" (landing) — identique au thème sombre, voir commentaire
+  // au-dessus de DARK_THEME.
+  deepBg:  '#05030e',
+  violet:  '#7c3aed',
+  cyan:    '#22d3ee',
+  magenta: '#e879f9',
+  stroke:  'rgba(139,135,168,0.18)',
+
+  fontDisplay: Platform.select({ web: '"Instrument Serif", Georgia, serif' }),
+  fontBody:    Platform.select({ web: '"Manrope", -apple-system, "Segoe UI", sans-serif' }),
+  fontMono:    Platform.select({ web: '"IBM Plex Mono", "SF Mono", Consolas, monospace', default: 'monospace' }),
+};
+
+// Contexte thème : fournit { T, st, cs } déjà résolus pour le thème actif à
+// tout composant de ce fichier, y compris ceux déclarés hors du composant
+// App (CandlestickChart, ToastBanner, etc.) qui n'ont pas accès à l'état
+// React local de App. `st`/`cs` (StyleSheet.create) sont recalculés une
+// seule fois par changement de thème (useMemo côté App), pas à chaque rendu.
+const ThemeContext = createContext({ T: DARK_THEME, st: null, cs: null });
+const useTheme = () => useContext(ThemeContext);
 
 // ═══════════════════════════════════════════════════════════
 //  DEVISES & CRYPTO
@@ -563,6 +614,22 @@ const saveLocale = async (locale) => {
   try { await AsyncStorage.setItem(LOCALE_KEY, locale); } catch { /* rien à faire */ }
 };
 
+// Thème clair/sombre — voir DARK_THEME/LIGHT_THEME tout en haut du fichier.
+// Sombre par défaut (thème d'origine de l'app), persisté dès que
+// l'utilisateur en choisit un autre dans Paramètres.
+const THEME_KEY = 'wallet-pro-theme-v1';
+
+const loadTheme = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(THEME_KEY);
+    return raw === 'light' ? 'light' : 'dark';
+  } catch { return 'dark'; }
+};
+
+const saveTheme = async (mode) => {
+  try { await AsyncStorage.setItem(THEME_KEY, mode); } catch { /* rien à faire */ }
+};
+
 // Comptes de stake Solana connus de cet appareil, par adresse de wallet (EVM,
 // sert d'identifiant de "compte" partout ailleurs dans l'app — voir comptes
 // multiples) : { [walletAddr]: [{ stakePubkey, createdAt }] }. Le réseau reste
@@ -690,6 +757,7 @@ const BLOCKCHAIN_CONFIG = {
 // pas d'écrire <video> en JSX), et jsQR décode chaque frame capturée sur un
 // <canvas> caché. Le natif continue d'utiliser CameraView normalement.
 function WebQrScanner({ onScanned }) {
+  const { T } = useTheme();
   const containerRef = useRef(null);
   const [error, setError] = useState(null);
 
@@ -763,6 +831,7 @@ function WebQrScanner({ onScanned }) {
 }
 
 function QRCodeMock({ address }) {
+  const { T } = useTheme();
   const size = 180;
   return (
     <View style={{ width: size, height: size, backgroundColor: '#FFF', borderRadius: 12, padding: 8, justifyContent: 'center', alignItems: 'center' }}>
@@ -784,6 +853,7 @@ function QRCodeMock({ address }) {
 //  CANDLESTICK CHART
 // ═══════════════════════════════════════════════════════════
 function CandlestickChart({ candles }) {
+  const { T, cs } = useTheme();
   if (!candles || candles.length === 0) {
     return (
       <View style={cs.area}>
@@ -852,16 +922,21 @@ function CandlestickChart({ candles }) {
   );
 }
 
-const cs = StyleSheet.create({
-  area:        { height: 190, width: '100%', marginVertical: 14, position: 'relative', overflow: 'hidden' },
-  grid:        { position: 'absolute', left: 44, right: 0, height: 1, backgroundColor: T.border, zIndex: 0 },
-  price_label: { position: 'absolute', left: 0, width: 42, textAlign: 'right', color: T.text3, fontSize: 9, zIndex: 1, transform: [{ translateY: -5 }] },
-  candles_row: { position: 'absolute', top: 0, bottom: 0, left: 46, right: 4, flexDirection: 'row', alignItems: 'stretch', zIndex: 2 },
-  candle_slot: { flex: 1, height: '100%', paddingHorizontal: 2 },
-  candle_frame:{ position: 'absolute', top: 0, bottom: 0, left: 2, right: 2, alignItems: 'center' },
-  wick:        { width: 1.5, position: 'absolute', zIndex: 1 },
-  body:        { width: '100%', position: 'absolute', zIndex: 2, borderRadius: 1.5, minHeight: 2 },
-});
+// `T` en paramètre (et non la constante du même nom) : ombrage volontaire
+// pour que ce StyleSheet se reconstruise avec les couleurs du thème actif
+// (voir ThemeContext / useMemo côté App) au lieu de figer le thème sombre.
+function buildCs(T) {
+  return StyleSheet.create({
+    area:        { height: 190, width: '100%', marginVertical: 14, position: 'relative', overflow: 'hidden' },
+    grid:        { position: 'absolute', left: 44, right: 0, height: 1, backgroundColor: T.border, zIndex: 0 },
+    price_label: { position: 'absolute', left: 0, width: 42, textAlign: 'right', color: T.text3, fontSize: 9, zIndex: 1, transform: [{ translateY: -5 }] },
+    candles_row: { position: 'absolute', top: 0, bottom: 0, left: 46, right: 4, flexDirection: 'row', alignItems: 'stretch', zIndex: 2 },
+    candle_slot: { flex: 1, height: '100%', paddingHorizontal: 2 },
+    candle_frame:{ position: 'absolute', top: 0, bottom: 0, left: 2, right: 2, alignItems: 'center' },
+    wick:        { width: 1.5, position: 'absolute', zIndex: 1 },
+    body:        { width: '100%', position: 'absolute', zIndex: 2, borderRadius: 1.5, minHeight: 2 },
+  });
+}
 
 // ═══════════════════════════════════════════════════════════
 //  GÉNÉRATION BOUGIES RÉALISTES
@@ -923,6 +998,7 @@ function generateCandlesFromPrice(symbol, price, timeframe, numCandles) {
 //  COMPOSANT LOGO AVEC FALLBACK
 // ═══════════════════════════════════════════════════════════
 function CoinLogo({ logo, icon, size = 44 }) {
+  const { T } = useTheme();
   const [imageError, setImageError] = useState(false);
 
   if (imageError || !logo) {
@@ -996,6 +1072,7 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
 //  LOGO ANIMÉ (halo qui pulse + badge qui respire) — écran d'accueil
 // ═══════════════════════════════════════════════════════════
 function AnimatedLogo({ size = 92, icon = '🛡️' }) {
+  const { T } = useTheme();
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -1044,6 +1121,7 @@ function AnimatedLogo({ size = 92, icon = '🛡️' }) {
 //  prix n'ont pas encore été chargés, au lieu d'une liste vide ou figée.
 // ═══════════════════════════════════════════════════════════
 function SkeletonBlock({ style }) {
+  const { st } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(Animated.sequence([
@@ -1058,6 +1136,7 @@ function SkeletonBlock({ style }) {
 }
 
 function TokenRowSkeleton({ style }) {
+  const { st } = useTheme();
   return (
     <View style={[st.token_row, style, { flexDirection: 'row', alignItems: 'center' }]}>
       <SkeletonBlock style={{ width: 44, height: 44, borderRadius: 22 }} />
@@ -1076,6 +1155,7 @@ function TokenRowSkeleton({ style }) {
 //  par l'appelant (showToast) via un minuteur, pas ici.
 // ═══════════════════════════════════════════════════════════
 function ToastBanner({ toast }) {
+  const { T, st } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!toast) return;
@@ -1111,7 +1191,9 @@ function ToastBanner({ toast }) {
 //  FadeInView (qui ne jouent qu'une fois à l'apparition) — utilisé partout
 //  où le dashboard affiche "Live" (barre du haut, badge LIVE du graphique).
 // ═══════════════════════════════════════════════════════════
-function PulseDot({ color = T.gold, size = 7 }) {
+function PulseDot({ color, size = 7 }) {
+  const { T } = useTheme();
+  const dotColor = color ?? T.gold;
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -1126,9 +1208,9 @@ function PulseDot({ color = T.gold, size = 7 }) {
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <Animated.View style={{
         position: 'absolute', width: size, height: size, borderRadius: size / 2,
-        backgroundColor: color, opacity, transform: [{ scale }],
+        backgroundColor: dotColor, opacity, transform: [{ scale }],
       }} />
-      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />
+      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: dotColor }} />
     </View>
   );
 }
@@ -1141,6 +1223,7 @@ function PulseDot({ color = T.gold, size = 7 }) {
 // avec de simples View% (même technique que CandlestickChart plus haut) —
 // pas besoin d'ajouter une dépendance SVG pour quelques barres.
 function PortfolioSparkline({ points }) {
+  const { T, st } = useTheme();
   if (points.length < 2) return null;
   const values = points.map(p => p.v);
   const lo = Math.min(...values);
@@ -1163,6 +1246,7 @@ function PortfolioSparkline({ points }) {
 // d'un `st.section_hdr` (flexDirection row, justifyContent space-between),
 // donc un éventuel texte "sub" à droite continue de fonctionner sans y toucher.
 function SectionTitle({ children }) {
+  const { st } = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <View style={st.section_tick} />
@@ -1174,6 +1258,7 @@ function SectionTitle({ children }) {
 // Pastille de variation de prix — remplace le texte coloré brut collé au
 // prix par un vrai badge, réutilisé partout où un %24h de token s'affiche.
 function ChangePill({ value }) {
+  const { T, st } = useTheme();
   const pos = (value || 0) >= 0;
   return (
     <View style={[st.change_pill, { backgroundColor: pos ? T.upBg : T.downBg }]}>
@@ -1185,6 +1270,7 @@ function ChangePill({ value }) {
 }
 
 function BalanceGlow() {
+  const { T } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(Animated.sequence([
@@ -1212,6 +1298,7 @@ function BalanceGlow() {
 //  sans WebGL — juste des View/Animated, donc ça tourne aussi sur mobile.
 // ═══════════════════════════════════════════════════════════
 function SecurityOrb({ size = 220 }) {
+  const { T } = useTheme();
   const rot1 = useRef(new Animated.Value(0)).current;
   const rot2 = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
@@ -1288,6 +1375,7 @@ function FadeInView({ children, style, deps = [] }) {
 //  BARRE D'OFFRE EN CIRCULATION (dégradé animé + petite fusée)
 // ═══════════════════════════════════════════════════════════
 function SupplyBar({ circulating, max, color }) {
+  const { T, st } = useTheme();
   const pct = max ? Math.min(100, (circulating / max) * 100) : 100;
   const width = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -1353,6 +1441,7 @@ function OrbitCoin({ angle, radius, size, duration, icon, bg }) {
 }
 
 function OrbitHero() {
+  const { st } = useTheme();
   return (
     <View style={st.land_orbit_wrap}>
       <View style={st.land_orbit_center}><AnimatedLogo size={78} /></View>
@@ -1369,6 +1458,7 @@ function OrbitHero() {
 //  montage, même avant création du wallet) plutôt que des chiffres inventés.
 // ═══════════════════════════════════════════════════════════
 function PriceMarquee({ tokens }) {
+  const { T, st } = useTheme();
   const translateX = useRef(new Animated.Value(0)).current;
   const [trackWidth, setTrackWidth] = useState(0);
   const items = Object.entries(tokens).filter(([, t]) => t.price > 0);
@@ -1413,6 +1503,7 @@ function PriceMarquee({ tokens }) {
 //  LANDING PUBLIQUE — compteur animé (stats)
 // ═══════════════════════════════════════════════════════════
 function CountStat({ value, suffix = '', label, decimals = 0, style }) {
+  const { st } = useTheme();
   const [display, setDisplay] = useState(decimals ? (0).toFixed(decimals) : '0');
   useEffect(() => {
     let raf;
@@ -1443,6 +1534,7 @@ function CountStat({ value, suffix = '', label, decimals = 0, style }) {
 //  référence, sans dépendre de Three.js/WebGL qui ne tourne pas sur mobile).
 // ═══════════════════════════════════════════════════════════
 function FeatureCard({ icon, title, desc, style }) {
+  const { st } = useTheme();
   const [hover, setHover] = useState(null);
   const webHoverProps = Platform.OS === 'web' ? {
     onMouseMove: (e) => {
@@ -1484,6 +1576,7 @@ function FeatureCard({ icon, title, desc, style }) {
 //  champ de points Three.js du fichier de référence, en pur RN Animated).
 // ═══════════════════════════════════════════════════════════
 function StarField({ count = 30 }) {
+  const { T } = useTheme();
   const stars = useMemo(() => Array.from({ length: count }, (_, i) => ({
     id: i,
     left: Math.random() * 100,
@@ -1532,7 +1625,16 @@ function Star({ left, top, size, delay, duration, color }) {
 // ═══════════════════════════════════════════════════════════
 //  APP PRINCIPALE
 // ═══════════════════════════════════════════════════════════
-export default function App() {
+// Composant interne : contient tout l'état/logique de l'app. Séparé de l'App
+// par défaut ci-dessous car cette dernière a plusieurs `return` précoces
+// (PIN, landing publique, app principale...) — un <ThemeContext.Provider>
+// posé seulement autour du DERNIER return ne couvrirait pas les autres.
+// En l'englobant depuis l'extérieur (App -> Provider -> AppContent), tous
+// les early returns d'AppContent héritent du Provider, quel que soit celui
+// qui s'exécute. `themeMode`/`changeTheme` restent au niveau App (state),
+// `T`/`st`/`cs` sont lus ici via useTheme() comme n'importe quel composant.
+function AppContent({ themeMode, changeTheme }) {
+  const { T, st, cs } = useTheme();
   // ── HOOKS - ORDRE STRICT ──
   // Mode "bureau" sur le web : au-delà de ce seuil, l'app quitte la mise en
   // page mobile (colonne unique, plein écran) pour une mise en page de site
@@ -2660,13 +2762,15 @@ export default function App() {
 
   // Sur le web, l'app est limitée à 480px de large (webFrame) et centrée —
   // sans ça, les marges de chaque côté restent d'un blanc par défaut du
-  // navigateur au lieu de suivre le thème sombre.
+  // navigateur au lieu de suivre le thème actif. `T.bg` (pas `T.deepBg`,
+  // réservé à la landing) pour que les marges suivent le thème clair/sombre
+  // choisi, et redéclenché quand `T` change pour basculer en direct.
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
-      document.documentElement.style.backgroundColor = T.deepBg;
-      document.body.style.backgroundColor = T.deepBg;
+      document.documentElement.style.backgroundColor = T.bg;
+      document.body.style.backgroundColor = T.bg;
     }
-  }, []);
+  }, [T]);
 
   useEffect(() => {
     initWallet();
@@ -5739,6 +5843,17 @@ export default function App() {
             </TouchableOpacity>
           ))}
 
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🎨 {t('settings_theme')}</Text>
+          {[['dark', '🌙', t('settings_theme_dark')], ['light', '☀️', t('settings_theme_light')]].map(([mode, icon, label]) => (
+            <TouchableOpacity key={mode} style={[st.settings_row, themeMode === mode && st.settings_row_on]} onPress={() => changeTheme(mode)}>
+              <Text style={{ fontSize: 22 }}>{icon}</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>{label}</Text>
+              </View>
+              {themeMode === mode && <Text style={{ color: T.gold }}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+
           <View style={[st.warning_box, { marginTop: 24 }]}>
             <Text style={st.warning_txt}>
               🛡️ NexiaWallet ne te demandera JAMAIS ta phrase de récupération ou ton code PIN par email, chat ou support. Si on te la demande, c'est une arnaque.
@@ -6317,7 +6432,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={[st.container, isWideWeb && st.container_wide]}>
-      <StatusBar barStyle="light-content" backgroundColor={T.bg} />
+      <StatusBar barStyle={themeMode === 'light' ? 'dark-content' : 'light-content'} backgroundColor={T.bg} />
       {isWideWeb ? (
         <View style={st.desktop_shell}>
           <View style={st.sidebar}>
@@ -6389,6 +6504,24 @@ export default function App() {
   );
 }
 
+// La véritable App par défaut : détient l'état thème (state persistant,
+// voir THEME_KEY/loadTheme/saveTheme plus haut) et englobe TOUT AppContent
+// dans le Provider — voir le commentaire au-dessus de AppContent pour
+// pourquoi ça doit être fait de l'extérieur plutôt qu'avec un seul `return`.
+export default function App() {
+  const [themeMode, setThemeMode] = useState('dark');
+  useEffect(() => { loadTheme().then(setThemeMode); }, []);
+  const T = themeMode === 'light' ? LIGHT_THEME : DARK_THEME;
+  const cs = useMemo(() => buildCs(T), [T]);
+  const st = useMemo(() => buildSt(T), [T]);
+  const changeTheme = useCallback((next) => { setThemeMode(next); saveTheme(next); }, []);
+  return (
+    <ThemeContext.Provider value={{ T, st, cs }}>
+      <AppContent themeMode={themeMode} changeTheme={changeTheme} />
+    </ThemeContext.Provider>
+  );
+}
+
 // ════════════════════════════════════════════════════════
 //  STYLES
 // ════════════════════════════════════════════════════════
@@ -6407,7 +6540,10 @@ const webFrame = Platform.OS === 'web'
   ? { maxWidth: 480, width: '100%', marginLeft: 'auto', marginRight: 'auto', height: '100vh' }
   : {};
 
-const st = StyleSheet.create({
+// `T` en paramètre (et non la constante du même nom) : ombrage volontaire,
+// voir le commentaire équivalent au-dessus de buildCs().
+function buildSt(T) {
+  return StyleSheet.create({
   container:    { flex: 1, backgroundColor: T.bg, ...webFrame },
   // Mode bureau : le shell mobile (480px) laisse place à une vraie mise en
   // page de site — sidebar fixe + contenu large, plus de bottom nav.
@@ -6814,4 +6950,5 @@ const st = StyleSheet.create({
   land_footer_wrap: { marginTop: 40, alignItems: 'center' },
   land_footer_links: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 18, gap: 16 },
   land_footer_link: { color: T.text2, fontSize: 12, textDecorationLine: 'underline' },
-});
+  });
+}
