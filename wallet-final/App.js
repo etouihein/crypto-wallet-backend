@@ -162,10 +162,10 @@ const LEGAL_DOCS = {
     title: "Conditions Générales d'Utilisation",
     updated: '5 juillet 2026',
     body: `1. Objet
-NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille Ethereum/BNB Smart Chain dont les clés privées sont générées, chiffrées et stockées uniquement sur l'appareil de l'utilisateur.
+NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille Ethereum/BNB Smart Chain sans que NexiaWallet ne détienne ou ne contrôle jamais les fonds de l'utilisateur (voir §2 pour le détail du traitement de la clé privée).
 
 2. Nature non-custodiale
-NexiaWallet ne détient, ne stocke et ne transmet jamais la clé privée ou la phrase de récupération de l'utilisateur. Chaque transaction est signée localement sur l'appareil avant d'être relayée au réseau. En conséquence, NexiaWallet n'a techniquement aucun moyen d'accéder aux fonds, de les bloquer ou de les récupérer en cas de perte des identifiants.
+NexiaWallet ne détient et ne contrôle jamais les fonds de l'utilisateur, et ne conserve jamais durablement sa clé privée ou sa phrase de récupération : elles ne sont jamais écrites sur disque ni en base de données. Pour permettre la création, l'import et la signature des transactions, la clé privée transite par le serveur applicatif et y reste en mémoire pendant la durée de la session (expiration automatique sous 24h d'inactivité) — voir la Politique de Confidentialité pour le détail. En conséquence, NexiaWallet ne peut techniquement ni récupérer ni réinitialiser un accès perdu.
 
 3. Responsabilité de l'utilisateur
 L'utilisateur est seul responsable de la conservation de sa phrase de récupération et de son code PIN. Leur perte entraîne la perte définitive et irréversible de l'accès aux fonds. NexiaWallet ne peut en aucun cas restaurer un accès perdu.
@@ -189,10 +189,10 @@ Ces conditions peuvent être mises à jour ; la date de dernière mise à jour f
 NexiaWallet ne demande ni email, ni nom, ni numéro de téléphone pour créer un wallet. Aucun compte utilisateur n'existe côté serveur.
 
 2. Ce qui reste uniquement sur l'appareil
-La clé privée, la phrase de récupération, le code PIN (chiffré), les favoris, le carnet d'adresses récentes et les alertes de prix sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
+Le code PIN (chiffré), les favoris, le carnet d'adresses récentes et les alertes de prix sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
 
 3. Ce qui transite par le serveur
-Le serveur NexiaWallet ne reçoit que des données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces données sont publiques par nature sur une blockchain.
+Lors de la création, de l'import ou de l'envoi d'une transaction, la clé privée transite par le serveur applicatif (protégé par HTTPS) et y est conservée en mémoire vive uniquement — jamais sur disque ni en base de données — associée à un jeton de session propre à chaque wallet, avec expiration automatique après 24h d'inactivité. Le serveur reçoit aussi les données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces dernières sont publiques par nature sur une blockchain.
 
 4. Fournisseurs tiers
 Les prix de marché (CoinGecko), l'historique de transactions (Etherscan) et le paiement par carte (MoonPay) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté.
@@ -207,7 +207,8 @@ Pour toute question sur cette politique, contacter l'éditeur via les informatio
     title: 'Mentions Légales',
     updated: '5 juillet 2026',
     body: `Éditeur du site
-NexiaWallet — application de portefeuille crypto non-custodial.
+NexiaWallet est édité par [NOM PRÉNOM À COMPLÉTER], entrepreneur individuel (micro-entreprise), SIRET [À COMPLÉTER], [ADRESSE À COMPLÉTER].
+Directeur de la publication : [NOM PRÉNOM À COMPLÉTER].
 
 Hébergement
 Backend applicatif hébergé par Railway (railway.app). Application web hébergée par Cloudflare Pages (pages.dev).
@@ -228,7 +229,7 @@ Pour toute question, un formulaire ou une adresse de contact sera ajouté procha
 // moment où l'utilisateur vient de tout mettre en place et est le plus
 // réceptif avant de découvrir l'app par lui-même.
 const ONBOARDING_SLIDES = [
-  { icon: '🔐', title: 'Tes clés, tes cryptos', desc: "Ta clé privée est chiffrée uniquement sur cet appareil. Personne d'autre — pas même nous — n'y a accès." },
+  { icon: '🔐', title: 'Tes clés, tes cryptos', desc: "Ta phrase de récupération est la seule clé de tes fonds. NexiaWallet ne détient jamais tes cryptos et ne peut ni la récupérer ni la réinitialiser si tu la perds." },
   { icon: '📤', title: 'Envoie et reçois', desc: 'Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum et BNB Smart Chain.' },
   { icon: '💳', title: 'Achète et échange', desc: "Achète par carte via MoonPay, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app." },
 ];
@@ -242,7 +243,7 @@ const LANDING_FAQ = [
   },
   {
     q: 'Que veut dire "non-custodial" ?',
-    a: "Ta clé privée est générée et chiffrée uniquement sur ton appareil. NexiaWallet ne la voit, ne la stocke et ne la transmet jamais. C'est l'opposé d'un exchange (Binance, Coinbase...) qui garde tes fonds pour toi.",
+    a: "NexiaWallet ne détient et ne contrôle jamais tes fonds, contrairement à un exchange (Binance, Coinbase...) qui les garde pour toi. Ta clé privée n'est jamais stockée durablement par NexiaWallet — pas sur disque, pas en base de données.",
   },
   {
     q: 'Quels réseaux sont supportés ?',
@@ -4008,7 +4009,7 @@ function AppContent({ themeMode, changeTheme }) {
               <FeatureCard
                 icon="🛡️"
                 title="Tes clés, tes cryptos"
-                desc="Wallet non-custodial : ta clé privée est chiffrée sur ton appareil. Personne d'autre n'y a accès, pas même nous."
+                desc="Wallet non-custodial : NexiaWallet ne détient et ne contrôle jamais tes fonds. Ta phrase de récupération est la seule clé de ton wallet."
                 style={isWideWeb && st.land_feature_card_wide}
               />
               <FeatureCard

@@ -1,21 +1,32 @@
 {
   "expo": {
     "name": "NexiaWallet",
-    "slug": "wallet-final",
+    "slug": "nexiawallet",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "fr.nexiawallet.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "NexiaWallet a besoin de la caméra pour scanner les QR codes d'adresses et de connexion WalletConnect.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "fr.nexiawallet.app",
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -24,6 +35,28 @@
       "lang": "fr",
       "themeColor": "#070A1A",
       "description": "NexiaWallet — portefeuille crypto non-custodial. Tes clés, tes cryptos : génère ou importe un wallet Ethereum et BNB Smart Chain, envoie, reçois et échange en toute sécurité, sans jamais confier tes clés privées."
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6d23ab3f-e2fb-4a6e-a436-51dd09b717ae"
+      }
+    },
+    "owner": "nexiagroupe",
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "NexiaWallet utilise Face ID pour déverrouiller ton wallet sans retaper ton code PIN."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#070A1A"
+        }
+      ]
+    ]
   }
 }
