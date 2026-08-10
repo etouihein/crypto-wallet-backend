@@ -402,7 +402,8 @@ router.post('/create', sensitiveLimiter, async (req, res) => {
       network,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -434,7 +435,8 @@ router.post('/import', sensitiveLimiter, async (req, res) => {
       network,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -453,7 +455,8 @@ router.get('/erc20/balance/:symbol', requireSession, async (req, res) => {
 
     res.json({ success: true, symbol: token.symbol, balance: formatted, network });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -499,7 +502,8 @@ router.get('/market', async (req, res) => {
     const tokens = await fetchCoinGeckoMarket();
     res.json({ success: true, tokens });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -508,7 +512,8 @@ router.get('/coin/:cgId', async (req, res) => {
     const coin = await fetchCoinDetail(req.params.cgId);
     res.json({ success: true, coin });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -518,7 +523,8 @@ router.get('/coin/:cgId/candles', async (req, res) => {
     const candles = await fetchCoinOhlc(req.params.cgId, timeframe);
     res.json({ success: true, candles });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -553,7 +559,8 @@ router.get('/news', async (req, res) => {
     const items = await fetchCryptoNews();
     res.json({ success: true, items });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -636,7 +643,8 @@ router.get('/tx/history', async (req, res) => {
     const items = await fetchTxHistory(address, network, 25);
     res.json({ success: true, items });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -674,7 +682,8 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     }
     res.json({ success: true, quote: data });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -710,7 +719,8 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
       }));
     res.json({ success: true, nfts });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -804,7 +814,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
     res.json({ success: true, provider: 'stripe', url: session.url });
   } catch (error) {
     console.error('Checkout error:', error);
-    res.status(500).json({ success: false, error: error.message || 'Erreur de paiement.' });
+    res.status(500).json({ success: false, error: 'Erreur de paiement.' });
   }
 });
 
@@ -826,7 +836,8 @@ router.get('/info', requireSession, async (req, res) => {
       nativeSymbol: cfg.nativeSymbol,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -847,7 +858,8 @@ router.get('/bsc/info', requireSession, async (req, res) => {
       nativeSymbol: cfg.nativeSymbol,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
 
@@ -886,7 +898,7 @@ async function sendNative(req, res, network = 'ethereum') {
     });
   } catch (error) {
     console.error('Détail erreur Blockchain :', error);
-    res.status(500).json({ success: false, error: error.message || 'Fonds insuffisants ou erreur de communication réseau.' });
+    res.status(500).json({ success: false, error: 'Fonds insuffisants ou erreur de communication réseau.' });
   }
 }
 

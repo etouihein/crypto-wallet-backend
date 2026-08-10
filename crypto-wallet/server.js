@@ -28,6 +28,14 @@ if (ENV === 'production') {
       'puis fixe HTTPS_TERMINATED_BY_PROXY=1 dans .env pour faire taire cet avertissement.'
     );
   }
+  if ((process.env.PAYMENT_PROVIDER || '').toLowerCase() === 'moonpay' && !process.env.MOONPAY_WEBHOOK_KEY) {
+    console.warn(
+      '⚠️  PAYMENT_PROVIDER=moonpay sans MOONPAY_WEBHOOK_KEY en production : ' +
+      'les webhooks MoonPay seront reçus mais jamais vérifiés (aucune confirmation ' +
+      'd\'achat fiable côté serveur). Récupère la clé sur dashboard.moonpay.com > ' +
+      'Developers > Webhooks et fixe MOONPAY_WEBHOOK_KEY dans .env.'
+    );
+  }
 }
 
 // Origines autorisées en CORS. En dev, Expo change souvent de port/IP (web
