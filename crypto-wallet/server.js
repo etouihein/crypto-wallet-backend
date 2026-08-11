@@ -54,13 +54,16 @@ if (ENV === 'production') {
 // marche/historique ne charge, cf. incident du 2026-07-05 ou FRONTEND_URLS
 // ne contenait plus ce domaine et personne ne l'avait remarque car les tests
 // curl sans en-tete Origin passent toujours, meme quand un vrai navigateur
-// serait bloque). nexiawallet.fr (+ www) ajouté le 2026-07-11 en plus du
-// pages.dev d'origine — garder les deux tant que le DNS/rattachement
-// Cloudflare Pages du nouveau domaine n'est pas confirmé stable.
+// serait bloque). nexiawallet.fr (+ www) ajouté le 2026-07-11, nexiawallet.com
+// (+ www) ajouté le 2026-08-12 (nexiawallet.fr bloqué en "client hold" chez
+// le registrar au moment de l'achat de .com) — garder tous tant que le DNS/
+// rattachement Cloudflare Pages de chaque domaine n'est pas confirmé stable.
 const PRODUCTION_ORIGINS = [
   'https://nexiawallet.pages.dev',
   'https://nexiawallet.fr',
   'https://www.nexiawallet.fr',
+  'https://nexiawallet.com',
+  'https://www.nexiawallet.com',
 ];
 const FRONTEND_URLS = (process.env.FRONTEND_URLS || FRONTEND_URL)
   .split(',').map(s => s.trim()).filter(Boolean);
