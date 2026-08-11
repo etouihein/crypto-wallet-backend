@@ -737,6 +737,28 @@ const saveCustomTokens = async (list) => {
   try { await AsyncStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
 
+// Adresses "en observation" (watch-only) : une adresse EVM quelconque (celle
+// de quelqu'un d'autre, ou la sienne sur un exchange) qu'on veut juste
+// pouvoir consulter — solde public via RPC, AUCUNE clé associée. Liste
+// totalement indépendante de WALLET_ACCOUNTS_KEY : jamais sélectionnable
+// comme compte actif, jamais de PIN demandé, jamais d'accès à
+// unlockedPrivateKey/unlockedMnemonic. Stockage en AsyncStorage simple (comme
+// les tokens personnalisés) puisqu'aucun secret n'y transite — seulement des
+// adresses publiques.
+const WATCH_ADDRESSES_KEY = 'wallet-pro-watch-addresses-v1';
+
+const loadWatchAddresses = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(WATCH_ADDRESSES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+
+const saveWatchAddresses = async (list) => {
+  try { await AsyncStorage.setItem(WATCH_ADDRESSES_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
+};
+
 // ═══════════════════════════════════════════════════════════
 //  CONFIGURATION BLOCKCHAIN RÉELLE
 // ═══════════════════════════════════════════════════════════
@@ -1905,6 +1927,17 @@ function AppContent({ themeMode, changeTheme }) {
   const [showAddCustomToken, setShowAddCustomToken] = useState(false);
   const [customTokenAddrInput, setCustomTokenAddrInput] = useState('');
   const [customTokenLoading, setCustomTokenLoading]     = useState(false);
+  // Adresses en observation (watch-only) : liste séparée des comptes réels,
+  // jamais de clé, jamais de PIN — voir loadWatchAddresses ci-dessus.
+  const [watchAddresses, setWatchAddresses]       = useState([]);
+  const [watchAddressesLoaded, setWatchAddressesLoaded] = useState(false);
+  const [watchBalances, setWatchBalances]         = useState({}); // id -> { native, USDT, USDC }
+  const [showAddWatchAddress, setShowAddWatchAddress] = useState(false);
+  const [watchAddrInput, setWatchAddrInput]       = useState('');
+  const [watchLabelInput, setWatchLabelInput]     = useState('');
+  const [watchNetworkInput, setWatchNetworkInput] = useState('ethereum');
+  const [watchAddrError, setWatchAddrError]       = useState(null);
+  const [watchAddrLoading, setWatchAddrLoading]   = useState(false);
   // Fiche "info seule" pour une crypto du Marché qui n'est PAS dans le
   // wallet (pas de solde/envoi possible — juste prix, capitalisation, desc).
   const [selectedMarketCoin, setSelectedMarketCoin] = useState(null);
@@ -2793,6 +2826,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadPortfolioHistory().then(list => { setPortfolioHistory(list); setPortfolioHistoryLoaded(true); });
     loadTxTags().then(setTxTags);
     loadCustomTokens().then(list => { setCustomTokens(list); setCustomTokensLoaded(true); });
+    loadWatchAddresses().then(list => { setWatchAddresses(list); setWatchAddressesLoaded(true); });
   }, []);
 
   useEffect(() => {
@@ -2835,6 +2869,78 @@ function AppContent({ themeMode, changeTheme }) {
 
   const removeCustomToken = useCallback((address) => {
     setCustomTokens(prev => prev.filter(t => t.address !== address));
+  }, []);
+
+  // ── Adresses en observation (watch-only) ──────────────────────
+  // Totalement séparé du wallet réel : ne touche jamais unlockedPrivateKey /
+  // unlockedMnemonic, ne passe jamais par le flux PIN, n'apparaît pas dans le
+  // sélecteur de compte actif. Lecture seule via les mêmes fonctions RPC
+  // publiques que le compte principal (aucune clé requise).
+  useEffect(() => {
+    if (watchAddressesLoaded) saveWatchAddresses(watchAddresses);
+  }, [watchAddresses, watchAddressesLoaded]);
+
+  const refreshWatchAddressBalances = useCallback(async () => {
+    if (!watchAddresses.length) return;
+    await Promise.all(watchAddresses.map(async (w) => {
+      try {
+        const native = await localWallet.getNativeBalance(w.address, w.network);
+        const balances = { native: parseFloat(native) };
+        await Promise.all(['USDT', 'USDC'].map(async (sym) => {
+          try {
+            const bal = await localWallet.getErc20Balance(w.address, sym, w.network);
+            balances[sym] = parseFloat(bal);
+          } catch { /* token non déployé sur ce réseau — ignoré */ }
+        }));
+        setWatchBalances(prev => ({ ...prev, [w.id]: balances }));
+      } catch (err) {
+        console.warn(`refreshWatchAddressBalances(${w.address}) failed`, err.message);
+      }
+    }));
+  }, [watchAddresses]);
+
+  useEffect(() => {
+    if (watchAddressesLoaded) refreshWatchAddressBalances();
+    // Se redéclenche seulement quand la liste change (ajout/suppression), pas
+    // sur watchBalances lui-même (sinon boucle infinie).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchAddressesLoaded, watchAddresses.length]);
+
+  const addWatchAddress = useCallback(() => {
+    const addr = (watchAddrInput || '').trim();
+    setWatchAddrError(null);
+    if (!ethers.utils.isAddress(addr)) {
+      setWatchAddrError('Adresse invalide — vérifie le format (0x...).');
+      return;
+    }
+    if (watchAddresses.some(w => w.address.toLowerCase() === addr.toLowerCase() && w.network === watchNetworkInput)) {
+      setWatchAddrError('Cette adresse est déjà en observation sur ce réseau.');
+      return;
+    }
+    setWatchAddrLoading(true);
+    const entry = {
+      id: genAccountId(),
+      label: (watchLabelInput || '').trim() || `${addr.slice(0, 6)}…${addr.slice(-4)}`,
+      address: addr,
+      network: watchNetworkInput,
+      createdAt: Date.now(),
+    };
+    setWatchAddresses(prev => [...prev, entry]);
+    setWatchAddrLoading(false);
+    setShowAddWatchAddress(false);
+    setWatchAddrInput('');
+    setWatchLabelInput('');
+    setWatchNetworkInput('ethereum');
+    showToast('✓ Adresse ajoutée en observation', 'success');
+  }, [watchAddrInput, watchLabelInput, watchNetworkInput, watchAddresses, showToast]);
+
+  const removeWatchAddress = useCallback((id) => {
+    setWatchAddresses(prev => prev.filter(w => w.id !== id));
+    setWatchBalances(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -5724,6 +5830,87 @@ function AppContent({ themeMode, changeTheme }) {
                   <View style={{ flex: 1, marginLeft: 14 }}>
                     <Text style={st.settings_row_title}>{t('settings_add_account')}</Text>
                     <Text style={st.settings_row_sub}>Générer ou importer un autre wallet</Text>
+                  </View>
+                </AnimPressable>
+              )}
+
+              <Text style={[st.settings_section, { marginTop: 24 }]}>👁️ Adresses en observation</Text>
+              {watchAddresses.map(w => {
+                const wNativeSym = { bsc: 'BNB', polygon: 'MATIC' }[w.network] || 'ETH';
+                const bal = watchBalances[w.id];
+                const usdVal = bal
+                  ? (bal.native || 0) * (tokens[wNativeSym]?.price || 0)
+                    + (bal.USDT || 0) * (tokens.USDT?.price || 0)
+                    + (bal.USDC || 0) * (tokens.USDC?.price || 0)
+                  : 0;
+                const netLabel = NETWORK_INFO[w.network]?.label || w.network;
+                return (
+                  <View key={w.id} style={[st.settings_row, { justifyContent: 'space-between' }]}>
+                    <Text style={{ fontSize: 22 }}>👁️</Text>
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={st.settings_row_title}>{w.label}</Text>
+                        <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
+                      </View>
+                      <Text style={st.settings_row_sub}>
+                        {w.address.slice(0, 6)}…{w.address.slice(-4)} • {netLabel}{bal ? ` • ${fmt(usdVal)}` : ' • …'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeWatchAddress(w.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+              {showAddWatchAddress ? (
+                <View style={st.alert_form}>
+                  <Text style={[st.form_label, { marginBottom: 8 }]}>Adresse à observer (0x...)</Text>
+                  <TextInput
+                    style={[st.form_input, { marginBottom: 10 }]}
+                    value={watchAddrInput}
+                    onChangeText={setWatchAddrInput}
+                    placeholder="0x..."
+                    placeholderTextColor={T.text3}
+                    autoCapitalize="none"
+                  />
+                  <Text style={[st.form_label, { marginBottom: 8 }]}>Nom (optionnel)</Text>
+                  <TextInput
+                    style={[st.form_input, { marginBottom: 10 }]}
+                    value={watchLabelInput}
+                    onChangeText={setWatchLabelInput}
+                    placeholder="Ex : Compte Binance"
+                    placeholderTextColor={T.text3}
+                    maxLength={24}
+                  />
+                  <Text style={[st.form_label, { marginBottom: 8 }]}>Réseau</Text>
+                  <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+                    {['ethereum', 'bsc', 'polygon'].map((net, idx) => (
+                      <TouchableOpacity
+                        key={net}
+                        style={[st.import_type_btn, watchNetworkInput === net && st.import_type_btn_on, { flex: 1, marginRight: idx < 2 ? 8 : 0 }]}
+                        onPress={() => setWatchNetworkInput(net)}
+                      >
+                        <Text style={[st.import_type_txt, watchNetworkInput === net && { color: T.text }]}>{NETWORK_INFO[net].label.split(' ')[0]}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {!!watchAddrError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{watchAddrError}</Text>}
+                  <AnimPressable style={[st.green_btn, { opacity: watchAddrLoading ? 0.7 : 1 }]} disabled={watchAddrLoading} onPress={addWatchAddress}>
+                    {watchAddrLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Ajouter</Text>}
+                  </AnimPressable>
+                  <TouchableOpacity
+                    onPress={() => { setShowAddWatchAddress(false); setWatchAddrInput(''); setWatchLabelInput(''); setWatchAddrError(null); }}
+                    style={{ marginTop: 10 }}
+                  >
+                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <AnimPressable style={st.settings_row} onPress={() => setShowAddWatchAddress(true)}>
+                  <Text style={{ fontSize: 22 }}>➕</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Ajouter une adresse en observation</Text>
+                    <Text style={st.settings_row_sub}>N'importe quelle adresse — lecture seule, aucune clé</Text>
                   </View>
                 </AnimPressable>
               )}
