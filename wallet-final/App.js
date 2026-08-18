@@ -1994,9 +1994,12 @@ function AppContent({ themeMode, changeTheme }) {
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
   const NETWORK_INFO = {
-    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1, explorer: 'https://etherscan.io' },
-    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,  explorer: 'https://bscscan.com' },
-    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137, explorer: 'https://polygonscan.com' },
+    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1,     explorer: 'https://etherscan.io' },
+    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,    explorer: 'https://bscscan.com' },
+    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137,   explorer: 'https://polygonscan.com' },
+    arbitrum: { label: 'Arbitrum One',     network: 'arbitrum', chainId: 42161, explorer: 'https://arbiscan.io' },
+    optimism: { label: 'Optimism',         network: 'optimism', chainId: 10,    explorer: 'https://optimistic.etherscan.io' },
+    base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org' },
   };
   const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
   // Symbole du token natif du réseau actif — recalculé souvent ailleurs
@@ -4655,6 +4658,15 @@ function AppContent({ themeMode, changeTheme }) {
               <TouchableOpacity style={[st.network_chip, network === 'polygon' && st.network_chip_on]} onPress={() => setNetwork('polygon')}>
                 <Text style={[st.network_chip_txt, network === 'polygon' && { color: T.text }]}>Polygon</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'arbitrum' && st.network_chip_on]} onPress={() => setNetwork('arbitrum')}>
+                <Text style={[st.network_chip_txt, network === 'arbitrum' && { color: T.text }]}>Arbitrum</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'optimism' && st.network_chip_on]} onPress={() => setNetwork('optimism')}>
+                <Text style={[st.network_chip_txt, network === 'optimism' && { color: T.text }]}>Optimism</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'base' && st.network_chip_on]} onPress={() => setNetwork('base')}>
+                <Text style={[st.network_chip_txt, network === 'base' && { color: T.text }]}>Base</Text>
+              </TouchableOpacity>
             </View>
 
             {Platform.OS === 'web' && (
@@ -6349,6 +6361,30 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Chain ID: 137 • Mainnet</Text>
             </View>
             {network === 'polygon' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('arbitrum')}>
+            <Text style={{ fontSize: 22 }}>🔵</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Arbitrum One</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 42161 • Mainnet</Text>
+            </View>
+            {network === 'arbitrum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('optimism')}>
+            <Text style={{ fontSize: 22 }}>🔴</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Optimism</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 10 • Mainnet</Text>
+            </View>
+            {network === 'optimism' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('base')}>
+            <Text style={{ fontSize: 22 }}>🔷</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Base</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 8453 • Mainnet</Text>
+            </View>
+            {network === 'base' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
 
           {!!favorites.length && (

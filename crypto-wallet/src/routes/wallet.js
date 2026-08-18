@@ -167,6 +167,23 @@ const NETWORKS = {
     nativeSymbol: 'MATIC',
     rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
   },
+  // Gardé synchronisé à la main avec wallet-final/lib/wallet.js — mêmes
+  // endpoints RPC, vérifiés directement (eth_chainId).
+  arbitrum: {
+    chainId: 42161,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.ARBITRUM_RPC_URL || 'https://arbitrum-one-rpc.publicnode.com',
+  },
+  optimism: {
+    chainId: 10,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.OPTIMISM_RPC_URL || 'https://optimism-rpc.publicnode.com',
+  },
+  base: {
+    chainId: 8453,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.BASE_RPC_URL || 'https://base-rpc.publicnode.com',
+  },
 };
 
 const NETWORK_ALIASES = {
@@ -177,6 +194,9 @@ const NETWORK_ALIASES = {
   bsc: 'bsc',
   polygon: 'polygon',
   matic: 'polygon',
+  arbitrum: 'arbitrum',
+  optimism: 'optimism',
+  base: 'base',
   sepolia: 'sepolia',
   solana: 'solana',
   sol: 'solana',

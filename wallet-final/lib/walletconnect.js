@@ -20,7 +20,7 @@ const { getProvider } = require('./wallet');
 const PROJECT_ID = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID)
   || '55c2aebe65c7efd7a891664b9570c52d';
 
-// Format CAIP-2 ("eip155:<chainId>") des 3 chaînes EVM que ce wallet sait
+// Format CAIP-2 ("eip155:<chainId>") des chaînes EVM que ce wallet sait
 // réellement signer (voir NETWORKS dans wallet.js) — Solana/Bitcoin ne sont
 // pas EVM et utiliseraient un namespace CAIP différent ("solana:...") non
 // géré ici pour l'instant.
@@ -28,6 +28,9 @@ const SUPPORTED_EVM_CHAINS = {
   'eip155:1': 'ethereum',
   'eip155:56': 'bsc',
   'eip155:137': 'polygon',
+  'eip155:42161': 'arbitrum',
+  'eip155:10': 'optimism',
+  'eip155:8453': 'base',
 };
 
 const SUPPORTED_METHODS = ['personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'eth_sendTransaction'];

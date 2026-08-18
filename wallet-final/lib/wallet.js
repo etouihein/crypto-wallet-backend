@@ -43,6 +43,26 @@ const NETWORKS = {
     nativeSymbol: 'MATIC',
     rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_POLYGON_RPC_URL) || 'https://polygon-bor-rpc.publicnode.com',
   },
+  // L2 Ethereum (même token natif ETH) — endpoints RPC vérifiés directement
+  // (eth_chainId retourne bien 0xa4b1/0xa/0x2105) avant ajout. Pas encore de
+  // token ERC20 (USDT/USDC) sur ces réseaux dans ERC20_TOKENS ci-dessous :
+  // une adresse de contrat erronée ferait perdre des fonds à qui envoie —
+  // ajoutés uniquement une fois revérifiés individuellement sur l'explorateur.
+  arbitrum: {
+    chainId: 42161,
+    nativeSymbol: 'ETH',
+    rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_ARBITRUM_RPC_URL) || 'https://arbitrum-one-rpc.publicnode.com',
+  },
+  optimism: {
+    chainId: 10,
+    nativeSymbol: 'ETH',
+    rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_OPTIMISM_RPC_URL) || 'https://optimism-rpc.publicnode.com',
+  },
+  base: {
+    chainId: 8453,
+    nativeSymbol: 'ETH',
+    rpcUrl: (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_BASE_RPC_URL) || 'https://base-rpc.publicnode.com',
+  },
 };
 
 // Adresses vérifiées sur Etherscan/BscScan (voir le plan de migration non-
