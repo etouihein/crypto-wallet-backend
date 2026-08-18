@@ -34,6 +34,7 @@ import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
 import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
+import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
@@ -1756,6 +1757,10 @@ function AppContent({ themeMode, changeTheme }) {
   const [bridgeQuoteLoading, setBridgeQuoteLoading] = useState(false);
   const [bridgeExecuting, setBridgeExecuting]       = useState(false);
   const [bridgeError, setBridgeError]       = useState(null);
+  // Positions DeFi (voir lib/defiPositions.js) — v1 : Lido stETH uniquement.
+  const [showDefiPositions, setShowDefiPositions] = useState(false);
+  const [defiPositionsList, setDefiPositionsList] = useState([]);
+  const [defiPositionsLoading, setDefiPositionsLoading] = useState(false);
   const [walletAddr, setWalletAddr]       = useState('');
   const [walletBalance, setWalletBalance] = useState('0');
   const [backendReady, setBackendReady]   = useState(false);
@@ -2738,6 +2743,17 @@ function AppContent({ themeMode, changeTheme }) {
       network: net, tokenAddress: to, tokenSymbol, spender,
       amount: isNft ? null : known.args[1]?.toString(), isNft, txHash,
     });
+  }, [walletAddr]);
+
+  const refreshDefiPositions = useCallback(async () => {
+    if (!walletAddr) return;
+    setDefiPositionsLoading(true);
+    try {
+      const list = await defiPositions.getDefiPositions(walletAddr);
+      setDefiPositionsList(list);
+    } finally {
+      setDefiPositionsLoading(false);
+    }
   }, [walletAddr]);
 
   const handleRevokeApproval = useCallback(async (entry) => {
@@ -6133,6 +6149,44 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderDefiPositions = () => (
+    <Modal visible={showDefiPositions} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowDefiPositions(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Positions DeFi</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            Contrairement au solde de tes tokens (calculé en direct depuis la blockchain), il n'existe pas d'indexeur
+            multi-protocoles gratuit et sans clé API pour repérer TOUTES tes positions DeFi automatiquement — cette liste
+            ne suit donc pour l'instant que le staking liquide Lido (stETH), vérifié sur le vrai contrat officiel.
+          </Text>
+          {defiPositionsLoading ? (
+            <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
+          ) : defiPositionsList.length === 0 ? (
+            <Text style={st.settings_row_sub}>Aucune position détectée sur ce wallet.</Text>
+          ) : (
+            defiPositionsList.map((pos) => (
+              <View key={pos.id} style={st.settings_row}>
+                <Text style={{ fontSize: 22 }}>{pos.icon}</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>{pos.protocol} — {pos.label}</Text>
+                  <Text style={st.settings_row_sub}>{parseFloat(pos.balance).toFixed(6)} {pos.symbol}</Text>
+                </View>
+                <Text style={{ color: T.text, fontWeight: '700' }}>{fmt(parseFloat(pos.balance) * (tokens.ETH?.price || 0))}</Text>
+              </View>
+            ))
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderBridge = () => {
     const feeCosts = bridgeQuote?.estimate?.feeCosts || [];
     const toAmount = bridgeQuote?.estimate?.toAmount;
@@ -6867,6 +6921,13 @@ function AppContent({ themeMode, changeTheme }) {
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Pont cross-chain</Text>
                   <Text style={st.settings_row_sub}>Transférer de l'ETH entre Ethereum, Arbitrum, Optimism, Base</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowDefiPositions(true); refreshDefiPositions(); }}>
+                <Text style={{ fontSize: 22 }}>🌊</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Positions DeFi</Text>
+                  <Text style={st.settings_row_sub}>Staking Lido (ETH) — plus de protocoles à venir</Text>
                 </View>
               </AnimPressable>
 
@@ -7652,6 +7713,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderSell()}
       {renderRecurringBuy()}
       {renderBridge()}
+      {renderDefiPositions()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
