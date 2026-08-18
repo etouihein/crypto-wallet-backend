@@ -1718,6 +1718,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
+  const [ensResolving, setEnsResolving]   = useState(false);
+  const [ensError, setEnsError]           = useState(null);
   const [sendAmount, setSendAmount]       = useState('');
   const [sendAmountMode, setSendAmountMode] = useState('crypto'); // 'crypto' | 'fiat' — sendAmount (en crypto) reste la seule source de vérité pour l'envoi
   const [sendAmountFiatInput, setSendAmountFiatInput] = useState('');
@@ -4024,6 +4026,36 @@ function AppContent({ themeMode, changeTheme }) {
     }
   };
 
+  // Résolution ENS ("pablo.eth" -> 0x...) — le registre ENS ne vit que sur
+  // Ethereum mainnet, quel que soit le réseau actif d'envoi (BSC/Polygon/L2),
+  // donc toujours interroger localWallet.getProvider('ethereum'), jamais
+  // `network`. Dès la résolution réussie, remplace directement le champ par
+  // l'adresse 0x résolue : tout le reste du flux d'envoi (vérification anti
+  // address-poisoning, écran de confirmation, signature) travaille alors
+  // sur une adresse 0x normale sans rien à changer ailleurs.
+  useEffect(() => {
+    if (!/\.eth$/i.test((sendAddress || '').trim())) { setEnsError(null); return; }
+    const name = sendAddress.trim();
+    let cancelled = false;
+    setEnsResolving(true);
+    setEnsError(null);
+    const timer = setTimeout(() => {
+      localWallet.getProvider('ethereum').resolveName(name)
+        .then((resolved) => {
+          if (cancelled) return;
+          if (resolved) {
+            setSendAddress(resolved);
+            showToast(`✓ ${name} → ${resolved.slice(0, 6)}…${resolved.slice(-4)}`, 'success');
+          } else {
+            setEnsError(`Aucune adresse trouvée pour ${name}.`);
+          }
+        })
+        .catch(() => { if (!cancelled) setEnsError(`Impossible de résoudre ${name}.`); })
+        .finally(() => { if (!cancelled) setEnsResolving(false); });
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [sendAddress, showToast]);
+
   // ── ENVOI SÉCURISÉ (Validation sur réseau réel) ──
   // Étape 1 : valide et bascule vers l'écran "relis avant d'envoyer" — rien
   // n'est signé ni diffusé ici, juste une estimation des frais pour que
@@ -5273,7 +5305,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={st.form_label}>{{ SOL: 'Adresse Solana', BTC: 'Adresse Bitcoin' }[sendToken] || 'Adresse (0x...)'}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
-                placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc'} placeholderTextColor={T.text3} autoCapitalize="none" />
+                placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc ou nom.eth'} placeholderTextColor={T.text3} autoCapitalize="none" />
               {Platform.OS === 'web' && (
                 <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
                   <Text style={{ fontSize: 18 }}>📋</Text>
@@ -5283,6 +5315,8 @@ function AppContent({ themeMode, changeTheme }) {
                 <Text style={{ fontSize: 18 }}>📷</Text>
               </TouchableOpacity>
             </View>
+            {ensResolving && <Text style={[st.settings_row_sub, { marginTop: 6 }]}>Résolution ENS…</Text>}
+            {!!ensError && <Text style={[st.auth_error, { marginTop: 6 }]}>{ensError}</Text>}
             <View style={{ height: 16 }} />
 
             {!!recentAddresses.length && (
