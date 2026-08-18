@@ -656,6 +656,24 @@ const saveHideZeroBalances = async (enabled) => {
   try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
 };
 
+// Parrainage : code de qui a invité cet appareil, capté une seule fois (à la
+// toute première installation) depuis le lien ?ref=XXXXXXXX partagé — voir
+// shareReferralLink. Purement informatif tant qu'aucun système de récompense
+// n'existe côté backend ; stocké pour être prêt le jour où il en existera un.
+const REFERRED_BY_KEY = 'wallet-pro-referred-by-v1';
+
+const saveReferredBy = async (code) => {
+  try {
+    const existing = await AsyncStorage.getItem(REFERRED_BY_KEY);
+    if (existing) return; // ne jamais écraser la toute première attribution
+    await AsyncStorage.setItem(REFERRED_BY_KEY, code);
+  } catch { /* rien à faire */ }
+};
+
+const loadReferredBy = async () => {
+  try { return await AsyncStorage.getItem(REFERRED_BY_KEY); } catch { return null; }
+};
+
 // Mode hors-ligne : dernier solde connu mis en cache par adresse, affiché
 // immédiatement au démarrage (avant même la première requête RPC) et
 // réutilisé si le réseau tombe — toujours étiqueté comme "dernières données
@@ -1941,6 +1959,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [hideZeroBalances, setHideZeroBalances] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [portfolioIsCached, setPortfolioIsCached] = useState(false); // true tant qu'on affiche le cache, pas un solde fraîchement récupéré
+  const [showReferral, setShowReferral] = useState(false);
+  const [referredByCode, setReferredByCode] = useState(null);
   const [locale, setLocale] = useState('fr');
   // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
   // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
@@ -2012,6 +2032,24 @@ function AppContent({ themeMode, changeTheme }) {
       await copyToClipboard(shareUrl, 'Lien copié dans le presse-papiers');
     }
   }, [copyToClipboard]);
+
+  // Code de parrainage : dérivé directement de l'adresse (pas besoin de le
+  // générer/stocker séparément — stable tant que l'adresse ne change pas).
+  // Honnête sur le périmètre : aucun système de récompense n'existe côté
+  // backend pour l'instant, juste un lien traçable prêt à en recevoir un
+  // plus tard (voir referredByCode ci-dessous, capté si présent dans l'URL).
+  const referralCode = walletAddr ? walletAddr.slice(2, 10).toUpperCase() : null;
+
+  const shareReferralLink = useCallback(async () => {
+    if (!referralCode) return;
+    const shareUrl = `https://nexiawallet.fr?ref=${referralCode}`;
+    const message = `Rejoins-moi sur NexiaWallet, mon portefeuille crypto non-custodial préféré : ${shareUrl}`;
+    try {
+      await Share.share({ title: 'NexiaWallet', message, url: shareUrl });
+    } catch {
+      await copyToClipboard(shareUrl, 'Lien de parrainage copié');
+    }
+  }, [referralCode, copyToClipboard]);
 
   // Bip succès/échec via Web Audio API — web uniquement. Sur natif, la
   // vibration déjà en place (voir toggle "Sons et vibrations" dans
@@ -3319,6 +3357,26 @@ function AppContent({ themeMode, changeTheme }) {
     });
     return () => unsubscribe();
   }, [walletAddr, network, refreshPortfolio]);
+
+  // Capture ?ref=CODE dans l'URL (partagé via shareReferralLink) à la toute
+  // première ouverture — Linking.getInitialURL() couvre aussi les deep links
+  // natifs (nexiawallet://?ref=CODE), pas seulement le web.
+  useEffect(() => {
+    // Ne remplace l'état que si un code a réellement déjà été persisté —
+    // sinon cette résolution asynchrone (lue avant que la capture ci-dessous
+    // n'ait fini d'écrire) écrase avec `null` le code tout juste capturé.
+    loadReferredBy().then((saved) => { if (saved) setReferredByCode(saved); });
+    const captureRef = (url) => {
+      if (!url) return;
+      const match = url.match(/[?&]ref=([A-Za-z0-9]+)/);
+      if (match) { saveReferredBy(match[1]); setReferredByCode(prev => prev || match[1]); }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      captureRef(window.location.href);
+    } else {
+      Linking.getInitialURL().then(captureRef).catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     recurringBuy.getConfig().then(cfg => {
@@ -6515,6 +6573,49 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderReferral = () => (
+    <Modal visible={showReferral} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowReferral(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Programme de parrainage</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 20, lineHeight: 18 }}>
+            Partage ton code avec des proches. Il n'y a pas encore de récompense automatique en place — juste un moyen
+            simple de leur faire découvrir NexiaWallet, prêt à en recevoir une plus tard.
+          </Text>
+
+          <Text style={st.form_label}>Ton code</Text>
+          <View style={st.receive_addr_box}>
+            <Text style={[st.receive_addr, { textAlign: 'center', letterSpacing: 2 }]} selectable>{referralCode || '—'}</Text>
+          </View>
+
+          <AnimPressable style={[st.green_btn, { marginTop: 16 }]} onPress={shareReferralLink} disabled={!referralCode}>
+            <Text style={st.green_btn_txt}>📤 Partager mon lien</Text>
+          </AnimPressable>
+          <AnimPressable
+            style={[st.green_btn, { marginTop: 10, backgroundColor: T.card2 }]}
+            onPress={() => referralCode && copyToClipboard(`https://nexiawallet.fr?ref=${referralCode}`, 'Lien copié')}
+            disabled={!referralCode}
+          >
+            <Text style={[st.green_btn_txt, { color: T.text }]}>📋 Copier le lien</Text>
+          </AnimPressable>
+
+          {!!referredByCode && (
+            <View style={[st.send_info_box, { marginTop: 24 }]}>
+              <Text style={st.send_info_line}>Tu as installé NexiaWallet via le code {referredByCode}.</Text>
+            </View>
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderDuressSetup = () => (
     <Modal visible={showDuressSetup} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -7411,6 +7512,13 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
             </View>
           </AnimPressable>
+          <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowReferral(true); }}>
+            <Text style={{ fontSize: 22 }}>🎁</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Programme de parrainage</Text>
+              <Text style={st.settings_row_sub}>Ton code personnel à partager</Text>
+            </View>
+          </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={exportUserData}>
             <Text style={{ fontSize: 22 }}>📦</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
@@ -8110,6 +8218,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderDuressSetup()}
       {renderBridge()}
       {renderDefiPositions()}
+      {renderReferral()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
