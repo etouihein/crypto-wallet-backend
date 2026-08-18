@@ -2281,6 +2281,16 @@ function AppContent({ themeMode, changeTheme }) {
   // et étiquettes -- rien de sensible (aucune clé, aucune donnée privée),
   // copié en JSON via le presse-papier plutôt qu'un vrai fichier (même choix
   // que l'export CSV, pas de expo-file-system installé).
+  // Exporte le keystore DÉJÀ chiffré (format JSON standard ethers/geth —
+  // scrypt+AES, le même format que MetaMask) — pas une nouvelle sauvegarde en
+  // clair, juste rendre portable ce qui est déjà stocké chiffré localement.
+  // Toujours protégé par le même PIN qu'aujourd'hui : sur un autre appareil,
+  // il faudra quand même le PIN d'origine pour le déchiffrer.
+  const exportEncryptedKeystore = useCallback(async () => {
+    if (!walletSession?.encryptedKeystore) return;
+    await copyToClipboard(walletSession.encryptedKeystore, 'Keystore chiffré copié — colle-le dans un fichier .json en lieu sûr');
+  }, [walletSession, copyToClipboard]);
+
   const exportUserData = useCallback(async () => {
     const payload = { version: 1, favorites, recentAddresses, priceAlerts, txTags };
     await copyToClipboard(JSON.stringify(payload), 'Données copiées — colle-les sur le nouvel appareil');
@@ -7130,6 +7140,25 @@ function AppContent({ themeMode, changeTheme }) {
                   <View style={{ flex: 1, marginLeft: 14 }}>
                     <Text style={st.settings_row_title}>{t('settings_show_mnemonic')}</Text>
                     <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                  </View>
+                </AnimPressable>
+              )}
+              {isUnlocked && !isDuressMode && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => showAlert(
+                    '⚠️ Keystore chiffré',
+                    "Ce fichier reste protégé par ton code PIN actuel — il ne sert à rien sans lui. Garde-le quand même en lieu sûr, distinct de ton PIN.",
+                    [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Copier', onPress: exportEncryptedKeystore },
+                    ]
+                  )}
+                >
+                  <Text style={{ fontSize: 22 }}>🗄️</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
+                    <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par ton PIN</Text>
                   </View>
                 </AnimPressable>
               )}
