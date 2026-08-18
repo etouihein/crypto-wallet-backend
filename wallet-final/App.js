@@ -39,6 +39,7 @@ import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
+import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
 // dans le paquet) — l'importer statiquement ferait planter le bundle web au
 // rendu. Chargé dynamiquement, natif uniquement (voir renderDappBrowser).
@@ -545,21 +546,44 @@ const loadRecentAddresses = async () => {
 
 // PIN de détresse ("duress PIN") : un second code, distinct du vrai, qui
 // affiche un wallet à solde nul au lieu du vrai — utile si quelqu'un force
-// l'utilisateur à déverrouiller son wallet sous contrainte. Ne stocke QU'un
-// hash de comparaison (ethers.utils.id, keccak256) : ce code ne sert jamais
-// à déchiffrer quoi que ce soit (contrairement au vrai PIN, qui déchiffre le
-// keystore), donc pas besoin d'en faire une clé de chiffrement — juste
-// vérifier qu'il correspond, puis ne RIEN déchiffrer.
+// l'utilisateur à déverrouiller son wallet sous contrainte. Ce code ne sert
+// jamais à déchiffrer quoi que ce soit (contrairement au vrai PIN, qui
+// déchiffre le keystore), donc pas besoin d'en faire une clé de chiffrement
+// — juste vérifier qu'il correspond, puis ne RIEN déchiffrer.
+//
+// Stocké comme un sel aléatoire + un hash dérivé par PBKDF2 (100 000
+// itérations), PAS un simple keccak256 non salé : sur un espace de
+// seulement 1 000 000 de codes à 6 chiffres, un hash rapide se retrouve
+// entièrement par force brute en une fraction de seconde si jamais le
+// stockage de l'appareil est extrait (backup, malware, accès root) — un
+// attaquant pourrait alors connaître le code de détresse À L'AVANCE et
+// repérer qu'il est faux au moment où on le tape sous la contrainte,
+// ruinant tout l'intérêt de la fonctionnalité. PBKDF2 rend ce calcul assez
+// coûteux pour que ça ne soit plus praticable sur tout l'espace des codes.
 const DURESS_PIN_HASH_KEY = 'wallet-pro-duress-pin-hash-v1';
+const DURESS_PBKDF2_ITERATIONS = 100000;
 
-const hashDuressPin = (pin) => ethers.utils.id(`nexia-duress-v1:${pin}`);
+const hashDuressPin = (pin, saltHex) => pbkdf2(
+  ethers.utils.toUtf8Bytes(`nexia-duress-v1:${pin}`),
+  saltHex,
+  DURESS_PBKDF2_ITERATIONS,
+  32,
+  'sha256'
+);
 
-const loadDuressPinHash = async () => {
-  try { return await AsyncStorage.getItem(DURESS_PIN_HASH_KEY); } catch { return null; }
+const loadDuressPinRecord = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(DURESS_PIN_HASH_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 };
 
 const saveDuressPin = async (pin) => {
-  try { await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, hashDuressPin(pin)); } catch { /* rien à faire */ }
+  try {
+    const salt = ethers.utils.hexlify(ethers.utils.randomBytes(16));
+    const hash = hashDuressPin(pin, salt);
+    await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, JSON.stringify({ salt, hash }));
+  } catch { /* rien à faire */ }
 };
 
 const clearDuressPin = async () => {
@@ -2554,8 +2578,8 @@ function AppContent({ themeMode, changeTheme }) {
     setIsVerifyingPin(true);
     setPinError(null);
     try {
-      const duressHash = await loadDuressPinHash();
-      if (duressHash && hashDuressPin(pin) === duressHash) {
+      const duressRecord = await loadDuressPinRecord();
+      if (duressRecord && hashDuressPin(pin, duressRecord.salt) === duressRecord.hash) {
         // Code de détresse : jamais de déchiffrement, jamais la vraie clé —
         // juste un état "déverrouillé" avec un solde à zéro.
         setIsDuressMode(true);
@@ -3303,7 +3327,7 @@ function AppContent({ themeMode, changeTheme }) {
   }, [walletBalance, nativeSymbol, activeNetwork]);
 
   useEffect(() => {
-    loadDuressPinHash().then(hash => setDuressPinConfigured(!!hash));
+    loadDuressPinRecord().then(record => setDuressPinConfigured(!!record));
   }, []);
 
   const handleSaveDuressPin = async () => {
