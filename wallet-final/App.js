@@ -3093,6 +3093,36 @@ function AppContent({ themeMode, changeTheme }) {
     return () => clearInterval(id);
   }, [fetchMarket, initWallet]);
 
+  // Rafraîchit périodiquement le solde natif (pas juste sur action explicite
+  // de l'utilisateur) pour pouvoir détecter une réception de fonds pendant
+  // que l'app tourne — voir l'effet juste en dessous qui compare avec le
+  // solde précédent. Ne détecte PAS une réception app totalement fermée
+  // (nécessiterait un vrai push distant déclenché par un serveur qui
+  // surveille la chaîne — hors de portée sans backend dédié pour ça).
+  useEffect(() => {
+    if (!walletAddr) return;
+    const id = setInterval(() => refreshPortfolio(network), 45000);
+    return () => clearInterval(id);
+  }, [walletAddr, network, refreshPortfolio]);
+
+  const previousBalanceRef = useRef(null);
+  useEffect(() => {
+    if (!walletBalance || Platform.OS === 'web') { previousBalanceRef.current = walletBalance; return; }
+    const prev = previousBalanceRef.current;
+    const current = parseFloat(walletBalance);
+    if (prev != null && current > parseFloat(prev) + 1e-12) {
+      const received = current - parseFloat(prev);
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: '💰 Fonds reçus',
+          body: `+${received.toFixed(6)} ${nativeSymbol} sur ${activeNetwork.label}`,
+        },
+        trigger: null, // immédiat
+      }).catch(() => { /* notifications refusées, pas grave */ });
+    }
+    previousBalanceRef.current = walletBalance;
+  }, [walletBalance, nativeSymbol, activeNetwork]);
+
   useEffect(() => {
     recurringBuy.getConfig().then(cfg => {
       if (!cfg) return;
@@ -3116,6 +3146,19 @@ function AppContent({ themeMode, changeTheme }) {
       }
     });
     return () => sub.remove();
+  }, []);
+
+  // Demande la permission de notifications une fois, au démarrage — sert à
+  // la fois aux notifications de fonds reçus/alertes de prix ci-dessus ET au
+  // rappel d'achat récurrent (celui-ci redemande de toute façon au moment de
+  // programmer un rappel, mais ça évite qu'un utilisateur qui n'active QUE
+  // les alertes de prix/fonds reçus n'ait jamais eu la permission demandée.
+  // iOS ignore silencieusement scheduleNotificationAsync sans permission
+  // accordée au préalable — sans cette demande, ces notifications ne
+  // s'afficheraient tout simplement jamais).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    Notifications.requestPermissionsAsync().catch(() => { /* l'utilisateur pourra toujours l'activer manuellement plus tard */ });
   }, []);
 
   useEffect(() => {
@@ -3285,10 +3328,14 @@ function AppContent({ themeMode, changeTheme }) {
 
     if (vibrationEnabled) Vibration.vibrate(200);
     triggered.forEach(a => {
-      showAlert(
-        '🔔 Alerte de prix',
-        `${a.symbol} a ${a.direction === 'above' ? 'dépassé' : 'chuté sous'} ${fmt(a.targetPrice)}.`
-      );
+      const body = `${a.symbol} a ${a.direction === 'above' ? 'dépassé' : 'chuté sous'} ${fmt(a.targetPrice)}.`;
+      showAlert('🔔 Alerte de prix', body);
+      // Notification locale en plus de l'Alert (invisible si l'app est en
+      // arrière-plan) — même limite que les fonds reçus ci-dessus : marche
+      // tant que l'app tourne (même en arrière-plan), pas app totalement fermée.
+      if (Platform.OS !== 'web') {
+        Notifications.scheduleNotificationAsync({ content: { title: '🔔 Alerte de prix', body }, trigger: null }).catch(() => {});
+      }
     });
     setPriceAlerts(prev => prev.filter(a => !triggered.some(t => t.id === a.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche sur
