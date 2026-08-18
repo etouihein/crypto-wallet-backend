@@ -32,6 +32,8 @@ import { buildInjectedProvider } from './lib/dappBrowserProvider';
 import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
+import * as recurringBuy from './lib/recurringBuy';
+import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -1734,6 +1736,13 @@ function AppContent({ themeMode, changeTheme }) {
   const [sellToken, setSellToken]         = useState('ETH');
   const [sellAmount, setSellAmount]       = useState('');
   const [sellLoading, setSellLoading]     = useState(false);
+  // Achat récurrent (DCA) — rappel local, voir lib/recurringBuy.js.
+  const [showRecurringBuy, setShowRecurringBuy] = useState(false);
+  const [recurringEnabled, setRecurringEnabled] = useState(false);
+  const [recurringAmount, setRecurringAmount]   = useState('20');
+  const [recurringToken, setRecurringToken]     = useState('ETH');
+  const [recurringFrequency, setRecurringFrequency] = useState('weekly');
+  const [recurringSaving, setRecurringSaving]   = useState(false);
   const [walletAddr, setWalletAddr]       = useState('');
   const [walletBalance, setWalletBalance] = useState('0');
   const [backendReady, setBackendReady]   = useState(false);
@@ -3053,6 +3062,31 @@ function AppContent({ themeMode, changeTheme }) {
   }, [fetchMarket, initWallet]);
 
   useEffect(() => {
+    recurringBuy.getConfig().then(cfg => {
+      if (!cfg) return;
+      setRecurringEnabled(!!cfg.enabled);
+      setRecurringAmount(String(cfg.amountUsd ?? '20'));
+      setRecurringToken(cfg.token || 'ETH');
+      setRecurringFrequency(cfg.frequency || 'weekly');
+    });
+  }, []);
+
+  // Appui sur le rappel local d'achat récurrent → ouvre directement l'écran
+  // Acheter pré-rempli, comme un raccourci "il est temps d'acheter".
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'recurring-buy') {
+        setBuyAmount(String(data.amountUsd));
+        setBuyToken(data.token);
+        setShowBuy(true);
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
     loadFavorites().then(list => { setFavorites(list); setFavoritesLoaded(true); });
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
@@ -3889,6 +3923,37 @@ function AppContent({ themeMode, changeTheme }) {
       showAlert('Erreur', err.message || 'Impossible de lancer la vente.');
     } finally {
       setSellLoading(false);
+    }
+  };
+
+  const handleSaveRecurringBuy = async () => {
+    const amountUsd = Number(recurringAmount);
+    if (recurringEnabled && (!amountUsd || isNaN(amountUsd) || amountUsd <= 0)) {
+      showAlert('Montant invalide', 'Entre un montant en USD.');
+      return;
+    }
+    setRecurringSaving(true);
+    try {
+      const config = { enabled: recurringEnabled, amountUsd, token: recurringToken, frequency: recurringFrequency };
+      await recurringBuy.saveConfig(config);
+      if (!recurringEnabled) {
+        await recurringBuy.cancelReminder();
+        showToast('Achat récurrent désactivé', 'success');
+      } else if (Platform.OS === 'web') {
+        showToast('✓ Préférences enregistrées (rappel disponible sur mobile)', 'success');
+      } else {
+        const id = await recurringBuy.scheduleReminder(config);
+        if (!id) {
+          showAlert('Notifications désactivées', "Autorise les notifications pour NexiaWallet dans les réglages du téléphone pour recevoir le rappel d'achat.");
+        } else {
+          showToast('✓ Rappel programmé', 'success');
+        }
+      }
+      setShowRecurringBuy(false);
+    } catch (err) {
+      showAlert('Erreur', err.message || "Impossible d'enregistrer l'achat récurrent.");
+    } finally {
+      setRecurringSaving(false);
     }
   };
 
@@ -5958,6 +6023,76 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderRecurringBuy = () => (
+    <Modal visible={showRecurringBuy} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowRecurringBuy(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Achat récurrent</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            MoonPay ne peut pas prélever ta carte automatiquement en arrière-plan (sécurité/conformité). NexiaWallet te
+            programme un rappel qui rouvre l'écran Acheter, déjà pré-rempli — tu valides toi-même le paiement à chaque fois.
+          </Text>
+
+          <TouchableOpacity
+            style={[st.settings_row, recurringEnabled && st.settings_row_on]}
+            onPress={() => setRecurringEnabled(v => !v)}
+          >
+            <Text style={{ fontSize: 20 }}>{recurringEnabled ? '✅' : '⬜'}</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Activer le rappel</Text>
+            </View>
+          </TouchableOpacity>
+
+          {recurringEnabled && (
+            <>
+              <Text style={st.form_label}>Token</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+                {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
+                  const tk = tokens[sym];
+                  if (!tk) return null;
+                  return (
+                    <TouchableOpacity key={sym} style={[st.tok_chip, recurringToken === sym && st.tok_chip_on]} onPress={() => setRecurringToken(sym)}>
+                      <CoinLogo logo={tk.logo} icon={tk.icon} size={24} />
+                      <Text style={[st.tok_chip_txt, recurringToken === sym && { color: T.text }]}>{sym}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={st.form_label}>Montant USD</Text>
+              <TextInput style={st.form_input} value={recurringAmount} onChangeText={setRecurringAmount}
+                placeholder="20" placeholderTextColor={T.text3} keyboardType="numeric" />
+
+              <Text style={[st.form_label, { marginTop: 16 }]}>Fréquence</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {[{ id: 'weekly', label: 'Chaque semaine' }, { id: 'monthly', label: 'Chaque mois' }].map(f => (
+                  <TouchableOpacity
+                    key={f.id}
+                    style={[st.import_type_btn, recurringFrequency === f.id && st.import_type_btn_on, { flex: 1 }]}
+                    onPress={() => setRecurringFrequency(f.id)}
+                  >
+                    <Text style={[st.import_type_txt, recurringFrequency === f.id && { color: T.text }]}>{f.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
+          <AnimPressable style={[st.green_btn, { marginTop: 24, opacity: recurringSaving ? 0.7 : 1 }]} onPress={handleSaveRecurringBuy} disabled={recurringSaving}>
+            {recurringSaving ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Enregistrer</Text>}
+          </AnimPressable>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderApprovals = () => {
     const activeApprovals = tokenApprovals.filter(a => !a.revoked);
     return (
@@ -6509,6 +6644,13 @@ function AppContent({ themeMode, changeTheme }) {
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Autorisations de tokens</Text>
                   <Text style={st.settings_row_sub}>Voir et révoquer les accès accordés à des contrats</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowRecurringBuy(true); }}>
+                <Text style={{ fontSize: 22 }}>🔁</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Achat récurrent</Text>
+                  <Text style={st.settings_row_sub}>Rappel pour investir régulièrement (DCA)</Text>
                 </View>
               </AnimPressable>
 
@@ -7292,6 +7434,7 @@ function AppContent({ themeMode, changeTheme }) {
       )}
       {renderBuy()}
       {renderSell()}
+      {renderRecurringBuy()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
