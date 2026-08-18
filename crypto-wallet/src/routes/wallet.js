@@ -16,10 +16,9 @@ const APP_API_KEYS = new Set(
     .filter(Boolean)
 );
 
-// Limite plus stricte sur les routes sensibles (création/import/envoi/paiement) —
-// le rate-limit global de server.js (100/15min) est trop permissif pour ces
-// actions-là une fois le serveur exposé publiquement (spam de wallets, essais
-// répétés de clé privée, abus du flux d'achat).
+// Limite plus stricte sur les routes sensibles (diffusion de transaction,
+// paiement, swap, NFT) — le rate-limit global de server.js (100/15min) est
+// trop permissif pour ces actions-là une fois le serveur exposé publiquement.
 const sensitiveLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.SENSITIVE_RATE_LIMIT_MAX, 10) || 20,
@@ -220,42 +219,6 @@ function getNetworkConfig(network = 'ethereum') {
   return NETWORKS[normalizeNetwork(network)] || NETWORKS.ethereum;
 }
 
-// Adresses vérifiées sur Etherscan/BscScan — une seule adresse par (réseau,
-// token). Ne jamais modifier sans revérifier sur l'explorateur officiel :
-// une erreur ici fait perdre des fonds. Même config que côté client
-// (wallet-final/lib/wallet.js), gardée synchronisée à la main.
-const ERC20_TOKENS = {
-  ethereum: {
-    USDC: { symbol: 'USDC', address: process.env.USDC_CONTRACT_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-    USDT: { symbol: 'USDT', address: process.env.USDT_CONTRACT_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
-  },
-  bsc: {
-    USDC: { symbol: 'USDC', address: process.env.USDC_BSC_CONTRACT_ADDRESS || '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 },
-    USDT: { symbol: 'USDT', address: process.env.USDT_BSC_CONTRACT_ADDRESS || '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
-  },
-};
-
-function getErc20Token(symbol, network = 'ethereum') {
-  return ERC20_TOKENS[normalizeNetwork(network)]?.[symbol?.toUpperCase()] || null;
-}
-
-const ERC20_ABI = [
-  'function balanceOf(address owner) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-  'function decimals() view returns (uint8)',
-  'function symbol() view returns (string)',
-  'function name() view returns (string)',
-];
-
-function getErc20Contract(address, network = 'ethereum') {
-  return new ethers.Contract(address, ERC20_ABI, getProvider(network));
-}
-
-function getConnectedWallet(wallet, network = 'ethereum') {
-  if (!wallet) return null;
-  return wallet.connect(getProvider(network));
-}
-
 const FALLBACK_MARKET_DATA = [
   { id: 'ethereum', symbol: 'ETH', name: 'Ethereum', current_price: 3500, market_cap: 420000000000, price_change_percentage_24h: 1.2, image: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png' },
   { id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin', current_price: 64000, market_cap: 1260000000000, price_change_percentage_24h: 0.8, image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png' },
@@ -363,54 +326,6 @@ async function fetchCoinDetailUncached(cgId) {
   };
 }
 
-// ── Sessions par wallet ──────────────────────────────────────────
-// Chaque wallet créé/importé vit dans SA PROPRE session, indexée par un
-// token aléatoire de 256 bits que seul le client qui a créé le wallet
-// connaît. Sans ça, un seul wallet en mémoire serait partagé par TOUS
-// les appelants du serveur — désastreux dès que le serveur est exposé
-// publiquement (n'importe qui pourrait lire/vider le wallet actif d'un
-// autre utilisateur).
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h d'inactivité max
-const MAX_SESSIONS = 5000; // garde-fou anti-épuisement mémoire (exposition publique)
-const sessions = new Map(); // token -> { wallet, createdAt }
-
-function createSession(wallet) {
-  if (sessions.size >= MAX_SESSIONS) {
-    const oldestToken = sessions.keys().next().value;
-    sessions.delete(oldestToken);
-  }
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { wallet, createdAt: Date.now() });
-  return token;
-}
-
-function getSession(token) {
-  if (!token) return null;
-  const entry = sessions.get(token);
-  if (!entry) return null;
-  if (Date.now() - entry.createdAt > SESSION_TTL_MS) {
-    sessions.delete(token);
-    return null;
-  }
-  return entry;
-}
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, entry] of sessions) {
-    if (now - entry.createdAt > SESSION_TTL_MS) sessions.delete(token);
-  }
-}, 60 * 60 * 1000).unref();
-
-function requireSession(req, res, next) {
-  const session = getSession(req.header('x-session-token'));
-  if (!session) {
-    return res.status(401).json({ success: false, error: 'Session wallet invalide ou expirée. Recrée ou réimporte ton wallet.', needCreate: true });
-  }
-  req.walletSession = session;
-  next();
-}
-
 router.use((req, res, next) => {
   const apiKey = req.header('x-api-key');
   // MoonPay appelle ce endpoint directement — il ne connaît pas notre clé API,
@@ -434,119 +349,6 @@ router.post('/webhooks/moonpay', (req, res) => {
   const { type, data } = req.body || {};
   console.log(`💳 MoonPay [${type}] statut=${data?.status} adresse=${data?.walletAddress} montant=${data?.baseCurrencyAmount}${data?.baseCurrencyCode} -> ${data?.quoteCurrencyAmount} ${data?.currency?.code}`);
   res.json({ received: true, verified: true });
-});
-
-// 1. ROUTE DE CRÉATION DE WALLET (Génération d'une vraie Seed Phrase à 12 mots)
-router.post('/create', sensitiveLimiter, async (req, res) => {
-  try {
-    const { network = 'ethereum' } = req.body;
-    const wallet = ethers.Wallet.createRandom();
-    const sessionToken = createSession(wallet);
-
-    res.json({
-      success: true,
-      message: "Nouveau wallet réel généré !",
-      sessionToken,
-      address: wallet.address,
-      mnemonic: wallet.mnemonic.phrase,
-      privateKey: wallet.privateKey,
-      balance: "0.0",
-      network,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.post('/import', sensitiveLimiter, async (req, res) => {
-  try {
-    const { mnemonic, privateKey, network = 'ethereum' } = req.body;
-    if (!mnemonic && !privateKey) {
-      return res.status(400).json({ success: false, error: 'Mnemonic ou clé privée requise.' });
-    }
-
-    let wallet;
-    if (mnemonic) {
-      wallet = ethers.Wallet.fromMnemonic(mnemonic.trim());
-    } else {
-      wallet = new ethers.Wallet(privateKey.trim());
-    }
-
-    const sessionToken = createSession(wallet);
-    const connectedWallet = getConnectedWallet(wallet, network);
-    const balanceWei = await getProvider(network).getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-
-    res.json({
-      success: true,
-      sessionToken,
-      address: connectedWallet.address,
-      balance,
-      message: 'Wallet importé avec succès.',
-      network,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.get('/erc20/balance/:symbol', requireSession, async (req, res) => {
-  try {
-    const network = (req.query.network || 'sepolia').toLowerCase();
-    const token = getErc20Token(req.params.symbol, network);
-    if (!token?.address) {
-      return res.status(400).json({ success: false, error: 'Token ERC20 non configuré.' });
-    }
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-    const contract = getErc20Contract(token.address, network);
-    const balance = await contract.balanceOf(connectedWallet.address);
-    const formatted = ethers.utils.formatUnits(balance, token.decimals);
-
-    res.json({ success: true, symbol: token.symbol, balance: formatted, network });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) => {
-  const { to, amount, symbol, network = 'ethereum' } = req.body;
-  const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-  if (!to || !amount || !symbol) return res.status(400).json({ success: false, error: 'Paramètres manquants.' });
-
-  const token = getErc20Token(symbol, network);
-  if (!token?.address) {
-    return res.status(400).json({ success: false, error: 'Token ERC20 non configuré pour l\'envoi.' });
-  }
-  if (!ethers.utils.isAddress(to)) {
-    return res.status(400).json({ success: false, error: 'Adresse de destination invalide.' });
-  }
-
-  try {
-    const contract = getErc20Contract(token.address, network).connect(connectedWallet);
-    const value = ethers.utils.parseUnits(amount.toString(), token.decimals);
-
-    const currentBalance = await contract.balanceOf(connectedWallet.address);
-    if (currentBalance.lt(value)) {
-      return res.status(400).json({ success: false, error: `Fonds ${token.symbol} insuffisants sur le wallet.` });
-    }
-
-    const tx = await contract.transfer(to, value);
-    await tx.wait();
-
-    res.json({
-      success: true,
-      message: `${token.symbol} envoyé avec succès !`,
-      txHash: tx.hash,
-      network,
-    });
-  } catch (error) {
-    console.error('ERC20 send error:', error);
-    res.status(400).json({ success: false, error: 'Transfert ERC20 impossible (fonds insuffisants, gas, ou erreur réseau).' });
-  }
 });
 
 router.get('/market', async (req, res) => {
@@ -957,98 +759,6 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
     console.error('Sell session error:', error);
     res.status(500).json({ success: false, error: 'Erreur lors de la création de la session de vente.' });
   }
-});
-
-router.get('/info', requireSession, async (req, res) => {
-  try {
-    const network = normalizeNetwork(req.query.network || 'ethereum');
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-    const balanceWei = await getProvider(network).getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-    const cfg = getNetworkConfig(network);
-
-    res.json({
-      success: true,
-      address: connectedWallet.address,
-      balance,
-      network,
-      chainId: cfg.chainId,
-      nativeSymbol: cfg.nativeSymbol,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.get('/bsc/info', requireSession, async (req, res) => {
-  try {
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, 'bsc');
-
-    const balanceWei = await getProvider('bsc').getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-    const cfg = getNetworkConfig('bsc');
-
-    res.json({
-      success: true,
-      address: connectedWallet.address,
-      balance,
-      network: 'bsc',
-      chainId: cfg.chainId,
-      nativeSymbol: cfg.nativeSymbol,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-async function sendNative(req, res, network = 'ethereum') {
-  const { to, amount } = req.body;
-  const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-  try {
-    if (!ethers.utils.isAddress(to)) {
-      return res.status(400).json({ success: false, error: 'L\'adresse de destination n\'est pas valide !' });
-    }
-
-    const provider = getProvider(network);
-    const currentBalanceWei = await provider.getBalance(connectedWallet.address);
-    const currentBalance = ethers.utils.formatEther(currentBalanceWei);
-    if (parseFloat(currentBalance) < parseFloat(amount)) {
-      return res.status(400).json({ success: false, error: 'Fonds insuffisants sur le wallet.' });
-    }
-
-    const tx = {
-      to,
-      value: ethers.utils.parseEther(amount),
-    };
-
-    const transactionResponse = await connectedWallet.sendTransaction(tx);
-    await transactionResponse.wait();
-
-    const newBalanceWei = await provider.getBalance(connectedWallet.address);
-
-    res.json({
-      success: true,
-      message: 'Le transfert a été validé sur la blockchain !',
-      txHash: transactionResponse.hash,
-      newBalance: ethers.utils.formatEther(newBalanceWei),
-      network,
-    });
-  } catch (error) {
-    console.error('Détail erreur Blockchain :', error);
-    res.status(500).json({ success: false, error: 'Fonds insuffisants ou erreur de communication réseau.' });
-  }
-}
-
-router.post('/send', sensitiveLimiter, requireSession, async (req, res) => {
-  return sendNative(req, res, 'ethereum');
-});
-
-router.post('/bsc/send', sensitiveLimiter, requireSession, async (req, res) => {
-  return sendNative(req, res, 'bsc');
 });
 
 // Relais de diffusion — wallet non-custodial : reçoit une transaction DÉJÀ
