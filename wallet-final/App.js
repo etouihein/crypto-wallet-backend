@@ -2593,6 +2593,36 @@ function AppContent({ themeMode, changeTheme }) {
     }
   }, [wcUri]);
 
+  // Deep links entrants (nexiawallet://... ou une URI "wc:..." ouverte
+  // directement par le navigateur/l'appli d'une dApp) — au démarrage à froid
+  // via Linking.getInitialURL(), puis pendant que l'app tourne déjà via
+  // l'event 'url'. Réutilise handleWcConnect, exactement comme le scanner QR
+  // du flux d'envoi (handleQrScanned) qui détecte déjà le préfixe "wc:".
+  useEffect(() => {
+    const handleIncomingUrl = (url) => {
+      if (!url) return;
+      const trimmed = url.trim();
+      if (trimmed.startsWith('wc:')) {
+        handleWcConnect(trimmed);
+        return;
+      }
+      // nexiawallet://wc?uri=wc%3A... : certaines dApps/navigateurs
+      // encapsulent l'URI WalletConnect dans un paramètre de notre propre
+      // scheme plutôt que de passer un "wc:" brut.
+      const match = trimmed.match(/[?&]uri=([^&]+)/);
+      if (match) {
+        try {
+          const decoded = decodeURIComponent(match[1]);
+          if (decoded.startsWith('wc:')) handleWcConnect(decoded);
+        } catch { /* paramètre mal formé, on ignore */ }
+      }
+    };
+
+    Linking.getInitialURL().then(handleIncomingUrl).catch(() => { /* rien à faire */ });
+    const sub = Linking.addEventListener('url', ({ url }) => handleIncomingUrl(url));
+    return () => sub.remove();
+  }, [handleWcConnect]);
+
   const handleWcApproveProposal = useCallback(async () => {
     if (!wcProposal || !walletAddr) return;
     try {

@@ -2,6 +2,7 @@
   "expo": {
     "name": "NexiaWallet",
     "slug": "nexiawallet",
+    "scheme": "nexiawallet",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,6 +13,7 @@
       "buildNumber": "1",
       "infoPlist": {
         "NSCameraUsageDescription": "NexiaWallet a besoin de la caméra pour scanner les QR codes d'adresses et de connexion WalletConnect.",
+        "NSFaceIDUsageDescription": "NexiaWallet utilise Face ID pour déverrouiller ton wallet sans retaper ton code PIN.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
