@@ -31,6 +31,7 @@ import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider } from './lib/dappBrowserProvider';
 import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
+import { looksLikePoisonedAddress } from './lib/addressSafety';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -5190,13 +5191,30 @@ function AppContent({ themeMode, changeTheme }) {
               );
             })()}
 
-            {!!sendAddress && sendAddress.length === 42 && !recentAddresses.some(a => a.address.toLowerCase() === sendAddress.toLowerCase()) && (
-              <View style={[st.warning_box, { marginTop: 12 }]}>
-                <Text style={st.warning_txt}>
-                  🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
-                </Text>
-              </View>
-            )}
+            {!!sendAddress && sendAddress.length === 42 && (() => {
+              const poisonedMatch = looksLikePoisonedAddress(sendAddress, recentAddresses.map(a => a.address));
+              if (poisonedMatch) {
+                return (
+                  <View style={[st.warning_box, { marginTop: 12, borderColor: T.red }]}>
+                    <Text style={st.warning_txt}>
+                      🚨 Cette adresse ressemble énormément à une adresse déjà connue ({poisonedMatch.slice(0, 8)}…{poisonedMatch.slice(-6)})
+                      mais N'EST PAS la même. C'est la technique de "l'adresse piégée" (address poisoning) : vérifie
+                      caractère par caractère avant d'envoyer, ou copie l'adresse depuis une source sûre.
+                    </Text>
+                  </View>
+                );
+              }
+              if (!recentAddresses.some(a => a.address.toLowerCase() === sendAddress.toLowerCase())) {
+                return (
+                  <View style={[st.warning_box, { marginTop: 12 }]}>
+                    <Text style={st.warning_txt}>
+                      🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
+                    </Text>
+                  </View>
+                );
+              }
+              return null;
+            })()}
 
             <View style={st.send_info_box}>
               <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
