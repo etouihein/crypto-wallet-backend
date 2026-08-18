@@ -24,6 +24,7 @@ import * as Clipboard from 'expo-clipboard';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import jsQR from 'jsqr';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
@@ -644,6 +645,31 @@ const loadHideZeroBalances = async () => {
 
 const saveHideZeroBalances = async (enabled) => {
   try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
+// Mode hors-ligne : dernier solde connu mis en cache par adresse, affiché
+// immédiatement au démarrage (avant même la première requête RPC) et
+// réutilisé si le réseau tombe — toujours étiqueté comme "dernières données
+// connues", jamais présenté comme un solde à jour en temps réel.
+const PORTFOLIO_CACHE_KEY = 'wallet-pro-portfolio-cache-v1';
+
+const savePortfolioCache = async (address, network, snapshot) => {
+  if (!address) return;
+  try {
+    const raw = await AsyncStorage.getItem(PORTFOLIO_CACHE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[`${address.toLowerCase()}:${network}`] = { ...snapshot, cachedAt: Date.now() };
+    await AsyncStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(all));
+  } catch { /* rien à faire */ }
+};
+
+const loadPortfolioCache = async (address, network) => {
+  if (!address) return null;
+  try {
+    const raw = await AsyncStorage.getItem(PORTFOLIO_CACHE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    return all[`${address.toLowerCase()}:${network}`] || null;
+  } catch { return null; }
 };
 
 // Langue de l'interface (fr/en) — voir lib/i18n.js. Français par défaut
@@ -1903,6 +1929,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const [hideZeroBalances, setHideZeroBalances] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [portfolioIsCached, setPortfolioIsCached] = useState(false); // true tant qu'on affiche le cache, pas un solde fraîchement récupéré
   const [locale, setLocale] = useState('fr');
   // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
   // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
@@ -2190,9 +2218,11 @@ function AppContent({ themeMode, changeTheme }) {
       }));
 
       const tokenSymbols = ['USDT', 'USDC'];
+      const erc20Balances = {};
       await Promise.all(tokenSymbols.map(async (sym) => {
         try {
           const balance = await localWallet.getErc20Balance(walletAddr, sym, selectedNetwork);
+          erc20Balances[sym] = parseFloat(balance);
           setTokens(prev => ({
             ...prev,
             [sym]: { ...prev[sym], balance: parseFloat(balance) },
@@ -2201,8 +2231,31 @@ function AppContent({ themeMode, changeTheme }) {
           console.warn(`Balance ${sym} failed`, err.message);
         }
       }));
+
+      // Solde récupéré avec succès (au moins la partie native) — on n'est
+      // plus hors-ligne, et on met à jour le cache pour la prochaine fois
+      // que le réseau manquera.
+      setIsOffline(false);
+      setPortfolioIsCached(false);
+      savePortfolioCache(walletAddr, selectedNetwork, { nativeSymbol, nativeBalance, erc20Balances });
     } catch (err) {
       console.warn('refreshPortfolio error', err.message);
+      // Échec réseau (pas juste une erreur applicative) : bascule sur le
+      // dernier solde connu en cache plutôt que de laisser l'écran figé sur
+      // d'anciennes valeurs sans le signaler.
+      const cached = await loadPortfolioCache(walletAddr, selectedNetwork);
+      if (cached) {
+        setWalletBalance(cached.nativeBalance);
+        setTokens(prev => {
+          const next = { ...prev, [cached.nativeSymbol]: { ...prev[cached.nativeSymbol], balance: parseFloat(cached.nativeBalance) } };
+          Object.entries(cached.erc20Balances || {}).forEach(([sym, bal]) => {
+            if (next[sym]) next[sym] = { ...next[sym], balance: bal };
+          });
+          return next;
+        });
+        setPortfolioIsCached(true);
+      }
+      setIsOffline(true);
     }
   }, [network, walletAddr, isDuressMode]);
 
@@ -3228,6 +3281,34 @@ function AppContent({ themeMode, changeTheme }) {
     setDuressPinConfigured(false);
     showToast('Code de détresse désactivé', 'success');
   };
+
+  // Mode hors-ligne : NetInfo donne un signal immédiat (pas besoin d'attendre
+  // qu'une requête RPC échoue/expire) — bascule tout de suite sur le cache
+  // dès que la connexion tombe, et relance un vrai rafraîchissement dès
+  // qu'elle revient.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const offline = state.isConnected === false || state.isInternetReachable === false;
+      setIsOffline(offline);
+      if (offline && walletAddr) {
+        loadPortfolioCache(walletAddr, network).then(cached => {
+          if (!cached) return;
+          setWalletBalance(cached.nativeBalance);
+          setTokens(prev => {
+            const next = { ...prev, [cached.nativeSymbol]: { ...prev[cached.nativeSymbol], balance: parseFloat(cached.nativeBalance) } };
+            Object.entries(cached.erc20Balances || {}).forEach(([sym, bal]) => {
+              if (next[sym]) next[sym] = { ...next[sym], balance: bal };
+            });
+            return next;
+          });
+          setPortfolioIsCached(true);
+        });
+      } else if (!offline && walletAddr) {
+        refreshPortfolio(network);
+      }
+    });
+    return () => unsubscribe();
+  }, [walletAddr, network, refreshPortfolio]);
 
   useEffect(() => {
     recurringBuy.getConfig().then(cfg => {
@@ -7392,6 +7473,13 @@ function AppContent({ themeMode, changeTheme }) {
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchMarket(); }} tintColor={T.gold} />
       }
     >
+      {(isOffline || portfolioIsCached) && (
+        <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 16 }]}>
+          <Text style={st.warning_txt}>
+            📡 Hors ligne — derniers soldes connus affichés{isOffline ? ', pas forcément à jour.' : '.'}
+          </Text>
+        </View>
+      )}
       <View style={st.home_hdr}>
         <View>
           <Text style={st.home_account}>Mon Wallet</Text>
