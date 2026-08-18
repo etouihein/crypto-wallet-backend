@@ -33,6 +33,7 @@ import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
 import * as recurringBuy from './lib/recurringBuy';
+import * as bridge from './lib/bridge';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
@@ -1743,6 +1744,16 @@ function AppContent({ themeMode, changeTheme }) {
   const [recurringToken, setRecurringToken]     = useState('ETH');
   const [recurringFrequency, setRecurringFrequency] = useState('weekly');
   const [recurringSaving, setRecurringSaving]   = useState(false);
+  // Pont cross-chain (voir lib/bridge.js) — ETH natif entre Ethereum/
+  // Arbitrum/Optimism/Base uniquement (v1, voir commentaire dans bridge.js).
+  const [showBridge, setShowBridge]         = useState(false);
+  const [bridgeFromNetwork, setBridgeFromNetwork] = useState('ethereum');
+  const [bridgeToNetwork, setBridgeToNetwork]     = useState('arbitrum');
+  const [bridgeAmount, setBridgeAmount]     = useState('');
+  const [bridgeQuote, setBridgeQuote]       = useState(null);
+  const [bridgeQuoteLoading, setBridgeQuoteLoading] = useState(false);
+  const [bridgeExecuting, setBridgeExecuting]       = useState(false);
+  const [bridgeError, setBridgeError]       = useState(null);
   const [walletAddr, setWalletAddr]       = useState('');
   const [walletBalance, setWalletBalance] = useState('0');
   const [backendReady, setBackendReady]   = useState(false);
@@ -3960,6 +3971,59 @@ function AppContent({ themeMode, changeTheme }) {
     }
   };
 
+  const BRIDGE_NETWORKS = ['ethereum', 'arbitrum', 'optimism', 'base'];
+
+  const handleGetBridgeQuote = async () => {
+    if (!bridgeAmount || isNaN(Number(bridgeAmount)) || Number(bridgeAmount) <= 0) {
+      showAlert('Montant invalide', 'Entre un montant en ETH.');
+      return;
+    }
+    setBridgeQuoteLoading(true);
+    setBridgeError(null);
+    setBridgeQuote(null);
+    try {
+      const amountWei = ethers.utils.parseEther(bridgeAmount).toString();
+      const quote = await bridge.getBridgeQuote({
+        fromNetwork: bridgeFromNetwork,
+        toNetwork: bridgeToNetwork,
+        fromAddress: walletAddr,
+        amountWei,
+      });
+      setBridgeQuote(quote);
+    } catch (err) {
+      setBridgeError(err.response?.data?.message || err.message || 'Impossible de récupérer une route de pont.');
+    } finally {
+      setBridgeQuoteLoading(false);
+    }
+  };
+
+  const handleExecuteBridge = async () => {
+    if (!bridgeQuote || !unlockedPrivateKey) return;
+    setBridgeExecuting(true);
+    setBridgeError(null);
+    try {
+      const tx = bridgeQuote.transactionRequest;
+      const { rawTx } = await localWallet.signRawTx({
+        privateKey: unlockedPrivateKey,
+        to: tx.to,
+        data: tx.data,
+        value: ethers.BigNumber.from(tx.value || '0x0').toString(),
+        gasLimit: ethers.BigNumber.from(tx.gasLimit || '0x0').toString(),
+        network: bridgeFromNetwork,
+      });
+      const resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
+      if (!resp.data?.success) throw new Error(resp.data?.error || 'Échec de la diffusion.');
+      showAlert('✅ Pont envoyé', `Ta transaction de pont a été diffusée.\nHash: ${resp.data.txHash?.slice(0, 10)}...\nL'arrivée sur ${bridgeToNetwork} peut prendre quelques minutes.`, [{ text: 'OK' }]);
+      setShowBridge(false);
+      setBridgeQuote(null);
+      setBridgeAmount('');
+    } catch (err) {
+      setBridgeError(err.message || 'Impossible de finaliser le pont.');
+    } finally {
+      setBridgeExecuting(false);
+    }
+  };
+
   // ── ENVOI SÉCURISÉ (Validation sur réseau réel) ──
   // Étape 1 : valide et bascule vers l'écran "relis avant d'envoyer" — rien
   // n'est signé ni diffusé ici, juste une estimation des frais pour que
@@ -6035,6 +6099,81 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderBridge = () => {
+    const feeCosts = bridgeQuote?.estimate?.feeCosts || [];
+    const toAmount = bridgeQuote?.estimate?.toAmount;
+    return (
+      <Modal visible={showBridge} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => { setShowBridge(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Pont cross-chain</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+              Transfère de l'ETH natif entre Ethereum, Arbitrum, Optimism et Base, via l'agrégateur LI.FI. Signature et
+              diffusion se font exactement comme un envoi normal — LI.FI ne voit jamais ta clé privée.
+            </Text>
+
+            <Text style={st.form_label}>Depuis</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {BRIDGE_NETWORKS.map(net => (
+                <TouchableOpacity
+                  key={net}
+                  style={[st.tok_chip, bridgeFromNetwork === net && st.tok_chip_on]}
+                  onPress={() => { setBridgeFromNetwork(net); setBridgeQuote(null); }}
+                >
+                  <Text style={[st.tok_chip_txt, bridgeFromNetwork === net && { color: T.text }]}>{NETWORK_INFO[net].label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={st.form_label}>Vers</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {BRIDGE_NETWORKS.filter(net => net !== bridgeFromNetwork).map(net => (
+                <TouchableOpacity
+                  key={net}
+                  style={[st.tok_chip, bridgeToNetwork === net && st.tok_chip_on]}
+                  onPress={() => { setBridgeToNetwork(net); setBridgeQuote(null); }}
+                >
+                  <Text style={[st.tok_chip_txt, bridgeToNetwork === net && { color: T.text }]}>{NETWORK_INFO[net].label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={st.form_label}>Montant ETH</Text>
+            <TextInput style={st.form_input} value={bridgeAmount} onChangeText={(v) => { setBridgeAmount(v); setBridgeQuote(null); }}
+              placeholder="0.01" placeholderTextColor={T.text3} keyboardType="numeric" />
+
+            {!bridgeQuote ? (
+              <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeQuoteLoading ? 0.7 : 1 }]} onPress={handleGetBridgeQuote} disabled={bridgeQuoteLoading}>
+                {bridgeQuoteLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Obtenir une route</Text>}
+              </AnimPressable>
+            ) : (
+              <>
+                <View style={st.send_info_box}>
+                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? ethers.utils.formatEther(toAmount) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
+                  <Text style={st.send_info_line}>Route : {bridgeQuote.tool}</Text>
+                  {feeCosts.map((f, i) => (
+                    <Text key={i} style={st.send_info_line}>{f.name} : {ethers.utils.formatUnits(f.amount, f.token?.decimals || 18)} {f.token?.symbol}</Text>
+                  ))}
+                </View>
+                <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeExecuting ? 0.7 : 1 }]} onPress={handleExecuteBridge} disabled={bridgeExecuting}>
+                  {bridgeExecuting ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Confirmer le pont</Text>}
+                </AnimPressable>
+              </>
+            )}
+            {!!bridgeError && <Text style={[st.auth_error, { marginTop: 12 }]}>{bridgeError}</Text>}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   const renderRecurringBuy = () => (
     <Modal visible={showRecurringBuy} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -6687,6 +6826,13 @@ function AppContent({ themeMode, changeTheme }) {
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Achat récurrent</Text>
                   <Text style={st.settings_row_sub}>Rappel pour investir régulièrement (DCA)</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setBridgeQuote(null); setBridgeError(null); setShowBridge(true); }}>
+                <Text style={{ fontSize: 22 }}>🌉</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Pont cross-chain</Text>
+                  <Text style={st.settings_row_sub}>Transférer de l'ETH entre Ethereum, Arbitrum, Optimism, Base</Text>
                 </View>
               </AnimPressable>
 
@@ -7471,6 +7617,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderBuy()}
       {renderSell()}
       {renderRecurringBuy()}
+      {renderBridge()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
