@@ -27,6 +27,22 @@ const KNOWN_SELECTORS = {
 // arrondie (ex. 2^255) comme approbation "illimitée" — on détecte large.
 const UNLIMITED_THRESHOLD = ethers.BigNumber.from(2).pow(200);
 
+// Décode un appel connu (approve/increaseAllowance/setApprovalForAll/
+// transferFrom/safeTransferFrom) à partir du calldata brut, ou null si le
+// sélecteur n'est pas reconnu / le calldata est malformé. Exporté pour être
+// réutilisé ailleurs (ex: enregistrement des approbations, voir lib/approvals.js
+// et son point d'appel dans App.js) sans redupliquer la table de sélecteurs.
+function decodeKnownCall(data) {
+  const selector = (data || '0x').slice(0, 10);
+  const known = data && data.length >= 10 ? KNOWN_SELECTORS[selector] : null;
+  if (!known) return null;
+  try {
+    return { name: known.name, args: new ethers.utils.Interface([known.abi]).decodeFunctionData(known.name, data) };
+  } catch {
+    return null;
+  }
+}
+
 function extractRevertReason(err) {
   return err?.reason
     || err?.error?.reason
@@ -38,23 +54,16 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
   const warnings = [];
   let risk = 'none';
 
-  const selector = (data || '0x').slice(0, 10);
-  const known = data && data.length >= 10 ? KNOWN_SELECTORS[selector] : null;
-  let decoded = null;
-  if (known) {
-    try {
-      decoded = new ethers.utils.Interface([known.abi]).decodeFunctionData(known.name, data);
-    } catch { /* calldata malformée ou non-standard, on ignore le décodage */ }
-  }
+  const known = decodeKnownCall(data);
 
-  if (decoded && (known.name === 'approve' || known.name === 'increaseAllowance')) {
-    const amount = decoded[1];
+  if (known && (known.name === 'approve' || known.name === 'increaseAllowance')) {
+    const amount = known.args[1];
     if (amount && ethers.BigNumber.from(amount).gte(UNLIMITED_THRESHOLD)) {
       risk = 'high';
       warnings.push("Autorise un accès QUASI-ILLIMITÉ à ce token à ce contrat. N'accepte que si tu fais confiance à ce site.");
     }
   }
-  if (decoded && known.name === 'setApprovalForAll' && decoded[1] === true) {
+  if (known && known.name === 'setApprovalForAll' && known.args[1] === true) {
     risk = 'high';
     warnings.push('Donne le contrôle de TOUS tes NFT de cette collection à un tiers.');
   }
@@ -81,4 +90,4 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
   return { risk, warnings, willLikelyRevert, revertReason, decodedMethod: known?.name || null };
 }
 
-module.exports = { simulateTransaction };
+module.exports = { simulateTransaction, decodeKnownCall };

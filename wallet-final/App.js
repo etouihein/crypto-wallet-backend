@@ -29,7 +29,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider } from './lib/dappBrowserProvider';
-import { simulateTransaction } from './lib/txSimulation';
+import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
+import * as approvals from './lib/approvals';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -1776,6 +1777,12 @@ function AppContent({ themeMode, changeTheme }) {
   const [dappBridgeError, setDappBridgeError]     = useState(null);
   const [dappSimResult, setDappSimResult]         = useState(null); // voir lib/txSimulation.js
   const dappWebViewRef = useRef(null);
+  // Autorisations de tokens accordées via cette app (voir lib/approvals.js)
+  // — suivi local uniquement, pas d'indexeur tiers.
+  const [showApprovals, setShowApprovals]         = useState(false);
+  const [tokenApprovals, setTokenApprovals]       = useState([]);
+  const [approvalsLoading, setApprovalsLoading]   = useState(false);
+  const [revokingApprovalId, setRevokingApprovalId] = useState(null);
   // Staking natif Solana — voir getSolanaValidators/getSolanaStakeAccounts/
   // createAndDelegateStake/deactivateStake/withdrawStake dans lib/wallet.js.
   const [showStaking, setShowStaking]           = useState(false);
@@ -2668,6 +2675,60 @@ function AppContent({ themeMode, changeTheme }) {
     setWcProposal(null);
   }, [wcProposal]);
 
+  // ── Autorisations de tokens (voir lib/approvals.js) ── déclaré ici, AVANT
+  // handleWcApproveRequest/handleDappBridgeApprove qui référencent
+  // maybeRecordApproval dans leur tableau de dépendances useCallback — sinon
+  // TDZ ("Cannot access before initialization") au premier rendu, ce n'est
+  // pas juste une question de style/ordre de lecture.
+  const refreshApprovals = useCallback(async () => {
+    if (!walletAddr) return;
+    setApprovalsLoading(true);
+    try {
+      const list = await approvals.getApprovals(walletAddr);
+      setTokenApprovals(list);
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }, [walletAddr]);
+
+  // Enregistre localement une approbation qu'on vient de faire signer avec
+  // succès (approve/increaseAllowance/setApprovalForAll), si le calldata en
+  // était bien une — no-op silencieux sinon. Best-effort sur le symbole du
+  // token (n'empêche jamais l'enregistrement si l'appel réseau échoue).
+  const maybeRecordApproval = useCallback(async ({ to, data, network: net, txHash }) => {
+    if (!walletAddr) return;
+    const known = decodeKnownCall(data);
+    if (!known || !['approve', 'increaseAllowance', 'setApprovalForAll'].includes(known.name)) return;
+    const isNft = known.name === 'setApprovalForAll';
+    if (isNft && known.args[1] !== true) return; // setApprovalForAll(..., false) = ce n'est pas une nouvelle autorisation
+    const spender = known.args[0];
+    let tokenSymbol = '?';
+    try { tokenSymbol = (await localWallet.getCustomTokenInfo(to, walletAddr, net)).symbol; } catch { /* best-effort */ }
+    await approvals.recordApproval(walletAddr, {
+      network: net, tokenAddress: to, tokenSymbol, spender,
+      amount: isNft ? null : known.args[1]?.toString(), isNft, txHash,
+    });
+  }, [walletAddr]);
+
+  const handleRevokeApproval = useCallback(async (entry) => {
+    if (!unlockedPrivateKey) return;
+    setRevokingApprovalId(entry.id);
+    try {
+      const txHash = await approvals.revokeApproval({
+        privateKey: unlockedPrivateKey, network: entry.network,
+        tokenAddress: entry.tokenAddress, spender: entry.spender, isNft: entry.isNft,
+      });
+      await localWallet.waitForTx(txHash, entry.network);
+      await approvals.markRevoked(walletAddr, entry.id);
+      showToast('✓ Autorisation révoquée', 'success');
+      refreshApprovals();
+    } catch (err) {
+      showAlert('Révocation impossible', err.message || 'Réessaie plus tard.');
+    } finally {
+      setRevokingApprovalId(null);
+    }
+  }, [unlockedPrivateKey, walletAddr, showToast, refreshApprovals]);
+
   const handleWcApproveRequest = useCallback(async () => {
     if (!wcRequest || !unlockedPrivateKey) return;
     setWcRequestLoading(true);
@@ -2679,6 +2740,11 @@ function AppContent({ themeMode, changeTheme }) {
         unlockedPrivateKey
       );
       await walletConnect.respondToSessionRequest(topic, id, result);
+      if (params.request.method === 'eth_sendTransaction') {
+        const tx = params.request.params?.[0] || {};
+        const net = walletConnect.SUPPORTED_EVM_CHAINS[params.chainId] || 'ethereum';
+        maybeRecordApproval({ to: tx.to, data: tx.data, network: net, txHash: result }).catch(() => {});
+      }
       showToast('✓ Signé', 'success');
       setWcRequest(null);
     } catch (err) {
@@ -2687,7 +2753,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setWcRequestLoading(false);
     }
-  }, [wcRequest, unlockedPrivateKey, showToast]);
+  }, [wcRequest, unlockedPrivateKey, showToast, maybeRecordApproval]);
 
   const handleWcRejectRequest = useCallback(async () => {
     if (!wcRequest) return;
@@ -2763,6 +2829,10 @@ function AppContent({ themeMode, changeTheme }) {
         const chainIdCaip = `eip155:${localWallet.getNetworkConfig(network).chainId}`;
         const result = await walletConnect.executeSessionRequest({ chainId: chainIdCaip, method, params }, unlockedPrivateKey);
         dappBridgeRespond(id, null, result);
+        if (method === 'eth_sendTransaction') {
+          const tx = params?.[0] || {};
+          maybeRecordApproval({ to: tx.to, data: tx.data, network, txHash: result }).catch(() => {});
+        }
       }
       setDappBridgeRequest(null);
     } catch (err) {
@@ -2772,7 +2842,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setDappBridgeLoading(false);
     }
-  }, [dappBridgeRequest, walletAddr, unlockedPrivateKey, network, dappBridgeRespond]);
+  }, [dappBridgeRequest, walletAddr, unlockedPrivateKey, network, dappBridgeRespond, maybeRecordApproval]);
 
   const handleDappBridgeReject = useCallback(() => {
     if (!dappBridgeRequest) return;
@@ -4057,6 +4127,12 @@ function AppContent({ themeMode, changeTheme }) {
           throw new Error(approveResp.data?.error || "Échec de l'approbation du token.");
         }
         await localWallet.waitForTx(approveResp.data.txHash, network);
+        let approveTokenSymbol = swapFrom;
+        try { approveTokenSymbol = (await localWallet.getCustomTokenInfo(sellAddress, walletAddr, network)).symbol; } catch { /* garde swapFrom en repli */ }
+        approvals.recordApproval(walletAddr, {
+          network, tokenAddress: sellAddress, tokenSymbol: approveTokenSymbol, spender,
+          amount: ethers.constants.MaxUint256.toString(), isNft: false, txHash: approveResp.data.txHash,
+        }).catch(() => {});
       }
 
       const { rawTx: swapRawTx } = await localWallet.signRawTx({
@@ -5819,6 +5895,61 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderApprovals = () => {
+    const activeApprovals = tokenApprovals.filter(a => !a.revoked);
+    return (
+      <Modal visible={showApprovals} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => { setShowApprovals(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Autorisations de tokens</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+              Liste des accès que tu as accordés à des contrats (approbations ERC20, accès à tes NFT) via WalletConnect,
+              le navigateur intégré ou un échange dans l'app. Une approbation accordée ailleurs, avant d'utiliser
+              NexiaWallet, ne peut pas apparaître ici.
+            </Text>
+            {approvalsLoading ? (
+              <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
+            ) : activeApprovals.length === 0 ? (
+              <Text style={st.settings_row_sub}>Aucune autorisation active suivie sur cet appareil.</Text>
+            ) : (
+              activeApprovals.map((a) => (
+                <View key={a.id} style={[st.settings_row, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20 }}>{a.isNft ? '🖼️' : '🪙'}</Text>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.settings_row_title}>{a.tokenSymbol} · {a.network}</Text>
+                      <Text style={st.settings_row_sub} numberOfLines={1}>Autorise {a.spender}</Text>
+                      <Text style={st.settings_row_sub}>
+                        {a.isNft
+                          ? 'Contrôle de TOUTE la collection'
+                          : (a.amount && ethers.BigNumber.from(a.amount).gte(ethers.BigNumber.from(2).pow(200)) ? 'Montant illimité' : `Montant : ${a.amount}`)}
+                      </Text>
+                    </View>
+                  </View>
+                  <AnimPressable
+                    style={[st.settings_row, { marginTop: 10, justifyContent: 'center', backgroundColor: T.redBg, opacity: revokingApprovalId === a.id ? 0.7 : 1 }]}
+                    onPress={() => handleRevokeApproval(a)}
+                    disabled={revokingApprovalId === a.id}
+                  >
+                    {revokingApprovalId === a.id
+                      ? <ActivityIndicator color={T.red} />
+                      : <Text style={{ color: T.red, fontWeight: '700' }}>Révoquer</Text>}
+                  </AnimPressable>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   const renderStaking = () => (
     <Modal visible={showStaking} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -6308,6 +6439,13 @@ function AppContent({ themeMode, changeTheme }) {
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Navigateur Web3</Text>
                   <Text style={st.settings_row_sub}>Parcourir une dApp directement dans l'app</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); }}>
+                <Text style={{ fontSize: 22 }}>🔑</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Autorisations de tokens</Text>
+                  <Text style={st.settings_row_sub}>Voir et révoquer les accès accordés à des contrats</Text>
                 </View>
               </AnimPressable>
 
@@ -7043,6 +7181,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderDappBrowser()}
       {!!dappBridgeRequest && renderDappBridgeRequest()}
       {!!wcRequest && renderWcRequest()}
+      {renderApprovals()}
       {renderStaking()}
       {renderNftGallery()}
       {renderLegal()}
