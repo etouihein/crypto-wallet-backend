@@ -533,6 +533,29 @@ const loadRecentAddresses = async () => {
   } catch { return []; }
 };
 
+// PIN de détresse ("duress PIN") : un second code, distinct du vrai, qui
+// affiche un wallet à solde nul au lieu du vrai — utile si quelqu'un force
+// l'utilisateur à déverrouiller son wallet sous contrainte. Ne stocke QU'un
+// hash de comparaison (ethers.utils.id, keccak256) : ce code ne sert jamais
+// à déchiffrer quoi que ce soit (contrairement au vrai PIN, qui déchiffre le
+// keystore), donc pas besoin d'en faire une clé de chiffrement — juste
+// vérifier qu'il correspond, puis ne RIEN déchiffrer.
+const DURESS_PIN_HASH_KEY = 'wallet-pro-duress-pin-hash-v1';
+
+const hashDuressPin = (pin) => ethers.utils.id(`nexia-duress-v1:${pin}`);
+
+const loadDuressPinHash = async () => {
+  try { return await AsyncStorage.getItem(DURESS_PIN_HASH_KEY); } catch { return null; }
+};
+
+const saveDuressPin = async (pin) => {
+  try { await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, hashDuressPin(pin)); } catch { /* rien à faire */ }
+};
+
+const clearDuressPin = async () => {
+  try { await AsyncStorage.removeItem(DURESS_PIN_HASH_KEY); } catch { /* rien à faire */ }
+};
+
 const saveRecentAddresses = async (list) => {
   try { await AsyncStorage.setItem(RECENT_ADDRESSES_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
@@ -1680,6 +1703,11 @@ function AppContent({ themeMode, changeTheme }) {
   const isWideWeb = Platform.OS === 'web' && winWidth >= 860;
   const [pinCode, setPinCode]         = useState('');
   const [isUnlocked, setIsUnlocked]   = useState(false);
+  const [isDuressMode, setIsDuressMode] = useState(false); // voir hashDuressPin — wallet à solde nul, jamais la vraie clé
+  const [duressPinConfigured, setDuressPinConfigured] = useState(false);
+  const [showDuressSetup, setShowDuressSetup] = useState(false);
+  const [duressSetupInput, setDuressSetupInput] = useState('');
+  const [duressSetupError, setDuressSetupError] = useState(null);
   const [tab, setTab]                 = useState('home');
   const [currency, setCurrency]       = useState('USD');
 
@@ -2135,6 +2163,10 @@ function AppContent({ themeMode, changeTheme }) {
   // solde (donnée publique de la blockchain), donc aucun appel backend ici.
   const refreshPortfolio = useCallback(async (selectedNetwork = network) => {
     if (!walletAddr) return;
+    // Mode détresse : ne JAMAIS récupérer le vrai solde, sinon il finirait
+    // par écraser le zéro affiché (rafraîchissement périodique, changement
+    // de réseau...) et trahirait que ce n'est pas le vrai wallet vide.
+    if (isDuressMode) return;
     try {
       const nativeSymbol = { bsc: 'BNB', polygon: 'MATIC' }[selectedNetwork] || 'ETH';
       const nativeBalance = await localWallet.getNativeBalance(walletAddr, selectedNetwork);
@@ -2159,7 +2191,7 @@ function AppContent({ themeMode, changeTheme }) {
     } catch (err) {
       console.warn('refreshPortfolio error', err.message);
     }
-  }, [network, walletAddr]);
+  }, [network, walletAddr, isDuressMode]);
 
   // Solde SOL — même principe (RPC public direct, pas de clé nécessaire),
   // mais indépendant du sélecteur réseau EVM (Solana n'en fait pas partie).
@@ -2398,12 +2430,25 @@ function AppContent({ themeMode, changeTheme }) {
     setIsVerifyingPin(true);
     setPinError(null);
     try {
+      const duressHash = await loadDuressPinHash();
+      if (duressHash && hashDuressPin(pin) === duressHash) {
+        // Code de détresse : jamais de déchiffrement, jamais la vraie clé —
+        // juste un état "déverrouillé" avec un solde à zéro.
+        setIsDuressMode(true);
+        setIsUnlocked(true);
+        setWalletBalance('0');
+        setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
+        setPinCode('');
+        setPinError(null);
+        return;
+      }
       const result = await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, pin);
       if (result.address.toLowerCase() !== walletSession.address.toLowerCase()) {
         throw new Error('Adresse incohérente après déchiffrement.');
       }
       setUnlockedPrivateKey(result.privateKey);
       setUnlockedMnemonic(result.mnemonic);
+      setIsDuressMode(false);
       setIsUnlocked(true);
       setPinCode('');
       setPinError(null);
@@ -2505,6 +2550,7 @@ function AppContent({ themeMode, changeTheme }) {
             setWalletCreated(false);
             setBackendReady(false);
             setIsUnlocked(false);
+            setIsDuressMode(false);
             setShowSettings(false);
             setUnlockedPrivateKey(null);
             setUnlockedMnemonic(null);
@@ -2542,6 +2588,7 @@ function AppContent({ themeMode, changeTheme }) {
     setUnlockedPrivateKey(null);
     setUnlockedMnemonic(null);
     setIsUnlocked(false);
+    setIsDuressMode(false);
     setPinCode('');
     setPinError(null);
     setHistoryItems(null);
@@ -3132,6 +3179,34 @@ function AppContent({ themeMode, changeTheme }) {
   }, [walletBalance, nativeSymbol, activeNetwork]);
 
   useEffect(() => {
+    loadDuressPinHash().then(hash => setDuressPinConfigured(!!hash));
+  }, []);
+
+  const handleSaveDuressPin = async () => {
+    if (!/^\d{6}$/.test(duressSetupInput)) {
+      setDuressSetupError('Le code de détresse doit faire exactement 6 chiffres.');
+      return;
+    }
+    // Un code de détresse identique au vrai PIN n'aurait aucun sens (on ne
+    // peut pas les distinguer à la saisie) — on ne peut pas comparer au
+    // vrai PIN ici (jamais stocké en clair), donc juste avertir clairement
+    // dans le texte de l'écran plutôt que tenter une vérification illusoire.
+    await saveDuressPin(duressSetupInput);
+    setDuressPinConfigured(true);
+    setShowDuressSetup(false);
+    setShowSettings(true);
+    setDuressSetupInput('');
+    setDuressSetupError(null);
+    showToast('✓ Code de détresse activé', 'success');
+  };
+
+  const handleRemoveDuressPin = async () => {
+    await clearDuressPin();
+    setDuressPinConfigured(false);
+    showToast('Code de détresse désactivé', 'success');
+  };
+
+  useEffect(() => {
     recurringBuy.getConfig().then(cfg => {
       if (!cfg) return;
       setRecurringEnabled(!!cfg.enabled);
@@ -3476,6 +3551,7 @@ function AppContent({ themeMode, changeTheme }) {
 
   const lockWallet = useCallback(() => {
     setIsUnlocked(false);
+    setIsDuressMode(false);
     setUnlockedPrivateKey(null);
     setUnlockedMnemonic(null);
     setPinCode('');
@@ -6317,6 +6393,42 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  const renderDuressSetup = () => (
+    <Modal visible={showDuressSetup} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowDuressSetup(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Code PIN de détresse</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            Si quelqu'un te force à déverrouiller ton wallet, tape ce code à la place de ton vrai PIN : l'app s'ouvrira
+            normalement mais affichera un solde à zéro, sans jamais révéler ta vraie clé. Choisis un code DIFFÉRENT de
+            ton vrai PIN.
+          </Text>
+          <TextInput
+            style={st.form_input}
+            value={duressSetupInput}
+            onChangeText={(v) => setDuressSetupInput(v.replace(/\D/g, '').slice(0, 6))}
+            placeholder="6 chiffres"
+            placeholderTextColor={T.text3}
+            keyboardType="numeric"
+            secureTextEntry
+            maxLength={6}
+          />
+          {!!duressSetupError && <Text style={[st.auth_error, { marginTop: 10 }]}>{duressSetupError}</Text>}
+          <AnimPressable style={[st.green_btn, { marginTop: 20 }]} onPress={handleSaveDuressPin}>
+            <Text style={st.green_btn_txt}>Activer</Text>
+          </AnimPressable>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderRecurringBuy = () => (
     <Modal visible={showRecurringBuy} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -7040,6 +7152,30 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 </AnimPressable>
               )}
+              <AnimPressable
+                style={st.settings_row}
+                onPress={() => {
+                  if (duressPinConfigured) {
+                    showAlert('Désactiver le code de détresse ?', 'Le code de détresse actuel ne fonctionnera plus.', [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Désactiver', style: 'destructive', onPress: handleRemoveDuressPin },
+                    ]);
+                  } else {
+                    setShowSettings(false);
+                    setDuressSetupInput('');
+                    setDuressSetupError(null);
+                    setShowDuressSetup(true);
+                  }
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>🚨</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Code PIN de détresse</Text>
+                  <Text style={st.settings_row_sub}>
+                    {duressPinConfigured ? 'Activé — appuie pour désactiver' : "Affiche un wallet vide si on te force à l'ouvrir"}
+                  </Text>
+                </View>
+              </AnimPressable>
               <AnimPressable style={st.settings_row} onPress={handleLogout}>
                 <Text style={{ fontSize: 22 }}>🚪</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
@@ -7782,6 +7918,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderBuy()}
       {renderSell()}
       {renderRecurringBuy()}
+      {renderDuressSetup()}
       {renderBridge()}
       {renderDefiPositions()}
       {!!selectedToken && renderTokenDetail()}
