@@ -155,7 +155,217 @@ const en = {
   onboarding_import: 'I already have a wallet',
 };
 
-const DICTIONARIES = { fr, en };
+const es = {
+  nav_home: 'Inicio',
+  nav_market: 'Mercado',
+  nav_stats: 'Stats',
+  nav_swap: 'Swap',
+  nav_settings: 'Ajustes',
+
+  home_total_balance: 'SALDO TOTAL',
+  home_my_tokens: 'MIS TOKENS',
+  home_activity: 'Actividad',
+  home_no_favorites_title: 'Fija tus criptos favoritas',
+  home_no_favorites_sub: 'Ve a Mercado y toca la estrella para encontrarlas aquí.',
+
+  action_send: 'Enviar',
+  action_buy: 'Comprar',
+  action_receive: 'Recibir',
+  action_swap: 'Cambiar',
+
+  common_cancel: 'Cancelar',
+  common_confirm: 'Confirmar',
+  common_next: 'Siguiente',
+  common_back: 'Atrás',
+  common_close: 'Cerrar',
+  common_save: 'Guardar',
+  common_ok: 'OK',
+  common_delete: 'Eliminar',
+  common_edit: 'Editar',
+  common_loading: 'Cargando...',
+
+  settings_title: 'Ajustes',
+  settings_currency: 'Moneda',
+  settings_network: 'Red',
+  settings_tokens: 'Tokens',
+  settings_accounts: 'Cuentas',
+  settings_walletconnect: 'WalletConnect',
+  settings_security: 'Seguridad',
+  settings_quick_actions: 'Accesos rápidos de inicio',
+  settings_notifications: 'Notificaciones',
+  settings_info: 'Info',
+  settings_language: 'Idioma',
+  settings_theme: 'Tema',
+  settings_theme_dark: 'Oscuro',
+  settings_theme_light: 'Claro',
+  settings_logout: 'Cerrar sesión',
+  settings_logout_sub: 'Borra el wallet de este dispositivo',
+  settings_show_mnemonic: 'Mostrar mi frase de recuperación',
+  settings_add_account: 'Añadir una cuenta',
+  settings_connect_dapp: 'Conectar una dApp',
+  settings_sounds_vibrations: 'Sonidos y vibraciones',
+  settings_share_app: 'Compartir NexiaWallet',
+  settings_export_data: 'Exportar mis datos',
+  settings_import_data: 'Importar mis datos',
+
+  send_title: 'Enviar',
+  send_recipient: 'Destinatario',
+  send_amount: 'Importe',
+  send_max: 'MÁX',
+  send_confirm: 'Confirmar envío',
+  receive_title: 'Recibir',
+  buy_title: 'Comprar',
+  swap_title: 'Cambiar',
+
+  pin_choose_title: 'Elige un código PIN de 6 dígitos',
+  pin_confirm_title: 'Vuelve a introducir el mismo código para confirmar',
+  pin_wrong: 'Código incorrecto',
+
+  onboarding_create: 'Crear mi wallet',
+  onboarding_import: 'Ya tengo un wallet',
+};
+
+const de = {
+  nav_home: 'Start',
+  nav_market: 'Markt',
+  nav_stats: 'Statistik',
+  nav_swap: 'Swap',
+  nav_settings: 'Einstellungen',
+
+  home_total_balance: 'GESAMTGUTHABEN',
+  home_my_tokens: 'MEINE TOKENS',
+  home_activity: 'Aktivität',
+  home_no_favorites_title: 'Pinne deine Lieblings-Kryptos an',
+  home_no_favorites_sub: 'Geh zu Markt und tippe auf den Stern, um sie hier wiederzufinden.',
+
+  action_send: 'Senden',
+  action_buy: 'Kaufen',
+  action_receive: 'Empfangen',
+  action_swap: 'Tauschen',
+
+  common_cancel: 'Abbrechen',
+  common_confirm: 'Bestätigen',
+  common_next: 'Weiter',
+  common_back: 'Zurück',
+  common_close: 'Schließen',
+  common_save: 'Speichern',
+  common_ok: 'OK',
+  common_delete: 'Löschen',
+  common_edit: 'Bearbeiten',
+  common_loading: 'Lädt...',
+
+  settings_title: 'Einstellungen',
+  settings_currency: 'Währung',
+  settings_network: 'Netzwerk',
+  settings_tokens: 'Tokens',
+  settings_accounts: 'Konten',
+  settings_walletconnect: 'WalletConnect',
+  settings_security: 'Sicherheit',
+  settings_quick_actions: 'Schnellzugriffe auf der Startseite',
+  settings_notifications: 'Benachrichtigungen',
+  settings_info: 'Info',
+  settings_language: 'Sprache',
+  settings_theme: 'Design',
+  settings_theme_dark: 'Dunkel',
+  settings_theme_light: 'Hell',
+  settings_logout: 'Abmelden',
+  settings_logout_sub: 'Löscht das Wallet von diesem Gerät',
+  settings_show_mnemonic: 'Meine Wiederherstellungsphrase anzeigen',
+  settings_add_account: 'Konto hinzufügen',
+  settings_connect_dapp: 'Eine dApp verbinden',
+  settings_sounds_vibrations: 'Töne und Vibration',
+  settings_share_app: 'NexiaWallet teilen',
+  settings_export_data: 'Meine Daten exportieren',
+  settings_import_data: 'Meine Daten importieren',
+
+  send_title: 'Senden',
+  send_recipient: 'Empfänger',
+  send_amount: 'Betrag',
+  send_max: 'MAX',
+  send_confirm: 'Sendung bestätigen',
+  receive_title: 'Empfangen',
+  buy_title: 'Kaufen',
+  swap_title: 'Tauschen',
+
+  pin_choose_title: 'Wähle einen 6-stelligen PIN-Code',
+  pin_confirm_title: 'Gib denselben Code zur Bestätigung erneut ein',
+  pin_wrong: 'Falscher Code',
+
+  onboarding_create: 'Wallet erstellen',
+  onboarding_import: 'Ich habe bereits ein Wallet',
+};
+
+const pt = {
+  nav_home: 'Início',
+  nav_market: 'Mercado',
+  nav_stats: 'Stats',
+  nav_swap: 'Swap',
+  nav_settings: 'Config.',
+
+  home_total_balance: 'SALDO TOTAL',
+  home_my_tokens: 'MEUS TOKENS',
+  home_activity: 'Atividade',
+  home_no_favorites_title: 'Fixa as tuas criptos favoritas',
+  home_no_favorites_sub: 'Vai a Mercado e toca na estrela para as encontrares aqui.',
+
+  action_send: 'Enviar',
+  action_buy: 'Comprar',
+  action_receive: 'Receber',
+  action_swap: 'Trocar',
+
+  common_cancel: 'Cancelar',
+  common_confirm: 'Confirmar',
+  common_next: 'Seguinte',
+  common_back: 'Voltar',
+  common_close: 'Fechar',
+  common_save: 'Guardar',
+  common_ok: 'OK',
+  common_delete: 'Eliminar',
+  common_edit: 'Editar',
+  common_loading: 'A carregar...',
+
+  settings_title: 'Definições',
+  settings_currency: 'Moeda',
+  settings_network: 'Rede',
+  settings_tokens: 'Tokens',
+  settings_accounts: 'Contas',
+  settings_walletconnect: 'WalletConnect',
+  settings_security: 'Segurança',
+  settings_quick_actions: 'Atalhos do início',
+  settings_notifications: 'Notificações',
+  settings_info: 'Info',
+  settings_language: 'Idioma',
+  settings_theme: 'Tema',
+  settings_theme_dark: 'Escuro',
+  settings_theme_light: 'Claro',
+  settings_logout: 'Terminar sessão',
+  settings_logout_sub: 'Apaga a wallet deste dispositivo',
+  settings_show_mnemonic: 'Mostrar a minha frase de recuperação',
+  settings_add_account: 'Adicionar uma conta',
+  settings_connect_dapp: 'Ligar uma dApp',
+  settings_sounds_vibrations: 'Sons e vibrações',
+  settings_share_app: 'Partilhar NexiaWallet',
+  settings_export_data: 'Exportar os meus dados',
+  settings_import_data: 'Importar os meus dados',
+
+  send_title: 'Enviar',
+  send_recipient: 'Destinatário',
+  send_amount: 'Montante',
+  send_max: 'MÁX',
+  send_confirm: 'Confirmar envio',
+  receive_title: 'Receber',
+  buy_title: 'Comprar',
+  swap_title: 'Trocar',
+
+  pin_choose_title: 'Escolhe um código PIN de 6 dígitos',
+  pin_confirm_title: 'Introduz novamente o mesmo código para confirmar',
+  pin_wrong: 'Código incorreto',
+
+  onboarding_create: 'Criar a minha wallet',
+  onboarding_import: 'Já tenho uma wallet',
+};
+
+const DICTIONARIES = { fr, en, es, de, pt };
 
 function translate(locale, key, vars) {
   const dict = DICTIONARIES[locale] || DICTIONARIES.fr;
@@ -168,6 +378,6 @@ function translate(locale, key, vars) {
   return text;
 }
 
-const SUPPORTED_LOCALES = ['fr', 'en'];
+const SUPPORTED_LOCALES = ['fr', 'en', 'es', 'de', 'pt'];
 
 module.exports = { translate, SUPPORTED_LOCALES };

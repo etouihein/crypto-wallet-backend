@@ -22,7 +22,7 @@ if (ENV === 'production') {
   if (!process.env.HTTPS_TERMINATED_BY_PROXY) {
     console.warn(
       '⚠️  NODE_ENV=production sans HTTPS_TERMINATED_BY_PROXY=1 : ' +
-      'ce serveur transmet mnémoniques, clés privées et tokens de session. ' +
+      'ce serveur relaie des transactions signées et des données sensibles côté client. ' +
       'Ne l\'expose JAMAIS publiquement en HTTP brut — mets un reverse proxy ' +
       '(Caddy, Nginx, Cloudflare Tunnel...) qui termine le HTTPS devant lui, ' +
       'puis fixe HTTPS_TERMINATED_BY_PROXY=1 dans .env pour faire taire cet avertissement.'

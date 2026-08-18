@@ -27,8 +27,13 @@ import '@walletconnect/react-native-compat';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import { initSentry, wrapRootComponent } from './lib/sentry';
+
+// No-op tant qu'EXPO_PUBLIC_SENTRY_DSN n'est pas défini dans .env — voir
+// lib/sentry.js.
+initSentry();
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,
 // the environment is set up appropriately
-registerRootComponent(App);
+registerRootComponent(wrapRootComponent(App));

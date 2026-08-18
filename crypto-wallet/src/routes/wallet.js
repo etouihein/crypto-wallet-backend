@@ -16,10 +16,9 @@ const APP_API_KEYS = new Set(
     .filter(Boolean)
 );
 
-// Limite plus stricte sur les routes sensibles (création/import/envoi/paiement) —
-// le rate-limit global de server.js (100/15min) est trop permissif pour ces
-// actions-là une fois le serveur exposé publiquement (spam de wallets, essais
-// répétés de clé privée, abus du flux d'achat).
+// Limite plus stricte sur les routes sensibles (diffusion de transaction,
+// paiement, swap, NFT) — le rate-limit global de server.js (100/15min) est
+// trop permissif pour ces actions-là une fois le serveur exposé publiquement.
 const sensitiveLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.SENSITIVE_RATE_LIMIT_MAX, 10) || 20,
@@ -44,6 +43,16 @@ const MOONPAY_SECRET_KEY = (process.env.MOONPAY_SECRET_KEY || '').trim();
 const MOONPAY_BASE_URL = process.env.MOONPAY_ENV === 'production'
   ? 'https://buy.moonpay.com'
   : 'https://buy-sandbox.moonpay.com';
+// Widget de VENTE (off-ramp) — chemin /v2/sell, mais TOUJOURS sur le domaine
+// buy.moonpay.com (production), jamais buy-sandbox.moonpay.com, contrairement
+// à l'achat ci-dessus. Vérifié en chargeant les deux pour de vrai avec la
+// clé de test (pk_test_...) : buy-sandbox.moonpay.com/v2/sell plante côté
+// MoonPay ("Cannot read properties of undefined (reading 'TenantFeatures')",
+// bug/limitation de LEUR bac à sable sur ce produit) alors que
+// buy.moonpay.com/v2/sell charge sans erreur avec la MÊME clé de test —
+// MoonPay détecte le mode sandbox/production via le préfixe de la clé
+// (pk_test_ vs pk_live_), pas via le domaine, pour ce produit précis.
+const MOONPAY_SELL_BASE_URL = 'https://buy.moonpay.com/v2/sell';
 const MOONPAY_CURRENCY_CODES = {
   ethereum: { ETH: 'eth', USDT: 'usdt_eth', USDC: 'usdc_eth' },
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
@@ -93,6 +102,28 @@ function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redi
   return `${url}&signature=${encodeURIComponent(signature)}`;
 }
 
+// Widget de vente : `refundWalletAddress` (où MoonPay renvoie les fonds en
+// cas d'échec KYC/mauvais actif envoyé) exige une signature HMAC dès qu'il
+// est présent — contrairement à l'achat, on ne peut donc PAS proposer de
+// mode "sans clé secrète" ici : la clé secrète MoonPay est obligatoire.
+function buildMoonPaySellUrl({ currencyCode, refundWalletAddress, baseCurrencyAmount, redirectURL }) {
+  const fields = {
+    apiKey: MOONPAY_API_KEY,
+    baseCurrencyCode: currencyCode,
+    quoteCurrencyCode: 'usd',
+    baseCurrencyAmount: String(baseCurrencyAmount),
+    refundWalletAddress,
+    redirectURL,
+  };
+  const params = new URLSearchParams(fields);
+  const url = `${MOONPAY_SELL_BASE_URL}?${params.toString()}`;
+  const signature = crypto
+    .createHmac('sha256', MOONPAY_SECRET_KEY)
+    .update(new URL(url).search)
+    .digest('base64');
+  return `${url}&signature=${encodeURIComponent(signature)}`;
+}
+
 // Webhook MoonPay — LA vraie confirmation qu'un achat a abouti. MoonPay livre
 // la crypto directement on-chain à walletAddress ; ce webhook nous notifie
 // côté serveur (utile pour logs/support), le solde réel reste vérifiable sur
@@ -135,6 +166,23 @@ const NETWORKS = {
     nativeSymbol: 'MATIC',
     rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
   },
+  // Gardé synchronisé à la main avec wallet-final/lib/wallet.js — mêmes
+  // endpoints RPC, vérifiés directement (eth_chainId).
+  arbitrum: {
+    chainId: 42161,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.ARBITRUM_RPC_URL || 'https://arbitrum-one-rpc.publicnode.com',
+  },
+  optimism: {
+    chainId: 10,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.OPTIMISM_RPC_URL || 'https://optimism-rpc.publicnode.com',
+  },
+  base: {
+    chainId: 8453,
+    nativeSymbol: 'ETH',
+    rpcUrl: process.env.BASE_RPC_URL || 'https://base-rpc.publicnode.com',
+  },
 };
 
 const NETWORK_ALIASES = {
@@ -145,6 +193,9 @@ const NETWORK_ALIASES = {
   bsc: 'bsc',
   polygon: 'polygon',
   matic: 'polygon',
+  arbitrum: 'arbitrum',
+  optimism: 'optimism',
+  base: 'base',
   sepolia: 'sepolia',
   solana: 'solana',
   sol: 'solana',
@@ -166,42 +217,6 @@ function getProvider(network = 'ethereum') {
 
 function getNetworkConfig(network = 'ethereum') {
   return NETWORKS[normalizeNetwork(network)] || NETWORKS.ethereum;
-}
-
-// Adresses vérifiées sur Etherscan/BscScan — une seule adresse par (réseau,
-// token). Ne jamais modifier sans revérifier sur l'explorateur officiel :
-// une erreur ici fait perdre des fonds. Même config que côté client
-// (wallet-final/lib/wallet.js), gardée synchronisée à la main.
-const ERC20_TOKENS = {
-  ethereum: {
-    USDC: { symbol: 'USDC', address: process.env.USDC_CONTRACT_ADDRESS || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-    USDT: { symbol: 'USDT', address: process.env.USDT_CONTRACT_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
-  },
-  bsc: {
-    USDC: { symbol: 'USDC', address: process.env.USDC_BSC_CONTRACT_ADDRESS || '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 },
-    USDT: { symbol: 'USDT', address: process.env.USDT_BSC_CONTRACT_ADDRESS || '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
-  },
-};
-
-function getErc20Token(symbol, network = 'ethereum') {
-  return ERC20_TOKENS[normalizeNetwork(network)]?.[symbol?.toUpperCase()] || null;
-}
-
-const ERC20_ABI = [
-  'function balanceOf(address owner) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-  'function decimals() view returns (uint8)',
-  'function symbol() view returns (string)',
-  'function name() view returns (string)',
-];
-
-function getErc20Contract(address, network = 'ethereum') {
-  return new ethers.Contract(address, ERC20_ABI, getProvider(network));
-}
-
-function getConnectedWallet(wallet, network = 'ethereum') {
-  if (!wallet) return null;
-  return wallet.connect(getProvider(network));
 }
 
 const FALLBACK_MARKET_DATA = [
@@ -311,54 +326,6 @@ async function fetchCoinDetailUncached(cgId) {
   };
 }
 
-// ── Sessions par wallet ──────────────────────────────────────────
-// Chaque wallet créé/importé vit dans SA PROPRE session, indexée par un
-// token aléatoire de 256 bits que seul le client qui a créé le wallet
-// connaît. Sans ça, un seul wallet en mémoire serait partagé par TOUS
-// les appelants du serveur — désastreux dès que le serveur est exposé
-// publiquement (n'importe qui pourrait lire/vider le wallet actif d'un
-// autre utilisateur).
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h d'inactivité max
-const MAX_SESSIONS = 5000; // garde-fou anti-épuisement mémoire (exposition publique)
-const sessions = new Map(); // token -> { wallet, createdAt }
-
-function createSession(wallet) {
-  if (sessions.size >= MAX_SESSIONS) {
-    const oldestToken = sessions.keys().next().value;
-    sessions.delete(oldestToken);
-  }
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { wallet, createdAt: Date.now() });
-  return token;
-}
-
-function getSession(token) {
-  if (!token) return null;
-  const entry = sessions.get(token);
-  if (!entry) return null;
-  if (Date.now() - entry.createdAt > SESSION_TTL_MS) {
-    sessions.delete(token);
-    return null;
-  }
-  return entry;
-}
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, entry] of sessions) {
-    if (now - entry.createdAt > SESSION_TTL_MS) sessions.delete(token);
-  }
-}, 60 * 60 * 1000).unref();
-
-function requireSession(req, res, next) {
-  const session = getSession(req.header('x-session-token'));
-  if (!session) {
-    return res.status(401).json({ success: false, error: 'Session wallet invalide ou expirée. Recrée ou réimporte ton wallet.', needCreate: true });
-  }
-  req.walletSession = session;
-  next();
-}
-
 router.use((req, res, next) => {
   const apiKey = req.header('x-api-key');
   // MoonPay appelle ce endpoint directement — il ne connaît pas notre clé API,
@@ -382,119 +349,6 @@ router.post('/webhooks/moonpay', (req, res) => {
   const { type, data } = req.body || {};
   console.log(`💳 MoonPay [${type}] statut=${data?.status} adresse=${data?.walletAddress} montant=${data?.baseCurrencyAmount}${data?.baseCurrencyCode} -> ${data?.quoteCurrencyAmount} ${data?.currency?.code}`);
   res.json({ received: true, verified: true });
-});
-
-// 1. ROUTE DE CRÉATION DE WALLET (Génération d'une vraie Seed Phrase à 12 mots)
-router.post('/create', sensitiveLimiter, async (req, res) => {
-  try {
-    const { network = 'ethereum' } = req.body;
-    const wallet = ethers.Wallet.createRandom();
-    const sessionToken = createSession(wallet);
-
-    res.json({
-      success: true,
-      message: "Nouveau wallet réel généré !",
-      sessionToken,
-      address: wallet.address,
-      mnemonic: wallet.mnemonic.phrase,
-      privateKey: wallet.privateKey,
-      balance: "0.0",
-      network,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.post('/import', sensitiveLimiter, async (req, res) => {
-  try {
-    const { mnemonic, privateKey, network = 'ethereum' } = req.body;
-    if (!mnemonic && !privateKey) {
-      return res.status(400).json({ success: false, error: 'Mnemonic ou clé privée requise.' });
-    }
-
-    let wallet;
-    if (mnemonic) {
-      wallet = ethers.Wallet.fromMnemonic(mnemonic.trim());
-    } else {
-      wallet = new ethers.Wallet(privateKey.trim());
-    }
-
-    const sessionToken = createSession(wallet);
-    const connectedWallet = getConnectedWallet(wallet, network);
-    const balanceWei = await getProvider(network).getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-
-    res.json({
-      success: true,
-      sessionToken,
-      address: connectedWallet.address,
-      balance,
-      message: 'Wallet importé avec succès.',
-      network,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.get('/erc20/balance/:symbol', requireSession, async (req, res) => {
-  try {
-    const network = (req.query.network || 'sepolia').toLowerCase();
-    const token = getErc20Token(req.params.symbol, network);
-    if (!token?.address) {
-      return res.status(400).json({ success: false, error: 'Token ERC20 non configuré.' });
-    }
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-    const contract = getErc20Contract(token.address, network);
-    const balance = await contract.balanceOf(connectedWallet.address);
-    const formatted = ethers.utils.formatUnits(balance, token.decimals);
-
-    res.json({ success: true, symbol: token.symbol, balance: formatted, network });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.post('/erc20/send', sensitiveLimiter, requireSession, async (req, res) => {
-  const { to, amount, symbol, network = 'ethereum' } = req.body;
-  const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-  if (!to || !amount || !symbol) return res.status(400).json({ success: false, error: 'Paramètres manquants.' });
-
-  const token = getErc20Token(symbol, network);
-  if (!token?.address) {
-    return res.status(400).json({ success: false, error: 'Token ERC20 non configuré pour l\'envoi.' });
-  }
-  if (!ethers.utils.isAddress(to)) {
-    return res.status(400).json({ success: false, error: 'Adresse de destination invalide.' });
-  }
-
-  try {
-    const contract = getErc20Contract(token.address, network).connect(connectedWallet);
-    const value = ethers.utils.parseUnits(amount.toString(), token.decimals);
-
-    const currentBalance = await contract.balanceOf(connectedWallet.address);
-    if (currentBalance.lt(value)) {
-      return res.status(400).json({ success: false, error: `Fonds ${token.symbol} insuffisants sur le wallet.` });
-    }
-
-    const tx = await contract.transfer(to, value);
-    await tx.wait();
-
-    res.json({
-      success: true,
-      message: `${token.symbol} envoyé avec succès !`,
-      txHash: tx.hash,
-      network,
-    });
-  } catch (error) {
-    console.error('ERC20 send error:', error);
-    res.status(400).json({ success: false, error: 'Transfert ERC20 impossible (fonds insuffisants, gas, ou erreur réseau).' });
-  }
 });
 
 router.get('/market', async (req, res) => {
@@ -693,6 +547,21 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
 // n'importe qui via les DevTools). L'envoi d'un NFT reste 100% côté client
 // (signature locale + POST /tx/broadcast existant, comme un envoi ERC20) —
 // cette route ne fait QUE lire les NFT déjà possédés, aucune clé privée ici.
+// Sous-domaines Alchemy par réseau — la clé (process.env.ALCHEMY_API_KEY)
+// est la MÊME pour tous, mais chaque réseau doit être activé séparément sur
+// le tableau de bord Alchemy (Settings > Networks) pour cette clé, sinon
+// Alchemy répond 403 "XXX_MAINNET is not enabled for this app". Vérifié en
+// direct : seul ethereum est activé sur la clé actuelle (2026-08-18) — les
+// autres réseaux fonctionneront dès qu'ils seront activés côté dashboard,
+// aucun changement de code nécessaire à ce moment-là.
+const ALCHEMY_NFT_SUBDOMAINS = {
+  ethereum: 'eth-mainnet',
+  polygon: 'polygon-mainnet',
+  arbitrum: 'arb-mainnet',
+  optimism: 'opt-mainnet',
+  base: 'base-mainnet',
+};
+
 router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
   try {
     const apiKey = process.env.ALCHEMY_API_KEY;
@@ -703,11 +572,28 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
     if (!ethers.utils.isAddress(address)) {
       return res.status(400).json({ success: false, error: 'Adresse invalide.' });
     }
-    const url = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
+    const requestedNetwork = normalizeNetwork(req.query.network || 'ethereum');
+    const subdomain = ALCHEMY_NFT_SUBDOMAINS[requestedNetwork];
+    if (!subdomain) {
+      return res.status(400).json({ success: false, error: `Galerie NFT non supportée sur ${requestedNetwork}.` });
+    }
+    const url = `https://${subdomain}.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
     const response = await fetch(url);
-    const data = await response.json();
+    // Alchemy répond parfois en texte brut (pas du JSON) sur certaines
+    // erreurs — ex. 403 "XXX_MAINNET is not enabled for this app" — .json()
+    // planterait dessus (vu en vrai : "Unexpected token 'M'..."). Lit le
+    // texte d'abord, ne parse en JSON que si ça y ressemble.
+    const rawBody = await response.text();
+    let data = null;
+    try { data = JSON.parse(rawBody); } catch { /* réponse non-JSON, on garde rawBody */ }
     if (!response.ok) {
-      return res.status(400).json({ success: false, error: data?.message || 'Impossible de récupérer les NFT.' });
+      const notEnabled = response.status === 403 && /not enabled for this app/i.test(data?.message || rawBody || '');
+      return res.status(400).json({
+        success: false,
+        error: notEnabled
+          ? `Réseau ${requestedNetwork} pas encore activé sur le tableau de bord Alchemy pour cette clé.`
+          : (data?.message || 'Impossible de récupérer les NFT.'),
+      });
     }
     const nfts = (data.ownedNfts || [])
       .filter((n) => (n.id?.tokenMetadata?.tokenType || 'ERC721') === 'ERC721')
@@ -818,96 +704,61 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
   }
 });
 
-router.get('/info', requireSession, async (req, res) => {
+// Vente de crypto (off-ramp) via le widget MoonPay — l'utilisateur envoie
+// lui-même les fonds depuis son wallet vers l'adresse de dépôt que le widget
+// affiche (aucun accès à sa clé privée requis côté backend, cohérent avec
+// l'architecture non-custodiale : voir NOTES.md / lib/wallet.js côté client).
+router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) => {
   try {
-    const network = normalizeNetwork(req.query.network || 'ethereum');
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-    const balanceWei = await getProvider(network).getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-    const cfg = getNetworkConfig(network);
-
-    res.json({
-      success: true,
-      address: connectedWallet.address,
-      balance,
-      network,
-      chainId: cfg.chainId,
-      nativeSymbol: cfg.nativeSymbol,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-router.get('/bsc/info', requireSession, async (req, res) => {
-  try {
-    const connectedWallet = getConnectedWallet(req.walletSession.wallet, 'bsc');
-
-    const balanceWei = await getProvider('bsc').getBalance(connectedWallet.address);
-    const balance = ethers.utils.formatEther(balanceWei);
-    const cfg = getNetworkConfig('bsc');
-
-    res.json({
-      success: true,
-      address: connectedWallet.address,
-      balance,
-      network: 'bsc',
-      chainId: cfg.chainId,
-      nativeSymbol: cfg.nativeSymbol,
-    });
-  } catch (error) {
-    console.error('Wallet route error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
-  }
-});
-
-async function sendNative(req, res, network = 'ethereum') {
-  const { to, amount } = req.body;
-  const connectedWallet = getConnectedWallet(req.walletSession.wallet, network);
-
-  try {
-    if (!ethers.utils.isAddress(to)) {
-      return res.status(400).json({ success: false, error: 'L\'adresse de destination n\'est pas valide !' });
+    const { amountCrypto, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
+    if (!amountCrypto || !tokenSymbol) {
+      return res.status(400).json({ success: false, error: 'Montant et token requis.' });
+    }
+    if (PAYMENT_PROVIDER !== 'moonpay') {
+      return res.status(503).json({ success: false, error: 'La vente n’est disponible que via MoonPay pour l’instant.' });
+    }
+    if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
+      return res.status(503).json({ success: false, error: 'MoonPay non configuré (clé API/secrète manquante dans .env).' });
+    }
+    const normalizedSellNetwork = normalizeNetwork(network);
+    const walletAddressValid = normalizedSellNetwork === 'solana'
+      ? isValidSolanaAddress(walletAddress || '')
+      : normalizedSellNetwork === 'bitcoin'
+      ? isValidBitcoinAddress(walletAddress || '')
+      : ethers.utils.isAddress(walletAddress || '');
+    if (!walletAddressValid) {
+      return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
+    }
+    const amount = parseFloat(amountCrypto);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    }
+    const currencyCode = MOONPAY_CURRENCY_CODES[normalizedSellNetwork]?.[tokenSymbol.toUpperCase()];
+    if (!currencyCode) {
+      return res.status(400).json({ success: false, error: `Vente de ${tokenSymbol} non supportée sur ce wallet.` });
     }
 
-    const provider = getProvider(network);
-    const currentBalanceWei = await provider.getBalance(connectedWallet.address);
-    const currentBalance = ethers.utils.formatEther(currentBalanceWei);
-    if (parseFloat(currentBalance) < parseFloat(amount)) {
-      return res.status(400).json({ success: false, error: 'Fonds insuffisants sur le wallet.' });
-    }
+    const frontendBase = (() => {
+      if (returnUrl && typeof returnUrl === 'string' && returnUrl.startsWith('http')) {
+        try { return new URL(returnUrl).origin; } catch (err) { /* ignore invalid URL */ }
+      }
+      if (req.headers.origin) {
+        try { return new URL(req.headers.origin).origin; } catch (err) { /* ignore invalid origin */ }
+      }
+      return FRONTEND_URL;
+    })();
 
-    const tx = {
-      to,
-      value: ethers.utils.parseEther(amount),
-    };
-
-    const transactionResponse = await connectedWallet.sendTransaction(tx);
-    await transactionResponse.wait();
-
-    const newBalanceWei = await provider.getBalance(connectedWallet.address);
-
-    res.json({
-      success: true,
-      message: 'Le transfert a été validé sur la blockchain !',
-      txHash: transactionResponse.hash,
-      newBalance: ethers.utils.formatEther(newBalanceWei),
-      network,
+    const url = buildMoonPaySellUrl({
+      currencyCode,
+      refundWalletAddress: walletAddress,
+      baseCurrencyAmount: amount,
+      redirectURL: frontendBase,
     });
+    res.json({ success: true, provider: 'moonpay', url });
   } catch (error) {
-    console.error('Détail erreur Blockchain :', error);
-    res.status(500).json({ success: false, error: 'Fonds insuffisants ou erreur de communication réseau.' });
+    console.error('Sell session error:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors de la création de la session de vente.' });
   }
-}
-
-router.post('/send', sensitiveLimiter, requireSession, async (req, res) => {
-  return sendNative(req, res, 'ethereum');
-});
-
-router.post('/bsc/send', sensitiveLimiter, requireSession, async (req, res) => {
-  return sendNative(req, res, 'bsc');
 });
 
 // Relais de diffusion — wallet non-custodial : reçoit une transaction DÉJÀ

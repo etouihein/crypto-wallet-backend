@@ -14,12 +14,13 @@ const { Core } = require('@walletconnect/core');
 const { WalletKit } = require('@reown/walletkit');
 const { buildApprovedNamespaces } = require('@walletconnect/utils');
 const { ethers } = require('ethers');
+const { Linking } = require('react-native');
 const { getProvider } = require('./wallet');
 
 const PROJECT_ID = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID)
   || '55c2aebe65c7efd7a891664b9570c52d';
 
-// Format CAIP-2 ("eip155:<chainId>") des 3 chaînes EVM que ce wallet sait
+// Format CAIP-2 ("eip155:<chainId>") des chaînes EVM que ce wallet sait
 // réellement signer (voir NETWORKS dans wallet.js) — Solana/Bitcoin ne sont
 // pas EVM et utiliseraient un namespace CAIP différent ("solana:...") non
 // géré ici pour l'instant.
@@ -27,6 +28,9 @@ const SUPPORTED_EVM_CHAINS = {
   'eip155:1': 'ethereum',
   'eip155:56': 'bsc',
   'eip155:137': 'polygon',
+  'eip155:42161': 'arbitrum',
+  'eip155:10': 'optimism',
+  'eip155:8453': 'base',
 };
 
 const SUPPORTED_METHODS = ['personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'eth_sendTransaction'];
@@ -34,6 +38,20 @@ const SUPPORTED_EVENTS = ['chainChanged', 'accountsChanged'];
 
 let walletKitInstance = null;
 let walletKitInitPromise = null;
+
+// Après une approbation de connexion ou une réponse de signature/tx réussie,
+// certaines dApps annoncent dans leurs métadonnées une URL de "retour"
+// (redirect.native, parfois redirect.universal) à ouvrir pour reprendre la
+// main sur leur onglet/appli (comme le fait MetaMask/Trust Wallet). Ce champ
+// est facultatif : silencieux si absent ou si l'ouverture échoue (jamais
+// affiché à l'utilisateur, ça ne doit jamais faire échouer l'approbation).
+function redirectToDappIfPossible(metadata) {
+  try {
+    const url = metadata?.redirect?.native || metadata?.redirect?.universal;
+    if (!url) return;
+    Linking.openURL(url).catch(() => { /* dApp non joignable, rien à faire */ });
+  } catch { /* pas de Linking dispo (ex: web) ou métadonnées invalides */ }
+}
 
 // Un seul WalletKit par process (sessions/pairings vivent tant que l'app
 // tourne) — initialisé paresseusement à la première connexion demandée par
@@ -96,7 +114,9 @@ async function approveSessionProposal(proposal, address) {
       },
     },
   });
-  return kit.approveSession({ id: proposal.id, namespaces });
+  const session = await kit.approveSession({ id: proposal.id, namespaces });
+  redirectToDappIfPossible(proposal.params?.proposer?.metadata);
+  return session;
 }
 
 async function rejectSessionProposal(proposal, reason = 'Refusé par l\'utilisateur') {
@@ -116,7 +136,10 @@ async function disconnectSession(topic) {
 
 async function respondToSessionRequest(topic, id, result) {
   const kit = await getWalletKit();
-  return kit.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } });
+  const response = await kit.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } });
+  const session = (kit.getActiveSessions() || {})[topic];
+  redirectToDappIfPossible(session?.peer?.metadata);
+  return response;
 }
 
 async function rejectSessionRequest(topic, id, message = "Refusé par l'utilisateur") {

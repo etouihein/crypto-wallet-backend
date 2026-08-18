@@ -24,12 +24,26 @@ import * as Clipboard from 'expo-clipboard';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import jsQR from 'jsqr';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
+import { buildInjectedProvider } from './lib/dappBrowserProvider';
+import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
+import * as approvals from './lib/approvals';
+import { looksLikePoisonedAddress } from './lib/addressSafety';
+import * as recurringBuy from './lib/recurringBuy';
+import * as bridge from './lib/bridge';
+import * as defiPositions from './lib/defiPositions';
+import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
+import { pbkdf2 } from '@ethersproject/pbkdf2';
+// react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
+// dans le paquet) — l'importer statiquement ferait planter le bundle web au
+// rendu. Chargé dynamiquement, natif uniquement (voir renderDappBrowser).
+const WebView = Platform.OS === 'web' ? null : require('react-native-webview').WebView;
 
 const { width } = Dimensions.get('window');
 
@@ -55,6 +69,7 @@ const DARK_THEME = {
   up:      '#7fb69a',
   upBg:    'rgba(127, 182, 154, 0.12)',
   down:    '#c98a8a',
+  
   downBg:  'rgba(201, 138, 138, 0.12)',
   red:     '#c9605f',
   redBg:   'rgba(201, 96, 95, 0.12)',
@@ -139,6 +154,14 @@ const useTheme = () => useContext(ThemeContext);
 // une imprécision de quelques % est acceptable pour un affichage indicatif,
 // mais ne pas s'y fier pour un calcul exact (à rafraîchir à la main de temps
 // en temps, ou brancher sur une vraie API de taux de change plus tard).
+const LOCALE_DISPLAY = {
+  fr: { flag: '🇫🇷', name: 'Français' },
+  en: { flag: '🇬🇧', name: 'English' },
+  es: { flag: '🇪🇸', name: 'Español' },
+  de: { flag: '🇩🇪', name: 'Deutsch' },
+  pt: { flag: '🇵🇹', name: 'Português' },
+};
+
 const CURRENCIES = {
   USD: { symbol: '$',   name: 'Dollar US',        flag: '🇺🇸', rate: 1      },
   EUR: { symbol: '€',   name: 'Euro',              flag: '🇪🇺', rate: 0.922  },
@@ -521,6 +544,52 @@ const loadRecentAddresses = async () => {
   } catch { return []; }
 };
 
+// PIN de détresse ("duress PIN") : un second code, distinct du vrai, qui
+// affiche un wallet à solde nul au lieu du vrai — utile si quelqu'un force
+// l'utilisateur à déverrouiller son wallet sous contrainte. Ce code ne sert
+// jamais à déchiffrer quoi que ce soit (contrairement au vrai PIN, qui
+// déchiffre le keystore), donc pas besoin d'en faire une clé de chiffrement
+// — juste vérifier qu'il correspond, puis ne RIEN déchiffrer.
+//
+// Stocké comme un sel aléatoire + un hash dérivé par PBKDF2 (100 000
+// itérations), PAS un simple keccak256 non salé : sur un espace de
+// seulement 1 000 000 de codes à 6 chiffres, un hash rapide se retrouve
+// entièrement par force brute en une fraction de seconde si jamais le
+// stockage de l'appareil est extrait (backup, malware, accès root) — un
+// attaquant pourrait alors connaître le code de détresse À L'AVANCE et
+// repérer qu'il est faux au moment où on le tape sous la contrainte,
+// ruinant tout l'intérêt de la fonctionnalité. PBKDF2 rend ce calcul assez
+// coûteux pour que ça ne soit plus praticable sur tout l'espace des codes.
+const DURESS_PIN_HASH_KEY = 'wallet-pro-duress-pin-hash-v1';
+const DURESS_PBKDF2_ITERATIONS = 100000;
+
+const hashDuressPin = (pin, saltHex) => pbkdf2(
+  ethers.utils.toUtf8Bytes(`nexia-duress-v1:${pin}`),
+  saltHex,
+  DURESS_PBKDF2_ITERATIONS,
+  32,
+  'sha256'
+);
+
+const loadDuressPinRecord = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(DURESS_PIN_HASH_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+};
+
+const saveDuressPin = async (pin) => {
+  try {
+    const salt = ethers.utils.hexlify(ethers.utils.randomBytes(16));
+    const hash = hashDuressPin(pin, salt);
+    await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, JSON.stringify({ salt, hash }));
+  } catch { /* rien à faire */ }
+};
+
+const clearDuressPin = async () => {
+  try { await AsyncStorage.removeItem(DURESS_PIN_HASH_KEY); } catch { /* rien à faire */ }
+};
+
 const saveRecentAddresses = async (list) => {
   try { await AsyncStorage.setItem(RECENT_ADDRESSES_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
@@ -597,6 +666,61 @@ const loadVibrationEnabled = async () => {
 
 const saveVibrationEnabled = async (enabled) => {
   try { await AsyncStorage.setItem(VIBRATION_ENABLED_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
+// "Masquer les soldes à zéro" sur l'accueil — préférence d'affichage pure,
+// ne cache rien ailleurs (Envoyer/Swap/Acheter listent toujours tout).
+const HIDE_ZERO_BALANCES_KEY = 'wallet-pro-hide-zero-balances-v1';
+
+const loadHideZeroBalances = async () => {
+  try { return (await AsyncStorage.getItem(HIDE_ZERO_BALANCES_KEY)) === 'true'; } catch { return false; }
+};
+
+const saveHideZeroBalances = async (enabled) => {
+  try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
+// Parrainage : code de qui a invité cet appareil, capté une seule fois (à la
+// toute première installation) depuis le lien ?ref=XXXXXXXX partagé — voir
+// shareReferralLink. Purement informatif tant qu'aucun système de récompense
+// n'existe côté backend ; stocké pour être prêt le jour où il en existera un.
+const REFERRED_BY_KEY = 'wallet-pro-referred-by-v1';
+
+const saveReferredBy = async (code) => {
+  try {
+    const existing = await AsyncStorage.getItem(REFERRED_BY_KEY);
+    if (existing) return; // ne jamais écraser la toute première attribution
+    await AsyncStorage.setItem(REFERRED_BY_KEY, code);
+  } catch { /* rien à faire */ }
+};
+
+const loadReferredBy = async () => {
+  try { return await AsyncStorage.getItem(REFERRED_BY_KEY); } catch { return null; }
+};
+
+// Mode hors-ligne : dernier solde connu mis en cache par adresse, affiché
+// immédiatement au démarrage (avant même la première requête RPC) et
+// réutilisé si le réseau tombe — toujours étiqueté comme "dernières données
+// connues", jamais présenté comme un solde à jour en temps réel.
+const PORTFOLIO_CACHE_KEY = 'wallet-pro-portfolio-cache-v1';
+
+const savePortfolioCache = async (address, network, snapshot) => {
+  if (!address) return;
+  try {
+    const raw = await AsyncStorage.getItem(PORTFOLIO_CACHE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[`${address.toLowerCase()}:${network}`] = { ...snapshot, cachedAt: Date.now() };
+    await AsyncStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(all));
+  } catch { /* rien à faire */ }
+};
+
+const loadPortfolioCache = async (address, network) => {
+  if (!address) return null;
+  try {
+    const raw = await AsyncStorage.getItem(PORTFOLIO_CACHE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    return all[`${address.toLowerCase()}:${network}`] || null;
+  } catch { return null; }
 };
 
 // Langue de l'interface (fr/en) — voir lib/i18n.js. Français par défaut
@@ -1073,7 +1197,7 @@ function showAlert(title, message, buttons) {
 // interne (icône | texte | valeur sur une ligne) intacte.
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
+function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95, ...rest }) {
   const scale = useRef(new Animated.Value(1)).current;
   const animateTo = (toValue) => {
     Animated.spring(scale, { toValue, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
@@ -1085,6 +1209,7 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
       disabled={disabled}
       onPressIn={() => animateTo(scaleTo)}
       onPressOut={() => animateTo(1)}
+      {...rest}
     >
       {children}
     </AnimatedPressable>
@@ -1668,6 +1793,11 @@ function AppContent({ themeMode, changeTheme }) {
   const isWideWeb = Platform.OS === 'web' && winWidth >= 860;
   const [pinCode, setPinCode]         = useState('');
   const [isUnlocked, setIsUnlocked]   = useState(false);
+  const [isDuressMode, setIsDuressMode] = useState(false); // voir hashDuressPin — wallet à solde nul, jamais la vraie clé
+  const [duressPinConfigured, setDuressPinConfigured] = useState(false);
+  const [showDuressSetup, setShowDuressSetup] = useState(false);
+  const [duressSetupInput, setDuressSetupInput] = useState('');
+  const [duressSetupError, setDuressSetupError] = useState(null);
   const [tab, setTab]                 = useState('home');
   const [currency, setCurrency]       = useState('USD');
 
@@ -1699,9 +1829,16 @@ function AppContent({ themeMode, changeTheme }) {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showSettings, setShowSettings]   = useState(false);
   const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
+  // true seulement quand renderLegal() a été ouvert depuis Paramètres (et pas
+  // depuis le pied de page de la landing publique, qui n'a pas de Settings à
+  // rouvrir) — sert uniquement à décider si le bouton retour doit rouvrir
+  // Paramètres.
+  const [legalDocFromSettings, setLegalDocFromSettings] = useState(false);
   const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
+  const [ensResolving, setEnsResolving]   = useState(false);
+  const [ensError, setEnsError]           = useState(null);
   const [sendAmount, setSendAmount]       = useState('');
   const [sendAmountMode, setSendAmountMode] = useState('crypto'); // 'crypto' | 'fiat' — sendAmount (en crypto) reste la seule source de vérité pour l'envoi
   const [sendAmountFiatInput, setSendAmountFiatInput] = useState('');
@@ -1717,6 +1854,31 @@ function AppContent({ themeMode, changeTheme }) {
   const [buyToken, setBuyToken]           = useState('ETH');
   const [buyAmount, setBuyAmount]         = useState('10');
   const [buyLoading, setBuyLoading]       = useState(false);
+  const [showSell, setShowSell]           = useState(false);
+  const [sellToken, setSellToken]         = useState('ETH');
+  const [sellAmount, setSellAmount]       = useState('');
+  const [sellLoading, setSellLoading]     = useState(false);
+  // Achat récurrent (DCA) — rappel local, voir lib/recurringBuy.js.
+  const [showRecurringBuy, setShowRecurringBuy] = useState(false);
+  const [recurringEnabled, setRecurringEnabled] = useState(false);
+  const [recurringAmount, setRecurringAmount]   = useState('20');
+  const [recurringToken, setRecurringToken]     = useState('ETH');
+  const [recurringFrequency, setRecurringFrequency] = useState('weekly');
+  const [recurringSaving, setRecurringSaving]   = useState(false);
+  // Pont cross-chain (voir lib/bridge.js) — ETH natif entre Ethereum/
+  // Arbitrum/Optimism/Base uniquement (v1, voir commentaire dans bridge.js).
+  const [showBridge, setShowBridge]         = useState(false);
+  const [bridgeFromNetwork, setBridgeFromNetwork] = useState('ethereum');
+  const [bridgeToNetwork, setBridgeToNetwork]     = useState('arbitrum');
+  const [bridgeAmount, setBridgeAmount]     = useState('');
+  const [bridgeQuote, setBridgeQuote]       = useState(null);
+  const [bridgeQuoteLoading, setBridgeQuoteLoading] = useState(false);
+  const [bridgeExecuting, setBridgeExecuting]       = useState(false);
+  const [bridgeError, setBridgeError]       = useState(null);
+  // Positions DeFi (voir lib/defiPositions.js) — v1 : Lido stETH uniquement.
+  const [showDefiPositions, setShowDefiPositions] = useState(false);
+  const [defiPositionsList, setDefiPositionsList] = useState([]);
+  const [defiPositionsLoading, setDefiPositionsLoading] = useState(false);
   const [walletAddr, setWalletAddr]       = useState('');
   const [walletBalance, setWalletBalance] = useState('0');
   const [backendReady, setBackendReady]   = useState(false);
@@ -1750,6 +1912,27 @@ function AppContent({ themeMode, changeTheme }) {
   const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
   const [wcRequestLoading, setWcRequestLoading] = useState(false);
   const [wcRequestError, setWcRequestError]     = useState(null);
+  const [wcSimResult, setWcSimResult]           = useState(null); // voir lib/txSimulation.js
+  // Navigateur dApp intégré — WebView + provider EIP-1193 injecté (voir
+  // lib/dappBrowserProvider.js). Pont direct WebView <-> natif (pas de
+  // relais WalletConnect), mais la signature réutilise exactement
+  // walletConnect.executeSessionRequest — même code que pour WalletConnect.
+  // Natif uniquement : react-native-webview n'a pas d'implémentation web.
+  const [showDappBrowser, setShowDappBrowser]     = useState(false);
+  const [dappUrlInput, setDappUrlInput]           = useState('');
+  const [dappCurrentUrl, setDappCurrentUrl]       = useState(null);
+  const [dappConnectedOrigins, setDappConnectedOrigins] = useState([]); // origines autorisées à voir l'adresse (session app en cours)
+  const [dappBridgeRequest, setDappBridgeRequest] = useState(null); // { id, method, params, origin } en attente de confirmation
+  const [dappBridgeLoading, setDappBridgeLoading] = useState(false);
+  const [dappBridgeError, setDappBridgeError]     = useState(null);
+  const [dappSimResult, setDappSimResult]         = useState(null); // voir lib/txSimulation.js
+  const dappWebViewRef = useRef(null);
+  // Autorisations de tokens accordées via cette app (voir lib/approvals.js)
+  // — suivi local uniquement, pas d'indexeur tiers.
+  const [showApprovals, setShowApprovals]         = useState(false);
+  const [tokenApprovals, setTokenApprovals]       = useState([]);
+  const [approvalsLoading, setApprovalsLoading]   = useState(false);
+  const [revokingApprovalId, setRevokingApprovalId] = useState(null);
   // Staking natif Solana — voir getSolanaValidators/getSolanaStakeAccounts/
   // createAndDelegateStake/deactivateStake/withdrawStake dans lib/wallet.js.
   const [showStaking, setShowStaking]           = useState(false);
@@ -1770,6 +1953,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [nftSendAddress, setNftSendAddress]     = useState('');
   const [nftSendLoading, setNftSendLoading]     = useState(false);
   const [nftSendError, setNftSendError]         = useState(null);
+  const [nftNetwork, setNftNetwork]             = useState('ethereum'); // seul 'ethereum' est activé côté Alchemy pour l'instant
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -1796,6 +1980,11 @@ function AppContent({ themeMode, changeTheme }) {
   const [simAmount, setSimAmount]               = useState('100'); // simulateur "et si le prix x2/x5/x10" sur la landing
   const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [hideZeroBalances, setHideZeroBalances] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [portfolioIsCached, setPortfolioIsCached] = useState(false); // true tant qu'on affiche le cache, pas un solde fraîchement récupéré
+  const [showReferral, setShowReferral] = useState(false);
+  const [referredByCode, setReferredByCode] = useState(null);
   const [locale, setLocale] = useState('fr');
   // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
   // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
@@ -1867,6 +2056,24 @@ function AppContent({ themeMode, changeTheme }) {
       await copyToClipboard(shareUrl, 'Lien copié dans le presse-papiers');
     }
   }, [copyToClipboard]);
+
+  // Code de parrainage : dérivé directement de l'adresse (pas besoin de le
+  // générer/stocker séparément — stable tant que l'adresse ne change pas).
+  // Honnête sur le périmètre : aucun système de récompense n'existe côté
+  // backend pour l'instant, juste un lien traçable prêt à en recevoir un
+  // plus tard (voir referredByCode ci-dessous, capté si présent dans l'URL).
+  const referralCode = walletAddr ? walletAddr.slice(2, 10).toUpperCase() : null;
+
+  const shareReferralLink = useCallback(async () => {
+    if (!referralCode) return;
+    const shareUrl = `https://nexiawallet.fr?ref=${referralCode}`;
+    const message = `Rejoins-moi sur NexiaWallet, mon portefeuille crypto non-custodial préféré : ${shareUrl}`;
+    try {
+      await Share.share({ title: 'NexiaWallet', message, url: shareUrl });
+    } catch {
+      await copyToClipboard(shareUrl, 'Lien de parrainage copié');
+    }
+  }, [referralCode, copyToClipboard]);
 
   // Bip succès/échec via Web Audio API — web uniquement. Sur natif, la
   // vibration déjà en place (voir toggle "Sons et vibrations" dans
@@ -1947,9 +2154,12 @@ function AppContent({ themeMode, changeTheme }) {
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
   const NETWORK_INFO = {
-    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1, explorer: 'https://etherscan.io' },
-    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,  explorer: 'https://bscscan.com' },
-    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137, explorer: 'https://polygonscan.com' },
+    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1,     explorer: 'https://etherscan.io' },
+    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,    explorer: 'https://bscscan.com' },
+    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137,   explorer: 'https://polygonscan.com' },
+    arbitrum: { label: 'Arbitrum One',     network: 'arbitrum', chainId: 42161, explorer: 'https://arbiscan.io' },
+    optimism: { label: 'Optimism',         network: 'optimism', chainId: 10,    explorer: 'https://optimistic.etherscan.io' },
+    base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org' },
   };
   const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
   // Symbole du token natif du réseau actif — recalculé souvent ailleurs
@@ -2066,6 +2276,10 @@ function AppContent({ themeMode, changeTheme }) {
   // solde (donnée publique de la blockchain), donc aucun appel backend ici.
   const refreshPortfolio = useCallback(async (selectedNetwork = network) => {
     if (!walletAddr) return;
+    // Mode détresse : ne JAMAIS récupérer le vrai solde, sinon il finirait
+    // par écraser le zéro affiché (rafraîchissement périodique, changement
+    // de réseau...) et trahirait que ce n'est pas le vrai wallet vide.
+    if (isDuressMode) return;
     try {
       const nativeSymbol = { bsc: 'BNB', polygon: 'MATIC' }[selectedNetwork] || 'ETH';
       const nativeBalance = await localWallet.getNativeBalance(walletAddr, selectedNetwork);
@@ -2076,9 +2290,11 @@ function AppContent({ themeMode, changeTheme }) {
       }));
 
       const tokenSymbols = ['USDT', 'USDC'];
+      const erc20Balances = {};
       await Promise.all(tokenSymbols.map(async (sym) => {
         try {
           const balance = await localWallet.getErc20Balance(walletAddr, sym, selectedNetwork);
+          erc20Balances[sym] = parseFloat(balance);
           setTokens(prev => ({
             ...prev,
             [sym]: { ...prev[sym], balance: parseFloat(balance) },
@@ -2087,10 +2303,33 @@ function AppContent({ themeMode, changeTheme }) {
           console.warn(`Balance ${sym} failed`, err.message);
         }
       }));
+
+      // Solde récupéré avec succès (au moins la partie native) — on n'est
+      // plus hors-ligne, et on met à jour le cache pour la prochaine fois
+      // que le réseau manquera.
+      setIsOffline(false);
+      setPortfolioIsCached(false);
+      savePortfolioCache(walletAddr, selectedNetwork, { nativeSymbol, nativeBalance, erc20Balances });
     } catch (err) {
       console.warn('refreshPortfolio error', err.message);
+      // Échec réseau (pas juste une erreur applicative) : bascule sur le
+      // dernier solde connu en cache plutôt que de laisser l'écran figé sur
+      // d'anciennes valeurs sans le signaler.
+      const cached = await loadPortfolioCache(walletAddr, selectedNetwork);
+      if (cached) {
+        setWalletBalance(cached.nativeBalance);
+        setTokens(prev => {
+          const next = { ...prev, [cached.nativeSymbol]: { ...prev[cached.nativeSymbol], balance: parseFloat(cached.nativeBalance) } };
+          Object.entries(cached.erc20Balances || {}).forEach(([sym, bal]) => {
+            if (next[sym]) next[sym] = { ...next[sym], balance: bal };
+          });
+          return next;
+        });
+        setPortfolioIsCached(true);
+      }
+      setIsOffline(true);
     }
-  }, [network, walletAddr]);
+  }, [network, walletAddr, isDuressMode]);
 
   // Solde SOL — même principe (RPC public direct, pas de clé nécessaire),
   // mais indépendant du sélecteur réseau EVM (Solana n'en fait pas partie).
@@ -2180,6 +2419,16 @@ function AppContent({ themeMode, changeTheme }) {
   // et étiquettes -- rien de sensible (aucune clé, aucune donnée privée),
   // copié en JSON via le presse-papier plutôt qu'un vrai fichier (même choix
   // que l'export CSV, pas de expo-file-system installé).
+  // Exporte le keystore DÉJÀ chiffré (format JSON standard ethers/geth —
+  // scrypt+AES, le même format que MetaMask) — pas une nouvelle sauvegarde en
+  // clair, juste rendre portable ce qui est déjà stocké chiffré localement.
+  // Toujours protégé par le même PIN qu'aujourd'hui : sur un autre appareil,
+  // il faudra quand même le PIN d'origine pour le déchiffrer.
+  const exportEncryptedKeystore = useCallback(async () => {
+    if (!walletSession?.encryptedKeystore) return;
+    await copyToClipboard(walletSession.encryptedKeystore, 'Keystore chiffré copié — colle-le dans un fichier .json en lieu sûr');
+  }, [walletSession, copyToClipboard]);
+
   const exportUserData = useCallback(async () => {
     const payload = { version: 1, favorites, recentAddresses, priceAlerts, txTags };
     await copyToClipboard(JSON.stringify(payload), 'Données copiées — colle-les sur le nouvel appareil');
@@ -2329,12 +2578,25 @@ function AppContent({ themeMode, changeTheme }) {
     setIsVerifyingPin(true);
     setPinError(null);
     try {
+      const duressRecord = await loadDuressPinRecord();
+      if (duressRecord && hashDuressPin(pin, duressRecord.salt) === duressRecord.hash) {
+        // Code de détresse : jamais de déchiffrement, jamais la vraie clé —
+        // juste un état "déverrouillé" avec un solde à zéro.
+        setIsDuressMode(true);
+        setIsUnlocked(true);
+        setWalletBalance('0');
+        setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
+        setPinCode('');
+        setPinError(null);
+        return;
+      }
       const result = await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, pin);
       if (result.address.toLowerCase() !== walletSession.address.toLowerCase()) {
         throw new Error('Adresse incohérente après déchiffrement.');
       }
       setUnlockedPrivateKey(result.privateKey);
       setUnlockedMnemonic(result.mnemonic);
+      setIsDuressMode(false);
       setIsUnlocked(true);
       setPinCode('');
       setPinError(null);
@@ -2436,6 +2698,7 @@ function AppContent({ themeMode, changeTheme }) {
             setWalletCreated(false);
             setBackendReady(false);
             setIsUnlocked(false);
+            setIsDuressMode(false);
             setShowSettings(false);
             setUnlockedPrivateKey(null);
             setUnlockedMnemonic(null);
@@ -2473,6 +2736,7 @@ function AppContent({ themeMode, changeTheme }) {
     setUnlockedPrivateKey(null);
     setUnlockedMnemonic(null);
     setIsUnlocked(false);
+    setIsDuressMode(false);
     setPinCode('');
     setPinError(null);
     setHistoryItems(null);
@@ -2593,6 +2857,36 @@ function AppContent({ themeMode, changeTheme }) {
     }
   }, [wcUri]);
 
+  // Deep links entrants (nexiawallet://... ou une URI "wc:..." ouverte
+  // directement par le navigateur/l'appli d'une dApp) — au démarrage à froid
+  // via Linking.getInitialURL(), puis pendant que l'app tourne déjà via
+  // l'event 'url'. Réutilise handleWcConnect, exactement comme le scanner QR
+  // du flux d'envoi (handleQrScanned) qui détecte déjà le préfixe "wc:".
+  useEffect(() => {
+    const handleIncomingUrl = (url) => {
+      if (!url) return;
+      const trimmed = url.trim();
+      if (trimmed.startsWith('wc:')) {
+        handleWcConnect(trimmed);
+        return;
+      }
+      // nexiawallet://wc?uri=wc%3A... : certaines dApps/navigateurs
+      // encapsulent l'URI WalletConnect dans un paramètre de notre propre
+      // scheme plutôt que de passer un "wc:" brut.
+      const match = trimmed.match(/[?&]uri=([^&]+)/);
+      if (match) {
+        try {
+          const decoded = decodeURIComponent(match[1]);
+          if (decoded.startsWith('wc:')) handleWcConnect(decoded);
+        } catch { /* paramètre mal formé, on ignore */ }
+      }
+    };
+
+    Linking.getInitialURL().then(handleIncomingUrl).catch(() => { /* rien à faire */ });
+    const sub = Linking.addEventListener('url', ({ url }) => handleIncomingUrl(url));
+    return () => sub.remove();
+  }, [handleWcConnect]);
+
   const handleWcApproveProposal = useCallback(async () => {
     if (!wcProposal || !walletAddr) return;
     try {
@@ -2612,6 +2906,71 @@ function AppContent({ themeMode, changeTheme }) {
     setWcProposal(null);
   }, [wcProposal]);
 
+  // ── Autorisations de tokens (voir lib/approvals.js) ── déclaré ici, AVANT
+  // handleWcApproveRequest/handleDappBridgeApprove qui référencent
+  // maybeRecordApproval dans leur tableau de dépendances useCallback — sinon
+  // TDZ ("Cannot access before initialization") au premier rendu, ce n'est
+  // pas juste une question de style/ordre de lecture.
+  const refreshApprovals = useCallback(async () => {
+    if (!walletAddr) return;
+    setApprovalsLoading(true);
+    try {
+      const list = await approvals.getApprovals(walletAddr);
+      setTokenApprovals(list);
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }, [walletAddr]);
+
+  // Enregistre localement une approbation qu'on vient de faire signer avec
+  // succès (approve/increaseAllowance/setApprovalForAll), si le calldata en
+  // était bien une — no-op silencieux sinon. Best-effort sur le symbole du
+  // token (n'empêche jamais l'enregistrement si l'appel réseau échoue).
+  const maybeRecordApproval = useCallback(async ({ to, data, network: net, txHash }) => {
+    if (!walletAddr) return;
+    const known = decodeKnownCall(data);
+    if (!known || !['approve', 'increaseAllowance', 'setApprovalForAll'].includes(known.name)) return;
+    const isNft = known.name === 'setApprovalForAll';
+    if (isNft && known.args[1] !== true) return; // setApprovalForAll(..., false) = ce n'est pas une nouvelle autorisation
+    const spender = known.args[0];
+    let tokenSymbol = '?';
+    try { tokenSymbol = (await localWallet.getCustomTokenInfo(to, walletAddr, net)).symbol; } catch { /* best-effort */ }
+    await approvals.recordApproval(walletAddr, {
+      network: net, tokenAddress: to, tokenSymbol, spender,
+      amount: isNft ? null : known.args[1]?.toString(), isNft, txHash,
+    });
+  }, [walletAddr]);
+
+  const refreshDefiPositions = useCallback(async () => {
+    if (!walletAddr) return;
+    setDefiPositionsLoading(true);
+    try {
+      const list = await defiPositions.getDefiPositions(walletAddr);
+      setDefiPositionsList(list);
+    } finally {
+      setDefiPositionsLoading(false);
+    }
+  }, [walletAddr]);
+
+  const handleRevokeApproval = useCallback(async (entry) => {
+    if (!unlockedPrivateKey) return;
+    setRevokingApprovalId(entry.id);
+    try {
+      const txHash = await approvals.revokeApproval({
+        privateKey: unlockedPrivateKey, network: entry.network,
+        tokenAddress: entry.tokenAddress, spender: entry.spender, isNft: entry.isNft,
+      });
+      await localWallet.waitForTx(txHash, entry.network);
+      await approvals.markRevoked(walletAddr, entry.id);
+      showToast('✓ Autorisation révoquée', 'success');
+      refreshApprovals();
+    } catch (err) {
+      showAlert('Révocation impossible', err.message || 'Réessaie plus tard.');
+    } finally {
+      setRevokingApprovalId(null);
+    }
+  }, [unlockedPrivateKey, walletAddr, showToast, refreshApprovals]);
+
   const handleWcApproveRequest = useCallback(async () => {
     if (!wcRequest || !unlockedPrivateKey) return;
     setWcRequestLoading(true);
@@ -2623,6 +2982,11 @@ function AppContent({ themeMode, changeTheme }) {
         unlockedPrivateKey
       );
       await walletConnect.respondToSessionRequest(topic, id, result);
+      if (params.request.method === 'eth_sendTransaction') {
+        const tx = params.request.params?.[0] || {};
+        const net = walletConnect.SUPPORTED_EVM_CHAINS[params.chainId] || 'ethereum';
+        maybeRecordApproval({ to: tx.to, data: tx.data, network: net, txHash: result }).catch(() => {});
+      }
       showToast('✓ Signé', 'success');
       setWcRequest(null);
     } catch (err) {
@@ -2631,7 +2995,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setWcRequestLoading(false);
     }
-  }, [wcRequest, unlockedPrivateKey, showToast]);
+  }, [wcRequest, unlockedPrivateKey, showToast, maybeRecordApproval]);
 
   const handleWcRejectRequest = useCallback(async () => {
     if (!wcRequest) return;
@@ -2644,6 +3008,118 @@ function AppContent({ themeMode, changeTheme }) {
     try { await walletConnect.disconnectSession(topic); } catch (err) { console.warn('disconnectSession error', err.message); }
     refreshWcSessions();
   }, [refreshWcSessions]);
+
+  // ── Navigateur dApp intégré ──
+  const dappBridgeRespond = useCallback((id, errorMessage, result) => {
+    const script = `window.__nexiaRespond(${id}, ${errorMessage ? JSON.stringify(errorMessage) : 'null'}, ${JSON.stringify(result === undefined ? null : result)}); true;`;
+    dappWebViewRef.current?.injectJavaScript(script);
+  }, []);
+
+  const handleDappBrowserOpen = useCallback((url) => {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return;
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    setDappCurrentUrl(withScheme);
+    setDappUrlInput(withScheme);
+  }, []);
+
+  // Messages venant de la page web (voir lib/dappBrowserProvider.js). Les
+  // méthodes purement lecture (pas de signature, pas de nouvelle
+  // autorisation) sont résolues tout de suite ; le reste passe par une
+  // confirmation explicite (renderDappBridgeRequest).
+  const handleDappMessage = useCallback((event) => {
+    let msg;
+    try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
+    if (!msg || msg.source !== 'nexiawallet-provider') return;
+    const { id, method, params } = msg;
+    let origin = dappCurrentUrl || '';
+    try { origin = new URL(dappCurrentUrl).origin; } catch { /* garde l'URL brute si non parsable */ }
+
+    if (method === 'eth_chainId') {
+      return dappBridgeRespond(id, null, '0x' + localWallet.getNetworkConfig(network).chainId.toString(16));
+    }
+    if (method === 'net_version') {
+      return dappBridgeRespond(id, null, String(localWallet.getNetworkConfig(network).chainId));
+    }
+    if (method === 'eth_accounts') {
+      return dappBridgeRespond(id, null, dappConnectedOrigins.includes(origin) && walletAddr ? [walletAddr] : []);
+    }
+    // eth_requestAccounts / personal_sign / eth_sign / eth_signTypedData(_v4)
+    // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
+    setDappBridgeError(null);
+    setDappBridgeRequest({ id, method, params, origin });
+  }, [dappCurrentUrl, dappConnectedOrigins, walletAddr, network, dappBridgeRespond]);
+
+  const handleDappBridgeApprove = useCallback(async () => {
+    if (!dappBridgeRequest) return;
+    const { id, method, params, origin } = dappBridgeRequest;
+    setDappBridgeLoading(true);
+    setDappBridgeError(null);
+    try {
+      if (method === 'eth_requestAccounts') {
+        setDappConnectedOrigins(prev => (prev.includes(origin) ? prev : [...prev, origin]));
+        dappBridgeRespond(id, null, walletAddr ? [walletAddr] : []);
+      } else if (method === 'wallet_switchEthereumChain') {
+        const requestedHex = params?.[0]?.chainId;
+        const targetNetwork = walletConnect.SUPPORTED_EVM_CHAINS[`eip155:${parseInt(requestedHex, 16)}`];
+        if (!targetNetwork) throw new Error('Réseau non supporté par NexiaWallet.');
+        setNetwork(targetNetwork);
+        dappBridgeRespond(id, null, null);
+        dappWebViewRef.current?.injectJavaScript(`window.__nexiaEmit('chainChanged', ${JSON.stringify(requestedHex)}); true;`);
+      } else {
+        if (!unlockedPrivateKey) throw new Error('Wallet verrouillé.');
+        const chainIdCaip = `eip155:${localWallet.getNetworkConfig(network).chainId}`;
+        const result = await walletConnect.executeSessionRequest({ chainId: chainIdCaip, method, params }, unlockedPrivateKey);
+        dappBridgeRespond(id, null, result);
+        if (method === 'eth_sendTransaction') {
+          const tx = params?.[0] || {};
+          maybeRecordApproval({ to: tx.to, data: tx.data, network, txHash: result }).catch(() => {});
+        }
+      }
+      setDappBridgeRequest(null);
+    } catch (err) {
+      const message = err.message || 'Requête refusée.';
+      setDappBridgeError(message);
+      dappBridgeRespond(id, message, null);
+    } finally {
+      setDappBridgeLoading(false);
+    }
+  }, [dappBridgeRequest, walletAddr, unlockedPrivateKey, network, dappBridgeRespond, maybeRecordApproval]);
+
+  const handleDappBridgeReject = useCallback(() => {
+    if (!dappBridgeRequest) return;
+    dappBridgeRespond(dappBridgeRequest.id, "Refusé par l'utilisateur.", null);
+    setDappBridgeRequest(null);
+    setDappBridgeError(null);
+  }, [dappBridgeRequest, dappBridgeRespond]);
+
+  // Simulation avant signature (voir lib/txSimulation.js) — décodage local du
+  // calldata (approbations dangereuses) + une estimation de gas réelle pour
+  // détecter un revert probable. Ne bloque jamais la signature, affiche juste
+  // un avertissement dans la modale de confirmation.
+  useEffect(() => {
+    const method = wcRequest?.params?.request?.method;
+    if (method !== 'eth_sendTransaction') { setWcSimResult(null); return; }
+    let cancelled = false;
+    setWcSimResult(null);
+    const tx = wcRequest.params.request.params?.[0] || {};
+    const net = walletConnect.SUPPORTED_EVM_CHAINS[wcRequest.params.chainId] || 'ethereum';
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network: net })
+      .then((res) => { if (!cancelled) setWcSimResult(res); })
+      .catch(() => { if (!cancelled) setWcSimResult(null); });
+    return () => { cancelled = true; };
+  }, [wcRequest]);
+
+  useEffect(() => {
+    if (dappBridgeRequest?.method !== 'eth_sendTransaction') { setDappSimResult(null); return; }
+    let cancelled = false;
+    setDappSimResult(null);
+    const tx = dappBridgeRequest.params?.[0] || {};
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network })
+      .then((res) => { if (!cancelled) setDappSimResult(res); })
+      .catch(() => { if (!cancelled) setDappSimResult(null); });
+    return () => { cancelled = true; };
+  }, [dappBridgeRequest, network]);
 
   // ── Staking natif Solana ──
   // La liste des comptes de stake connus de cet appareil (par adresse de
@@ -2747,23 +3223,30 @@ function AppContent({ themeMode, changeTheme }) {
     }
   }, [unlockedMnemonic, loadStakeAccounts, showToast]);
 
-  // ── Galerie NFT (Ethereum) ──
-  const openNftGallery = useCallback(async () => {
+  // ── Galerie NFT multi-chaînes (lecture via le backend, clé Alchemy côté
+  // serveur — voir ALCHEMY_NFT_SUBDOMAINS dans crypto-wallet/src/routes/
+  // wallet.js) — un réseau doit être activé sur le tableau de bord Alchemy
+  // pour la clé actuelle avant de fonctionner ; seul Ethereum l'est
+  // aujourd'hui, vérifié en direct (403 "not enabled for this app" sur les
+  // autres). Le code accepte déjà les autres réseaux, prêt dès qu'ils
+  // seront activés côté Alchemy, sans rien changer ici.
+  const NFT_NETWORKS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
+  const openNftGallery = useCallback(async (net = nftNetwork) => {
     setShowNftGallery(true);
     setSelectedNft(null);
     setNftsError(null);
     if (!walletAddr) return;
     setNftsLoading(true);
     try {
-      const response = await axios.get(`${API_BASE}/nft/owned/${walletAddr}`, { timeout: 25000, headers: API_HEADERS });
+      const response = await axios.get(`${API_BASE}/nft/owned/${walletAddr}`, { params: { network: net }, timeout: 25000, headers: API_HEADERS });
       if (!response.data?.success) throw new Error(response.data?.error || 'Impossible de récupérer les NFT.');
       setNfts(response.data.nfts || []);
     } catch (err) {
-      setNftsError(err.message || 'Impossible de récupérer les NFT.');
+      setNftsError(err.response?.data?.error || err.message || 'Impossible de récupérer les NFT.');
     } finally {
       setNftsLoading(false);
     }
-  }, [walletAddr]);
+  }, [walletAddr, nftNetwork]);
 
   const handleSendNft = useCallback(async () => {
     if (!selectedNft) return;
@@ -2813,11 +3296,156 @@ function AppContent({ themeMode, changeTheme }) {
     return () => clearInterval(id);
   }, [fetchMarket, initWallet]);
 
+  // Rafraîchit périodiquement le solde natif (pas juste sur action explicite
+  // de l'utilisateur) pour pouvoir détecter une réception de fonds pendant
+  // que l'app tourne — voir l'effet juste en dessous qui compare avec le
+  // solde précédent. Ne détecte PAS une réception app totalement fermée
+  // (nécessiterait un vrai push distant déclenché par un serveur qui
+  // surveille la chaîne — hors de portée sans backend dédié pour ça).
+  useEffect(() => {
+    if (!walletAddr) return;
+    const id = setInterval(() => refreshPortfolio(network), 45000);
+    return () => clearInterval(id);
+  }, [walletAddr, network, refreshPortfolio]);
+
+  const previousBalanceRef = useRef(null);
+  useEffect(() => {
+    if (!walletBalance || Platform.OS === 'web') { previousBalanceRef.current = walletBalance; return; }
+    const prev = previousBalanceRef.current;
+    const current = parseFloat(walletBalance);
+    if (prev != null && current > parseFloat(prev) + 1e-12) {
+      const received = current - parseFloat(prev);
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: '💰 Fonds reçus',
+          body: `+${received.toFixed(6)} ${nativeSymbol} sur ${activeNetwork.label}`,
+        },
+        trigger: null, // immédiat
+      }).catch(() => { /* notifications refusées, pas grave */ });
+    }
+    previousBalanceRef.current = walletBalance;
+  }, [walletBalance, nativeSymbol, activeNetwork]);
+
+  useEffect(() => {
+    loadDuressPinRecord().then(record => setDuressPinConfigured(!!record));
+  }, []);
+
+  const handleSaveDuressPin = async () => {
+    if (!/^\d{6}$/.test(duressSetupInput)) {
+      setDuressSetupError('Le code de détresse doit faire exactement 6 chiffres.');
+      return;
+    }
+    // Un code de détresse identique au vrai PIN n'aurait aucun sens (on ne
+    // peut pas les distinguer à la saisie) — on ne peut pas comparer au
+    // vrai PIN ici (jamais stocké en clair), donc juste avertir clairement
+    // dans le texte de l'écran plutôt que tenter une vérification illusoire.
+    await saveDuressPin(duressSetupInput);
+    setDuressPinConfigured(true);
+    setShowDuressSetup(false);
+    setShowSettings(true);
+    setDuressSetupInput('');
+    setDuressSetupError(null);
+    showToast('✓ Code de détresse activé', 'success');
+  };
+
+  const handleRemoveDuressPin = async () => {
+    await clearDuressPin();
+    setDuressPinConfigured(false);
+    showToast('Code de détresse désactivé', 'success');
+  };
+
+  // Mode hors-ligne : NetInfo donne un signal immédiat (pas besoin d'attendre
+  // qu'une requête RPC échoue/expire) — bascule tout de suite sur le cache
+  // dès que la connexion tombe, et relance un vrai rafraîchissement dès
+  // qu'elle revient.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const offline = state.isConnected === false || state.isInternetReachable === false;
+      setIsOffline(offline);
+      if (offline && walletAddr) {
+        loadPortfolioCache(walletAddr, network).then(cached => {
+          if (!cached) return;
+          setWalletBalance(cached.nativeBalance);
+          setTokens(prev => {
+            const next = { ...prev, [cached.nativeSymbol]: { ...prev[cached.nativeSymbol], balance: parseFloat(cached.nativeBalance) } };
+            Object.entries(cached.erc20Balances || {}).forEach(([sym, bal]) => {
+              if (next[sym]) next[sym] = { ...next[sym], balance: bal };
+            });
+            return next;
+          });
+          setPortfolioIsCached(true);
+        });
+      } else if (!offline && walletAddr) {
+        refreshPortfolio(network);
+      }
+    });
+    return () => unsubscribe();
+  }, [walletAddr, network, refreshPortfolio]);
+
+  // Capture ?ref=CODE dans l'URL (partagé via shareReferralLink) à la toute
+  // première ouverture — Linking.getInitialURL() couvre aussi les deep links
+  // natifs (nexiawallet://?ref=CODE), pas seulement le web.
+  useEffect(() => {
+    // Ne remplace l'état que si un code a réellement déjà été persisté —
+    // sinon cette résolution asynchrone (lue avant que la capture ci-dessous
+    // n'ait fini d'écrire) écrase avec `null` le code tout juste capturé.
+    loadReferredBy().then((saved) => { if (saved) setReferredByCode(saved); });
+    const captureRef = (url) => {
+      if (!url) return;
+      const match = url.match(/[?&]ref=([A-Za-z0-9]+)/);
+      if (match) { saveReferredBy(match[1]); setReferredByCode(prev => prev || match[1]); }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      captureRef(window.location.href);
+    } else {
+      Linking.getInitialURL().then(captureRef).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    recurringBuy.getConfig().then(cfg => {
+      if (!cfg) return;
+      setRecurringEnabled(!!cfg.enabled);
+      setRecurringAmount(String(cfg.amountUsd ?? '20'));
+      setRecurringToken(cfg.token || 'ETH');
+      setRecurringFrequency(cfg.frequency || 'weekly');
+    });
+  }, []);
+
+  // Appui sur le rappel local d'achat récurrent → ouvre directement l'écran
+  // Acheter pré-rempli, comme un raccourci "il est temps d'acheter".
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'recurring-buy') {
+        setBuyAmount(String(data.amountUsd));
+        setBuyToken(data.token);
+        setShowBuy(true);
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Demande la permission de notifications une fois, au démarrage — sert à
+  // la fois aux notifications de fonds reçus/alertes de prix ci-dessus ET au
+  // rappel d'achat récurrent (celui-ci redemande de toute façon au moment de
+  // programmer un rappel, mais ça évite qu'un utilisateur qui n'active QUE
+  // les alertes de prix/fonds reçus n'ait jamais eu la permission demandée.
+  // iOS ignore silencieusement scheduleNotificationAsync sans permission
+  // accordée au préalable — sans cette demande, ces notifications ne
+  // s'afficheraient tout simplement jamais).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    Notifications.requestPermissionsAsync().catch(() => { /* l'utilisateur pourra toujours l'activer manuellement plus tard */ });
+  }, []);
+
   useEffect(() => {
     loadFavorites().then(list => { setFavorites(list); setFavoritesLoaded(true); });
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
+    loadHideZeroBalances().then(setHideZeroBalances);
     loadLocale().then(setLocale);
     loadBalancePeriod().then(setBalancePeriod);
     loadLastSend().then(setLastSend);
@@ -2980,10 +3608,14 @@ function AppContent({ themeMode, changeTheme }) {
 
     if (vibrationEnabled) Vibration.vibrate(200);
     triggered.forEach(a => {
-      showAlert(
-        '🔔 Alerte de prix',
-        `${a.symbol} a ${a.direction === 'above' ? 'dépassé' : 'chuté sous'} ${fmt(a.targetPrice)}.`
-      );
+      const body = `${a.symbol} a ${a.direction === 'above' ? 'dépassé' : 'chuté sous'} ${fmt(a.targetPrice)}.`;
+      showAlert('🔔 Alerte de prix', body);
+      // Notification locale en plus de l'Alert (invisible si l'app est en
+      // arrière-plan) — même limite que les fonds reçus ci-dessus : marche
+      // tant que l'app tourne (même en arrière-plan), pas app totalement fermée.
+      if (Platform.OS !== 'web') {
+        Notifications.scheduleNotificationAsync({ content: { title: '🔔 Alerte de prix', body }, trigger: null }).catch(() => {});
+      }
     });
     setPriceAlerts(prev => prev.filter(a => !triggered.some(t => t.id === a.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche sur
@@ -3116,6 +3748,7 @@ function AppContent({ themeMode, changeTheme }) {
 
   const lockWallet = useCallback(() => {
     setIsUnlocked(false);
+    setIsDuressMode(false);
     setUnlockedPrivateKey(null);
     setUnlockedMnemonic(null);
     setPinCode('');
@@ -3441,6 +4074,13 @@ function AppContent({ themeMode, changeTheme }) {
     Object.entries(tokens).sort(([symA], [symB]) => (tokenUsage[symB] || 0) - (tokenUsage[symA] || 0)),
   [tokens, tokenUsage]);
 
+  // "Masquer les soldes à zéro" (voir réglage hideZeroBalances) : ne cache
+  // QUE l'affichage de l'accueil, jamais les autres écrans (Envoyer/Swap/
+  // Acheter continuent de proposer tous les tokens configurés).
+  const visibleTokenEntries = useMemo(() =>
+    hideZeroBalances ? sortedTokenEntries.filter(([, t]) => (t.balance || 0) * (t.price || 0) >= 0.01) : sortedTokenEntries,
+  [sortedTokenEntries, hideZeroBalances]);
+
   // Token détenu (solde > 0) dont le prix bouge le plus aujourd'hui, dans un
   // sens ou l'autre -- ignoré sous 1% pour ne pas polluer l'accueil avec du
   // bruit sans intérêt.
@@ -3474,9 +4114,10 @@ function AppContent({ themeMode, changeTheme }) {
   const QUICK_ACTIONS_BASE = [
     { id: 'send',    icon: '↑',  label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
     { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
+    { id: 'sell',    icon: '💰', label: 'Vendre',            bg: T.card2, onPress: () => setShowSell(true) },
     { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
-    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: openNftGallery },
+    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
@@ -3611,6 +4252,160 @@ function AppContent({ themeMode, changeTheme }) {
       setBuyLoading(false);
     }
   };
+
+  // ── VENTE (off-ramp MoonPay) ── même principe que l'achat, sens inverse :
+  // le widget MoonPay affiche une adresse de dépôt, l'utilisateur y envoie
+  // lui-même ses fonds depuis ce wallet (aucune clé privée transmise au
+  // backend — cohérent avec l'architecture non-custodiale du reste de l'app).
+  const handleSellNow = async () => {
+    if (!sellAmount || isNaN(Number(sellAmount)) || Number(sellAmount) <= 0) {
+      showAlert('Montant invalide', `Entre un montant en ${sellToken}.`);
+      return;
+    }
+    setSellLoading(true);
+    try {
+      const isSolanaSell = sellToken === 'SOL';
+      const isBitcoinSell = sellToken === 'BTC';
+      const sellNetwork = isSolanaSell ? 'solana' : isBitcoinSell ? 'bitcoin' : network;
+      const sellWalletAddress = isSolanaSell ? solanaAddr : isBitcoinSell ? bitcoinAddr : walletAddr;
+      const res = await axios.post(`${API_BASE}/payments/create-sell-session`, {
+        amountCrypto: Number(sellAmount),
+        tokenSymbol: sellToken,
+        network: sellNetwork,
+        walletAddress: sellWalletAddress,
+        returnUrl: Platform.OS === 'web' ? window.location.origin : `exp://${HOST_OVERRIDE}:8087`,
+      }, { timeout: 20000, headers: API_HEADERS });
+
+      if (!res.data?.success || !res.data.url) {
+        throw new Error(res.data?.error || 'Impossible de créer la session de vente.');
+      }
+
+      setShowSell(false);
+      if (Platform.OS === 'web') {
+        window.location.href = res.data.url;
+      } else {
+        await Linking.openURL(res.data.url);
+      }
+    } catch (err) {
+      showAlert('Erreur', err.message || 'Impossible de lancer la vente.');
+    } finally {
+      setSellLoading(false);
+    }
+  };
+
+  const handleSaveRecurringBuy = async () => {
+    const amountUsd = Number(recurringAmount);
+    if (recurringEnabled && (!amountUsd || isNaN(amountUsd) || amountUsd <= 0)) {
+      showAlert('Montant invalide', 'Entre un montant en USD.');
+      return;
+    }
+    setRecurringSaving(true);
+    try {
+      const config = { enabled: recurringEnabled, amountUsd, token: recurringToken, frequency: recurringFrequency };
+      await recurringBuy.saveConfig(config);
+      if (!recurringEnabled) {
+        await recurringBuy.cancelReminder();
+        showToast('Achat récurrent désactivé', 'success');
+      } else if (Platform.OS === 'web') {
+        showToast('✓ Préférences enregistrées (rappel disponible sur mobile)', 'success');
+      } else {
+        const id = await recurringBuy.scheduleReminder(config);
+        if (!id) {
+          showAlert('Notifications désactivées', "Autorise les notifications pour NexiaWallet dans les réglages du téléphone pour recevoir le rappel d'achat.");
+        } else {
+          showToast('✓ Rappel programmé', 'success');
+        }
+      }
+      setShowRecurringBuy(false);
+    } catch (err) {
+      showAlert('Erreur', err.message || "Impossible d'enregistrer l'achat récurrent.");
+    } finally {
+      setRecurringSaving(false);
+    }
+  };
+
+  const BRIDGE_NETWORKS = ['ethereum', 'arbitrum', 'optimism', 'base'];
+
+  const handleGetBridgeQuote = async () => {
+    if (!bridgeAmount || isNaN(Number(bridgeAmount)) || Number(bridgeAmount) <= 0) {
+      showAlert('Montant invalide', 'Entre un montant en ETH.');
+      return;
+    }
+    setBridgeQuoteLoading(true);
+    setBridgeError(null);
+    setBridgeQuote(null);
+    try {
+      const amountWei = ethers.utils.parseEther(bridgeAmount).toString();
+      const quote = await bridge.getBridgeQuote({
+        fromNetwork: bridgeFromNetwork,
+        toNetwork: bridgeToNetwork,
+        fromAddress: walletAddr,
+        amountWei,
+      });
+      setBridgeQuote(quote);
+    } catch (err) {
+      setBridgeError(err.response?.data?.message || err.message || 'Impossible de récupérer une route de pont.');
+    } finally {
+      setBridgeQuoteLoading(false);
+    }
+  };
+
+  const handleExecuteBridge = async () => {
+    if (!bridgeQuote || !unlockedPrivateKey) return;
+    setBridgeExecuting(true);
+    setBridgeError(null);
+    try {
+      const tx = bridgeQuote.transactionRequest;
+      const { rawTx } = await localWallet.signRawTx({
+        privateKey: unlockedPrivateKey,
+        to: tx.to,
+        data: tx.data,
+        value: ethers.BigNumber.from(tx.value || '0x0').toString(),
+        gasLimit: ethers.BigNumber.from(tx.gasLimit || '0x0').toString(),
+        network: bridgeFromNetwork,
+      });
+      const resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
+      if (!resp.data?.success) throw new Error(resp.data?.error || 'Échec de la diffusion.');
+      showAlert('✅ Pont envoyé', `Ta transaction de pont a été diffusée.\nHash: ${resp.data.txHash?.slice(0, 10)}...\nL'arrivée sur ${bridgeToNetwork} peut prendre quelques minutes.`, [{ text: 'OK' }]);
+      setShowBridge(false);
+      setBridgeQuote(null);
+      setBridgeAmount('');
+    } catch (err) {
+      setBridgeError(err.message || 'Impossible de finaliser le pont.');
+    } finally {
+      setBridgeExecuting(false);
+    }
+  };
+
+  // Résolution ENS ("pablo.eth" -> 0x...) — le registre ENS ne vit que sur
+  // Ethereum mainnet, quel que soit le réseau actif d'envoi (BSC/Polygon/L2),
+  // donc toujours interroger localWallet.getProvider('ethereum'), jamais
+  // `network`. Dès la résolution réussie, remplace directement le champ par
+  // l'adresse 0x résolue : tout le reste du flux d'envoi (vérification anti
+  // address-poisoning, écran de confirmation, signature) travaille alors
+  // sur une adresse 0x normale sans rien à changer ailleurs.
+  useEffect(() => {
+    if (!/\.eth$/i.test((sendAddress || '').trim())) { setEnsError(null); return; }
+    const name = sendAddress.trim();
+    let cancelled = false;
+    setEnsResolving(true);
+    setEnsError(null);
+    const timer = setTimeout(() => {
+      localWallet.getProvider('ethereum').resolveName(name)
+        .then((resolved) => {
+          if (cancelled) return;
+          if (resolved) {
+            setSendAddress(resolved);
+            showToast(`✓ ${name} → ${resolved.slice(0, 6)}…${resolved.slice(-4)}`, 'success');
+          } else {
+            setEnsError(`Aucune adresse trouvée pour ${name}.`);
+          }
+        })
+        .catch(() => { if (!cancelled) setEnsError(`Impossible de résoudre ${name}.`); })
+        .finally(() => { if (!cancelled) setEnsResolving(false); });
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [sendAddress, showToast]);
 
   // ── ENVOI SÉCURISÉ (Validation sur réseau réel) ──
   // Étape 1 : valide et bascule vers l'écran "relis avant d'envoyer" — rien
@@ -3893,6 +4688,12 @@ function AppContent({ themeMode, changeTheme }) {
           throw new Error(approveResp.data?.error || "Échec de l'approbation du token.");
         }
         await localWallet.waitForTx(approveResp.data.txHash, network);
+        let approveTokenSymbol = swapFrom;
+        try { approveTokenSymbol = (await localWallet.getCustomTokenInfo(sellAddress, walletAddr, network)).symbol; } catch { /* garde swapFrom en repli */ }
+        approvals.recordApproval(walletAddr, {
+          network, tokenAddress: sellAddress, tokenSymbol: approveTokenSymbol, spender,
+          amount: ethers.constants.MaxUint256.toString(), isNft: false, txHash: approveResp.data.txHash,
+        }).catch(() => {});
       }
 
       const { rawTx: swapRawTx } = await localWallet.signRawTx({
@@ -4303,6 +5104,15 @@ function AppContent({ themeMode, changeTheme }) {
               </TouchableOpacity>
               <TouchableOpacity style={[st.network_chip, network === 'polygon' && st.network_chip_on]} onPress={() => setNetwork('polygon')}>
                 <Text style={[st.network_chip_txt, network === 'polygon' && { color: T.text }]}>Polygon</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'arbitrum' && st.network_chip_on]} onPress={() => setNetwork('arbitrum')}>
+                <Text style={[st.network_chip_txt, network === 'arbitrum' && { color: T.text }]}>Arbitrum</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'optimism' && st.network_chip_on]} onPress={() => setNetwork('optimism')}>
+                <Text style={[st.network_chip_txt, network === 'optimism' && { color: T.text }]}>Optimism</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.network_chip, network === 'base' && st.network_chip_on]} onPress={() => setNetwork('base')}>
+                <Text style={[st.network_chip_txt, network === 'base' && { color: T.text }]}>Base</Text>
               </TouchableOpacity>
             </View>
 
@@ -4846,7 +5656,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={st.form_label}>{{ SOL: 'Adresse Solana', BTC: 'Adresse Bitcoin' }[sendToken] || 'Adresse (0x...)'}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TextInput style={[st.form_input, { flex: 1, marginBottom: 0 }]} value={sendAddress} onChangeText={setSendAddress}
-                placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc'} placeholderTextColor={T.text3} autoCapitalize="none" />
+                placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc ou nom.eth'} placeholderTextColor={T.text3} autoCapitalize="none" />
               {Platform.OS === 'web' && (
                 <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
                   <Text style={{ fontSize: 18 }}>📋</Text>
@@ -4856,6 +5666,8 @@ function AppContent({ themeMode, changeTheme }) {
                 <Text style={{ fontSize: 18 }}>📷</Text>
               </TouchableOpacity>
             </View>
+            {ensResolving && <Text style={[st.settings_row_sub, { marginTop: 6 }]}>Résolution ENS…</Text>}
+            {!!ensError && <Text style={[st.auth_error, { marginTop: 6 }]}>{ensError}</Text>}
             <View style={{ height: 16 }} />
 
             {!!recentAddresses.length && (
@@ -4950,13 +5762,30 @@ function AppContent({ themeMode, changeTheme }) {
               );
             })()}
 
-            {!!sendAddress && sendAddress.length === 42 && !recentAddresses.some(a => a.address.toLowerCase() === sendAddress.toLowerCase()) && (
-              <View style={[st.warning_box, { marginTop: 12 }]}>
-                <Text style={st.warning_txt}>
-                  🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
-                </Text>
-              </View>
-            )}
+            {!!sendAddress && sendAddress.length === 42 && (() => {
+              const poisonedMatch = looksLikePoisonedAddress(sendAddress, recentAddresses.map(a => a.address));
+              if (poisonedMatch) {
+                return (
+                  <View style={[st.warning_box, { marginTop: 12, borderColor: T.red }]}>
+                    <Text style={st.warning_txt}>
+                      🚨 Cette adresse ressemble énormément à une adresse déjà connue ({poisonedMatch.slice(0, 8)}…{poisonedMatch.slice(-6)})
+                      mais N'EST PAS la même. C'est la technique de "l'adresse piégée" (address poisoning) : vérifie
+                      caractère par caractère avant d'envoyer, ou copie l'adresse depuis une source sûre.
+                    </Text>
+                  </View>
+                );
+              }
+              if (!recentAddresses.some(a => a.address.toLowerCase() === sendAddress.toLowerCase())) {
+                return (
+                  <View style={[st.warning_box, { marginTop: 12 }]}>
+                    <Text style={st.warning_txt}>
+                      🆕 Nouvelle adresse — tu ne lui as jamais envoyé de fonds ici. Vérifie-la bien avant de continuer.
+                    </Text>
+                  </View>
+                );
+              }
+              return null;
+            })()}
 
             <View style={st.send_info_box}>
               <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
@@ -5261,7 +6090,10 @@ function AppContent({ themeMode, changeTheme }) {
       <Modal visible transparent animationType="slide">
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setLegalDoc(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <TouchableOpacity
+              onPress={() => { setLegalDoc(null); if (legalDocFromSettings) { setShowSettings(true); setLegalDocFromSettings(false); } }}
+              style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+            >
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <Text style={st.modal_title}>{doc.title}</Text>
@@ -5320,7 +6152,7 @@ function AppContent({ themeMode, changeTheme }) {
     <Modal visible={showWalletConnect} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+          <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>{t('settings_connect_dapp')}</Text>
@@ -5448,6 +6280,16 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]}>Réseau : {network}</Text>
             <View style={st.alert_form}>{detail}</View>
+            {method === 'eth_sendTransaction' && !wcSimResult && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            )}
+            {!!wcSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: wcSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {wcSimResult.warnings.map((w, i) => (
+                  <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
+                ))}
+              </View>
+            )}
             {!!wcRequestError && <Text style={[st.auth_error, { marginTop: 10 }]}>{wcRequestError}</Text>}
             <View style={{ flexDirection: 'row', marginTop: 24 }}>
               <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleWcRejectRequest} disabled={wcRequestLoading}>
@@ -5457,6 +6299,502 @@ function AppContent({ themeMode, changeTheme }) {
                 {wcRequestLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Signer</Text>}
               </AnimPressable>
             </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  const DAPP_SHORTCUTS = [
+    { name: 'Uniswap', url: 'https://app.uniswap.org' },
+    { name: 'OpenSea', url: 'https://opensea.io' },
+    { name: 'PancakeSwap', url: 'https://pancakeswap.finance' },
+  ];
+
+  // Navigateur dApp intégré — natif uniquement (react-native-webview n'a pas
+  // d'implémentation web, voir l'import de WebView tout en haut du fichier).
+  const renderDappBrowser = () => (
+    <Modal visible={showDappBrowser} animationType="slide" onRequestClose={() => setShowDappBrowser(false)}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide, { flex: 1 }]}>
+        {Platform.OS === 'web' ? (
+          <>
+            <View style={st.modal_hdr}>
+              <TouchableOpacity onPress={() => { setShowDappBrowser(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+                <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+              </TouchableOpacity>
+              <Text style={st.modal_title}>Navigateur Web3</Text>
+              <View style={{ width: 40 }} />
+            </View>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center' }}>
+                Le navigateur dApp n'est disponible que dans l'app mobile NexiaWallet (pas sur le web).
+              </Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={st.modal_hdr}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (dappCurrentUrl) { setDappCurrentUrl(null); return; }
+                  setShowDappBrowser(false);
+                  setShowSettings(true);
+                }}
+                style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+              >
+                <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+              </TouchableOpacity>
+              <Text style={st.modal_title} numberOfLines={1}>Navigateur Web3</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            {!dappCurrentUrl ? (
+              <ScrollView style={{ flex: 1, padding: 16 }}>
+                <Text style={{ color: T.text2, fontSize: 13, marginBottom: 12, lineHeight: 19 }}>
+                  Colle l'adresse d'une dApp (Uniswap, OpenSea...) ou choisis un raccourci ci-dessous. Ton adresse n'est
+                  partagée qu'après ta confirmation explicite, et chaque signature/transaction te sera toujours demandée.
+                </Text>
+                <TextInput
+                  style={st.form_input}
+                  placeholder="app.uniswap.org"
+                  placeholderTextColor={T.text3}
+                  value={dappUrlInput}
+                  onChangeText={setDappUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  onSubmitEditing={() => handleDappBrowserOpen(dappUrlInput)}
+                />
+                <AnimPressable style={[st.green_btn, { marginTop: 12 }]} onPress={() => handleDappBrowserOpen(dappUrlInput)}>
+                  <Text style={st.green_btn_txt}>Ouvrir</Text>
+                </AnimPressable>
+                <Text style={[st.settings_row_sub, { marginTop: 24, marginBottom: 10 }]}>Raccourcis</Text>
+                {DAPP_SHORTCUTS.map(s => (
+                  <TouchableOpacity key={s.url} style={st.settings_row} onPress={() => handleDappBrowserOpen(s.url)}>
+                    <Text style={st.settings_row_title}>{s.name}</Text>
+                    <Text style={st.settings_row_sub}>{s.url}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <>
+                <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={1}>{dappCurrentUrl}</Text>
+                </View>
+                <WebView
+                  ref={dappWebViewRef}
+                  source={{ uri: dappCurrentUrl }}
+                  style={{ flex: 1 }}
+                  onMessage={handleDappMessage}
+                  onNavigationStateChange={(nav) => { if (nav?.url) setDappUrlInput(nav.url); }}
+                  injectedJavaScriptBeforeContentLoaded={buildInjectedProvider({
+                    chainId: '0x' + localWallet.getNetworkConfig(network).chainId.toString(16),
+                    address: dappConnectedOrigins.length ? walletAddr : null,
+                  })}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  originWhitelist={['https://*', 'http://*']}
+                />
+              </>
+            )}
+          </>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderDappBridgeRequest = () => {
+    const method = dappBridgeRequest?.method;
+    const params = dappBridgeRequest?.params || [];
+    const origin = dappBridgeRequest?.origin || '';
+
+    let title = 'Demande de signature';
+    let detail = null;
+    if (method === 'eth_requestAccounts') {
+      title = 'Connexion à cette dApp';
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>Autoriser {origin} à voir l'adresse de ton wallet ?</Text>;
+    } else if (method === 'wallet_switchEthereumChain') {
+      title = 'Changement de réseau';
+      const requestedHex = params?.[0]?.chainId;
+      const targetNetwork = walletConnect.SUPPORTED_EVM_CHAINS[`eip155:${parseInt(requestedHex, 16)}`];
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>{origin} demande à passer sur {targetNetwork || requestedHex}.</Text>;
+    } else if (method === 'personal_sign' || method === 'eth_sign') {
+      const hex = method === 'personal_sign' ? params[0] : params[1];
+      let text = hex;
+      try { text = ethers.utils.toUtf8String(hex); } catch { /* reste en hex si pas de l'UTF-8 valide */ }
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>{text}</Text>;
+    } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+      title = 'Signature de données typées';
+      const raw = params[1];
+      detail = <Text style={{ color: T.text3, fontSize: 12 }} numberOfLines={8}>{typeof raw === 'string' ? raw : JSON.stringify(raw)}</Text>;
+    } else if (method === 'eth_sendTransaction') {
+      title = 'Demande de transaction';
+      const tx = params[0] || {};
+      detail = (
+        <View style={{ width: '100%' }}>
+          <Text style={st.settings_row_sub}>Vers</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>{tx.to}</Text>
+          <Text style={st.settings_row_sub}>Montant</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>
+            {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+          </Text>
+          {!!tx.data && tx.data !== '0x' && (
+            <>
+              <Text style={st.settings_row_sub}>Données</Text>
+              <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={3}>{tx.data}</Text>
+            </>
+          )}
+        </View>
+      );
+    }
+
+    return (
+      <Modal visible={!!dappBridgeRequest} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <View style={{ width: 40 }} />
+            <Text style={st.modal_title}>{title}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={[st.settings_row_sub, { marginBottom: 10 }]} numberOfLines={1}>{origin}</Text>
+            <View style={st.alert_form}>{detail}</View>
+            {method === 'eth_sendTransaction' && !dappSimResult && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            )}
+            {!!dappSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: dappSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {dappSimResult.warnings.map((w, i) => (
+                  <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
+                ))}
+              </View>
+            )}
+            {!!dappBridgeError && <Text style={[st.auth_error, { marginTop: 10 }]}>{dappBridgeError}</Text>}
+            <View style={{ flexDirection: 'row', marginTop: 24 }}>
+              <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleDappBridgeReject} disabled={dappBridgeLoading}>
+                <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
+              </TouchableOpacity>
+              <AnimPressable style={[st.green_btn, { flex: 1, opacity: dappBridgeLoading ? 0.7 : 1 }]} onPress={handleDappBridgeApprove} disabled={dappBridgeLoading}>
+                {dappBridgeLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>{method === 'eth_requestAccounts' ? 'Connecter' : method === 'wallet_switchEthereumChain' ? 'Changer' : 'Signer'}</Text>}
+              </AnimPressable>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  const renderDefiPositions = () => (
+    <Modal visible={showDefiPositions} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowDefiPositions(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Positions DeFi</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            Contrairement au solde de tes tokens (calculé en direct depuis la blockchain), il n'existe pas d'indexeur
+            multi-protocoles gratuit et sans clé API pour repérer TOUTES tes positions DeFi automatiquement — cette liste
+            ne suit donc pour l'instant que le staking liquide Lido (stETH), vérifié sur le vrai contrat officiel.
+          </Text>
+          {defiPositionsLoading ? (
+            <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
+          ) : defiPositionsList.length === 0 ? (
+            <Text style={st.settings_row_sub}>Aucune position détectée sur ce wallet.</Text>
+          ) : (
+            defiPositionsList.map((pos) => (
+              <View key={pos.id} style={st.settings_row}>
+                <Text style={{ fontSize: 22 }}>{pos.icon}</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>{pos.protocol} — {pos.label}</Text>
+                  <Text style={st.settings_row_sub}>{parseFloat(pos.balance).toFixed(6)} {pos.symbol}</Text>
+                </View>
+                <Text style={{ color: T.text, fontWeight: '700' }}>{fmt(parseFloat(pos.balance) * (tokens.ETH?.price || 0))}</Text>
+              </View>
+            ))
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderBridge = () => {
+    const feeCosts = bridgeQuote?.estimate?.feeCosts || [];
+    const toAmount = bridgeQuote?.estimate?.toAmount;
+    return (
+      <Modal visible={showBridge} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => { setShowBridge(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Pont cross-chain</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+              Transfère de l'ETH natif entre Ethereum, Arbitrum, Optimism et Base, via l'agrégateur LI.FI. Signature et
+              diffusion se font exactement comme un envoi normal — LI.FI ne voit jamais ta clé privée.
+            </Text>
+
+            <Text style={st.form_label}>Depuis</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {BRIDGE_NETWORKS.map(net => (
+                <TouchableOpacity
+                  key={net}
+                  style={[st.tok_chip, bridgeFromNetwork === net && st.tok_chip_on]}
+                  onPress={() => { setBridgeFromNetwork(net); setBridgeQuote(null); }}
+                >
+                  <Text style={[st.tok_chip_txt, bridgeFromNetwork === net && { color: T.text }]}>{NETWORK_INFO[net].label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={st.form_label}>Vers</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+              {BRIDGE_NETWORKS.filter(net => net !== bridgeFromNetwork).map(net => (
+                <TouchableOpacity
+                  key={net}
+                  style={[st.tok_chip, bridgeToNetwork === net && st.tok_chip_on]}
+                  onPress={() => { setBridgeToNetwork(net); setBridgeQuote(null); }}
+                >
+                  <Text style={[st.tok_chip_txt, bridgeToNetwork === net && { color: T.text }]}>{NETWORK_INFO[net].label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={st.form_label}>Montant ETH</Text>
+            <TextInput style={st.form_input} value={bridgeAmount} onChangeText={(v) => { setBridgeAmount(v); setBridgeQuote(null); }}
+              placeholder="0.01" placeholderTextColor={T.text3} keyboardType="numeric" />
+
+            {!bridgeQuote ? (
+              <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeQuoteLoading ? 0.7 : 1 }]} onPress={handleGetBridgeQuote} disabled={bridgeQuoteLoading}>
+                {bridgeQuoteLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Obtenir une route</Text>}
+              </AnimPressable>
+            ) : (
+              <>
+                <View style={st.send_info_box}>
+                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? ethers.utils.formatEther(toAmount) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
+                  <Text style={st.send_info_line}>Route : {bridgeQuote.tool}</Text>
+                  {feeCosts.map((f, i) => (
+                    <Text key={i} style={st.send_info_line}>{f.name} : {ethers.utils.formatUnits(f.amount, f.token?.decimals || 18)} {f.token?.symbol}</Text>
+                  ))}
+                </View>
+                <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeExecuting ? 0.7 : 1 }]} onPress={handleExecuteBridge} disabled={bridgeExecuting}>
+                  {bridgeExecuting ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Confirmer le pont</Text>}
+                </AnimPressable>
+              </>
+            )}
+            {!!bridgeError && <Text style={[st.auth_error, { marginTop: 12 }]}>{bridgeError}</Text>}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  const renderReferral = () => (
+    <Modal visible={showReferral} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowReferral(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Programme de parrainage</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 20, lineHeight: 18 }}>
+            Partage ton code avec des proches. Il n'y a pas encore de récompense automatique en place — juste un moyen
+            simple de leur faire découvrir NexiaWallet, prêt à en recevoir une plus tard.
+          </Text>
+
+          <Text style={st.form_label}>Ton code</Text>
+          <View style={st.receive_addr_box}>
+            <Text style={[st.receive_addr, { textAlign: 'center', letterSpacing: 2 }]} selectable>{referralCode || '—'}</Text>
+          </View>
+
+          <AnimPressable style={[st.green_btn, { marginTop: 16 }]} onPress={shareReferralLink} disabled={!referralCode}>
+            <Text style={st.green_btn_txt}>📤 Partager mon lien</Text>
+          </AnimPressable>
+          <AnimPressable
+            style={[st.green_btn, { marginTop: 10, backgroundColor: T.card2 }]}
+            onPress={() => referralCode && copyToClipboard(`https://nexiawallet.fr?ref=${referralCode}`, 'Lien copié')}
+            disabled={!referralCode}
+          >
+            <Text style={[st.green_btn_txt, { color: T.text }]}>📋 Copier le lien</Text>
+          </AnimPressable>
+
+          {!!referredByCode && (
+            <View style={[st.send_info_box, { marginTop: 24 }]}>
+              <Text style={st.send_info_line}>Tu as installé NexiaWallet via le code {referredByCode}.</Text>
+            </View>
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderDuressSetup = () => (
+    <Modal visible={showDuressSetup} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowDuressSetup(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Code PIN de détresse</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            Si quelqu'un te force à déverrouiller ton wallet, tape ce code à la place de ton vrai PIN : l'app s'ouvrira
+            normalement mais affichera un solde à zéro, sans jamais révéler ta vraie clé. Choisis un code DIFFÉRENT de
+            ton vrai PIN.
+          </Text>
+          <TextInput
+            style={st.form_input}
+            value={duressSetupInput}
+            onChangeText={(v) => setDuressSetupInput(v.replace(/\D/g, '').slice(0, 6))}
+            placeholder="6 chiffres"
+            placeholderTextColor={T.text3}
+            keyboardType="numeric"
+            secureTextEntry
+            maxLength={6}
+          />
+          {!!duressSetupError && <Text style={[st.auth_error, { marginTop: 10 }]}>{duressSetupError}</Text>}
+          <AnimPressable style={[st.green_btn, { marginTop: 20 }]} onPress={handleSaveDuressPin}>
+            <Text style={st.green_btn_txt}>Activer</Text>
+          </AnimPressable>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderRecurringBuy = () => (
+    <Modal visible={showRecurringBuy} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowRecurringBuy(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Achat récurrent</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+            MoonPay ne peut pas prélever ta carte automatiquement en arrière-plan (sécurité/conformité). NexiaWallet te
+            programme un rappel qui rouvre l'écran Acheter, déjà pré-rempli — tu valides toi-même le paiement à chaque fois.
+          </Text>
+
+          <TouchableOpacity
+            style={[st.settings_row, recurringEnabled && st.settings_row_on]}
+            onPress={() => setRecurringEnabled(v => !v)}
+          >
+            <Text style={{ fontSize: 20 }}>{recurringEnabled ? '✅' : '⬜'}</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Activer le rappel</Text>
+            </View>
+          </TouchableOpacity>
+
+          {recurringEnabled && (
+            <>
+              <Text style={st.form_label}>Token</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+                {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
+                  const tk = tokens[sym];
+                  if (!tk) return null;
+                  return (
+                    <TouchableOpacity key={sym} style={[st.tok_chip, recurringToken === sym && st.tok_chip_on]} onPress={() => setRecurringToken(sym)}>
+                      <CoinLogo logo={tk.logo} icon={tk.icon} size={24} />
+                      <Text style={[st.tok_chip_txt, recurringToken === sym && { color: T.text }]}>{sym}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={st.form_label}>Montant USD</Text>
+              <TextInput style={st.form_input} value={recurringAmount} onChangeText={setRecurringAmount}
+                placeholder="20" placeholderTextColor={T.text3} keyboardType="numeric" />
+
+              <Text style={[st.form_label, { marginTop: 16 }]}>Fréquence</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {[{ id: 'weekly', label: 'Chaque semaine' }, { id: 'monthly', label: 'Chaque mois' }].map(f => (
+                  <TouchableOpacity
+                    key={f.id}
+                    style={[st.import_type_btn, recurringFrequency === f.id && st.import_type_btn_on, { flex: 1 }]}
+                    onPress={() => setRecurringFrequency(f.id)}
+                  >
+                    <Text style={[st.import_type_txt, recurringFrequency === f.id && { color: T.text }]}>{f.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
+          <AnimPressable style={[st.green_btn, { marginTop: 24, opacity: recurringSaving ? 0.7 : 1 }]} onPress={handleSaveRecurringBuy} disabled={recurringSaving}>
+            {recurringSaving ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Enregistrer</Text>}
+          </AnimPressable>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderApprovals = () => {
+    const activeApprovals = tokenApprovals.filter(a => !a.revoked);
+    return (
+      <Modal visible={showApprovals} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => { setShowApprovals(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Autorisations de tokens</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+              Liste des accès que tu as accordés à des contrats (approbations ERC20, accès à tes NFT) via WalletConnect,
+              le navigateur intégré ou un échange dans l'app. Une approbation accordée ailleurs, avant d'utiliser
+              NexiaWallet, ne peut pas apparaître ici.
+            </Text>
+            {approvalsLoading ? (
+              <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
+            ) : activeApprovals.length === 0 ? (
+              <Text style={st.settings_row_sub}>Aucune autorisation active suivie sur cet appareil.</Text>
+            ) : (
+              activeApprovals.map((a) => (
+                <View key={a.id} style={[st.settings_row, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20 }}>{a.isNft ? '🖼️' : '🪙'}</Text>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.settings_row_title}>{a.tokenSymbol} · {a.network}</Text>
+                      <Text style={st.settings_row_sub} numberOfLines={1}>Autorise {a.spender}</Text>
+                      <Text style={st.settings_row_sub}>
+                        {a.isNft
+                          ? 'Contrôle de TOUTE la collection'
+                          : (a.amount && ethers.BigNumber.from(a.amount).gte(ethers.BigNumber.from(2).pow(200)) ? 'Montant illimité' : `Montant : ${a.amount}`)}
+                      </Text>
+                    </View>
+                  </View>
+                  <AnimPressable
+                    style={[st.settings_row, { marginTop: 10, justifyContent: 'center', backgroundColor: T.redBg, opacity: revokingApprovalId === a.id ? 0.7 : 1 }]}
+                    onPress={() => handleRevokeApproval(a)}
+                    disabled={revokingApprovalId === a.id}
+                  >
+                    {revokingApprovalId === a.id
+                      ? <ActivityIndicator color={T.red} />
+                      : <Text style={{ color: T.red, fontWeight: '700' }}>Révoquer</Text>}
+                  </AnimPressable>
+                </View>
+              ))
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -5586,13 +6924,26 @@ function AppContent({ themeMode, changeTheme }) {
                 {nftSendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Envoyer le NFT</Text>}
               </AnimPressable>
             </View>
-          ) : nftsLoading ? (
-            <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
-          ) : nftsError ? (
-            <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
-          ) : nfts.length === 0 ? (
-            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse (Ethereum).</Text>
           ) : (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+                {NFT_NETWORKS.map(net => (
+                  <TouchableOpacity
+                    key={net}
+                    style={[st.tok_chip, nftNetwork === net && st.tok_chip_on]}
+                    onPress={() => { setNftNetwork(net); openNftGallery(net); }}
+                  >
+                    <Text style={[st.tok_chip_txt, nftNetwork === net && { color: T.text }]}>{NETWORK_INFO[net]?.label || net}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {nftsLoading ? (
+                <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
+              ) : nftsError ? (
+                <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
+              ) : nfts.length === 0 ? (
+                <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse ({NETWORK_INFO[nftNetwork]?.label || nftNetwork}).</Text>
+              ) : (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
               {nfts.map((n) => (
                 <TouchableOpacity
@@ -5611,6 +6962,8 @@ function AppContent({ themeMode, changeTheme }) {
                 </TouchableOpacity>
               ))}
             </View>
+              )}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
@@ -5664,6 +7017,30 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Chain ID: 137 • Mainnet</Text>
             </View>
             {network === 'polygon' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('arbitrum')}>
+            <Text style={{ fontSize: 22 }}>🔵</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Arbitrum One</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 42161 • Mainnet</Text>
+            </View>
+            {network === 'arbitrum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('optimism')}>
+            <Text style={{ fontSize: 22 }}>🔴</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Optimism</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 10 • Mainnet</Text>
+            </View>
+            {network === 'optimism' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('base')}>
+            <Text style={{ fontSize: 22 }}>🔷</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Base</Text>
+              <Text style={st.settings_row_sub}>Chain ID: 8453 • Mainnet</Text>
+            </View>
+            {network === 'base' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
 
           {!!favorites.length && (
@@ -5935,11 +7312,51 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 );
               })}
-              <AnimPressable style={st.settings_row} onPress={() => { setShowWalletConnect(true); refreshWcSessions(); }}>
+              {/* setShowSettings(false) avant d'ouvrir un second <Modal> : sur
+                  iOS/SDK54 (New Architecture), présenter un Modal RN par-dessus
+                  un Modal déjà visible ignore silencieusement le premier tap
+                  (aucune erreur, juste rien ne s'ouvre) — confirmé en testant
+                  en vrai sur iPhone. On referme Settings au lieu d'empiler. */}
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowWalletConnect(true); refreshWcSessions(); }}>
                 <Text style={{ fontSize: 22 }}>➕</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>{t('settings_connect_dapp')}</Text>
                   <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
+                <Text style={{ fontSize: 22 }}>🌐</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Navigateur Web3</Text>
+                  <Text style={st.settings_row_sub}>Parcourir une dApp directement dans l'app</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); }}>
+                <Text style={{ fontSize: 22 }}>🔑</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Autorisations de tokens</Text>
+                  <Text style={st.settings_row_sub}>Voir et révoquer les accès accordés à des contrats</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowRecurringBuy(true); }}>
+                <Text style={{ fontSize: 22 }}>🔁</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Achat récurrent</Text>
+                  <Text style={st.settings_row_sub}>Rappel pour investir régulièrement (DCA)</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setBridgeQuote(null); setBridgeError(null); setShowBridge(true); }}>
+                <Text style={{ fontSize: 22 }}>🌉</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Pont cross-chain</Text>
+                  <Text style={st.settings_row_sub}>Transférer de l'ETH entre Ethereum, Arbitrum, Optimism, Base</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowDefiPositions(true); refreshDefiPositions(); }}>
+                <Text style={{ fontSize: 22 }}>🌊</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Positions DeFi</Text>
+                  <Text style={st.settings_row_sub}>Staking Lido (ETH) — plus de protocoles à venir</Text>
                 </View>
               </AnimPressable>
 
@@ -5963,6 +7380,25 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 </AnimPressable>
               )}
+              {isUnlocked && !isDuressMode && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => showAlert(
+                    '⚠️ Keystore chiffré',
+                    "Ce fichier reste protégé par ton code PIN actuel — il ne sert à rien sans lui. Garde-le quand même en lieu sûr, distinct de ton PIN.",
+                    [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Copier', onPress: exportEncryptedKeystore },
+                    ]
+                  )}
+                >
+                  <Text style={{ fontSize: 22 }}>🗄️</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
+                    <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par ton PIN</Text>
+                  </View>
+                </AnimPressable>
+              )}
               {Platform.OS !== 'web' && biometricEnabled && (
                 <AnimPressable
                   style={st.settings_row}
@@ -5982,6 +7418,30 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 </AnimPressable>
               )}
+              <AnimPressable
+                style={st.settings_row}
+                onPress={() => {
+                  if (duressPinConfigured) {
+                    showAlert('Désactiver le code de détresse ?', 'Le code de détresse actuel ne fonctionnera plus.', [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Désactiver', style: 'destructive', onPress: handleRemoveDuressPin },
+                    ]);
+                  } else {
+                    setShowSettings(false);
+                    setDuressSetupInput('');
+                    setDuressSetupError(null);
+                    setShowDuressSetup(true);
+                  }
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>🚨</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Code PIN de détresse</Text>
+                  <Text style={st.settings_row_sub}>
+                    {duressPinConfigured ? 'Activé — appuie pour désactiver' : "Affiche un wallet vide si on te force à l'ouvrir"}
+                  </Text>
+                </View>
+              </AnimPressable>
               <AnimPressable style={st.settings_row} onPress={handleLogout}>
                 <Text style={{ fontSize: 22 }}>🚪</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
@@ -5991,6 +7451,19 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
             </>
           )}
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>👛 Affichage du portefeuille</Text>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => { const next = !hideZeroBalances; setHideZeroBalances(next); saveHideZeroBalances(next); }}
+          >
+            <Text style={{ fontSize: 22 }}>🧹</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Masquer les soldes à zéro</Text>
+              <Text style={st.settings_row_sub}>Ne montre que les tokens que tu possèdes réellement</Text>
+            </View>
+            <View style={[st.status_dot, { backgroundColor: hideZeroBalances ? T.gold : T.text3 }]} />
+          </AnimPressable>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 {t('settings_quick_actions')}</Text>
           {QUICK_ACTIONS_BASE.map(a => {
@@ -6023,9 +7496,9 @@ function AppContent({ themeMode, changeTheme }) {
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
           {SUPPORTED_LOCALES.map(code => (
             <TouchableOpacity key={code} style={[st.settings_row, locale === code && st.settings_row_on]} onPress={() => changeLocale(code)}>
-              <Text style={{ fontSize: 22 }}>{code === 'fr' ? '🇫🇷' : '🇬🇧'}</Text>
+              <Text style={{ fontSize: 22 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>{code === 'fr' ? 'Français' : 'English'}</Text>
+                <Text style={st.settings_row_title}>{LOCALE_DISPLAY[code]?.name || code}</Text>
               </View>
               {locale === code && <Text style={{ color: T.gold }}>✓</Text>}
             </TouchableOpacity>
@@ -6061,6 +7534,13 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>{t('settings_share_app')}</Text>
               <Text style={st.settings_row_sub}>Envoie le lien à quelqu'un</Text>
+            </View>
+          </AnimPressable>
+          <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowReferral(true); }}>
+            <Text style={{ fontSize: 22 }}>🎁</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Programme de parrainage</Text>
+              <Text style={st.settings_row_sub}>Ton code personnel à partager</Text>
             </View>
           </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={exportUserData}>
@@ -6103,7 +7583,7 @@ function AppContent({ themeMode, changeTheme }) {
             </AnimPressable>
           )}
           {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
-            <AnimPressable key={key} style={st.settings_row} onPress={() => setLegalDoc(key)}>
+            <AnimPressable key={key} style={st.settings_row} onPress={() => { setShowSettings(false); setLegalDocFromSettings(true); setLegalDoc(key); }}>
               <Text style={{ fontSize: 22 }}>📄</Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
                 <Text style={st.settings_row_title}>{doc.title}</Text>
@@ -6135,6 +7615,13 @@ function AppContent({ themeMode, changeTheme }) {
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchMarket(); }} tintColor={T.gold} />
       }
     >
+      {(isOffline || portfolioIsCached) && (
+        <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 16 }]}>
+          <Text style={st.warning_txt}>
+            📡 Hors ligne — derniers soldes connus affichés{isOffline ? ', pas forcément à jour.' : '.'}
+          </Text>
+        </View>
+      )}
       <View style={st.home_hdr}>
         <View>
           <Text style={st.home_account}>Mon Wallet</Text>
@@ -6200,7 +7687,7 @@ function AppContent({ themeMode, changeTheme }) {
 
       <View style={st.quick_actions}>
         {visibleQuickActions.map(a => (
-          <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress}>
+          <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress} accessibilityRole="button" accessibilityLabel={a.label}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
               <Text style={[st.quick_icon_txt, { color: a.bg === T.gold ? '#000' : T.text }]}>{a.icon}</Text>
             </View>
@@ -6278,12 +7765,18 @@ function AppContent({ themeMode, changeTheme }) {
           Object.keys(tokens).map(sym => (
             <TokenRowSkeleton key={sym} style={[isWideWeb && st.token_row_wide]} />
           ))
-        ) : sortedTokenEntries.map(([sym, t], i) => {
+        ) : visibleTokenEntries.map(([sym, t], i) => {
           const val = (t.balance || 0) * (t.price || 0);
           const isFav = favorites.includes(sym);
           return (
             <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
-              <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
+              <AnimPressable
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                scaleTo={0.98}
+                onPress={() => setSelectedToken(sym)}
+                accessibilityRole="button"
+                accessibilityLabel={`${t.name}, ${fmt(val)}, ${(t.balance || 0).toFixed(4)} ${sym}`}
+              >
                 <CoinLogo logo={t.logo} icon={t.icon} size={44} />
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -6590,6 +8083,65 @@ function AppContent({ themeMode, changeTheme }) {
     </Modal>
   );
 
+  const renderSell = () => {
+    const sellableBalance = sellToken === nativeSymbol
+      ? parseFloat(walletBalance || '0')
+      : (tokens[sellToken]?.balance || 0);
+    return (
+      <Modal visible={showSell} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setShowSell(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Vendre des crypto</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={st.form_label}>Token</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+              {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
+                const tk = tokens[sym];
+                if (!tk) return null;
+                return (
+                  <TouchableOpacity key={sym} style={[st.tok_chip, sellToken === sym && st.tok_chip_on]} onPress={() => setSellToken(sym)}>
+                    <CoinLogo logo={tk.logo} icon={tk.icon} size={24} />
+                    <Text style={[st.tok_chip_txt, sellToken === sym && { color: T.text }]}>{sym}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={st.form_label}>Montant {sellToken}</Text>
+            <TextInput style={st.form_input} value={sellAmount} onChangeText={setSellAmount}
+              placeholder="0.1" placeholderTextColor={T.text3} keyboardType="numeric" />
+            {!!sellableBalance && (
+              <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
+                {[0.25, 0.5, 1].map(pct => (
+                  <TouchableOpacity key={pct} style={st.quick_pct_btn} onPress={() => setSellAmount(String(sellableBalance * pct))}>
+                    <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <View style={st.send_info_box}>
+              <Text style={st.send_info_line}>≈ {fmt((parseFloat(sellAmount) || 0) * (tokens[sellToken]?.price || 0))}</Text>
+              <Text style={st.send_info_line}>Solde disponible : {sellableBalance.toFixed(6)} {sellToken}</Text>
+              <Text style={st.send_info_line}>Tu enverras toi-même les fonds à l'adresse de dépôt affichée par MoonPay.</Text>
+            </View>
+
+            <AnimPressable style={[st.green_btn, { opacity: sellLoading ? 0.7 : 1, marginTop: 24 }]}
+              onPress={handleSellNow} disabled={sellLoading}>
+              {sellLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Vendre via MoonPay</Text>}
+            </AnimPressable>
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   // ════════════════════════════════════════════════════════
   //  RENDER PRINCIPAL
   // ════════════════════════════════════════════════════════
@@ -6620,7 +8172,15 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={st.sidebar_logo}>⬡ NexiaWallet</Text>
             <View style={{ marginTop: 34, gap: 4 }}>
               {navItems.map(n => (
-                <AnimPressable key={n.id} style={[st.sidebar_item, tab === n.id && st.sidebar_item_on]} scaleTo={0.97} onPress={() => setTab(n.id)}>
+                <AnimPressable
+                  key={n.id}
+                  style={[st.sidebar_item, tab === n.id && st.sidebar_item_on]}
+                  scaleTo={0.97}
+                  onPress={() => setTab(n.id)}
+                  accessibilityRole="tab"
+                  accessibilityLabel={n.label}
+                  accessibilityState={{ selected: tab === n.id }}
+                >
                   <View style={{ width: 22, marginRight: 12, alignItems: 'center' }}>
                     <Ionicons name={n.icon} size={18} color={tab === n.id ? T.gold : T.text2} />
                   </View>
@@ -6628,7 +8188,13 @@ function AppContent({ themeMode, changeTheme }) {
                 </AnimPressable>
               ))}
             </View>
-            <AnimPressable style={[st.sidebar_item, { marginTop: 'auto' }]} scaleTo={0.97} onPress={() => setShowSettings(true)}>
+            <AnimPressable
+              style={[st.sidebar_item, { marginTop: 'auto' }]}
+              scaleTo={0.97}
+              onPress={() => setShowSettings(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t('nav_settings')}
+            >
               <View style={{ width: 22, marginRight: 12, alignItems: 'center' }}>
                 <Ionicons name="settings-outline" size={18} color={T.text2} />
               </View>
@@ -6644,7 +8210,15 @@ function AppContent({ themeMode, changeTheme }) {
           {tabContent}
           <View style={st.bottom_nav}>
             {navItems.map(n => (
-              <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
+              <AnimPressable
+                key={n.id}
+                style={[st.nav_item, n.big && st.nav_item_big]}
+                scaleTo={0.92}
+                onPress={() => setTab(n.id)}
+                accessibilityRole="tab"
+                accessibilityLabel={n.label}
+                accessibilityState={{ selected: tab === n.id }}
+              >
                 {n.big ? (
                   <View style={[st.nav_big_btn, { backgroundColor: tab === n.id ? T.gold : T.card2 }]}>
                     <Ionicons name={n.icon} size={20} color={tab === n.id ? '#000' : T.text2} />
@@ -6663,6 +8237,12 @@ function AppContent({ themeMode, changeTheme }) {
         </>
       )}
       {renderBuy()}
+      {renderSell()}
+      {renderRecurringBuy()}
+      {renderDuressSetup()}
+      {renderBridge()}
+      {renderDefiPositions()}
+      {renderReferral()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
@@ -6672,7 +8252,10 @@ function AppContent({ themeMode, changeTheme }) {
       {renderSettings()}
       {renderWalletConnect()}
       {!!wcProposal && renderWcProposal()}
+      {renderDappBrowser()}
+      {!!dappBridgeRequest && renderDappBridgeRequest()}
       {!!wcRequest && renderWcRequest()}
+      {renderApprovals()}
       {renderStaking()}
       {renderNftGallery()}
       {renderLegal()}
