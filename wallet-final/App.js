@@ -1835,6 +1835,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [nftSendAddress, setNftSendAddress]     = useState('');
   const [nftSendLoading, setNftSendLoading]     = useState(false);
   const [nftSendError, setNftSendError]         = useState(null);
+  const [nftNetwork, setNftNetwork]             = useState('ethereum'); // seul 'ethereum' est activé côté Alchemy pour l'instant
   // Sécurité PIN réel : la clé privée n'est JAMAIS stockée en clair — seul un
   // keystore chiffré (ethers, scrypt+AES) est persisté. `unlockedPrivateKey`/
   // `unlockedMnemonic` ne vivent qu'en mémoire, jamais sur disque, et
@@ -3027,23 +3028,30 @@ function AppContent({ themeMode, changeTheme }) {
     }
   }, [unlockedMnemonic, loadStakeAccounts, showToast]);
 
-  // ── Galerie NFT (Ethereum) ──
-  const openNftGallery = useCallback(async () => {
+  // ── Galerie NFT multi-chaînes (lecture via le backend, clé Alchemy côté
+  // serveur — voir ALCHEMY_NFT_SUBDOMAINS dans crypto-wallet/src/routes/
+  // wallet.js) — un réseau doit être activé sur le tableau de bord Alchemy
+  // pour la clé actuelle avant de fonctionner ; seul Ethereum l'est
+  // aujourd'hui, vérifié en direct (403 "not enabled for this app" sur les
+  // autres). Le code accepte déjà les autres réseaux, prêt dès qu'ils
+  // seront activés côté Alchemy, sans rien changer ici.
+  const NFT_NETWORKS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
+  const openNftGallery = useCallback(async (net = nftNetwork) => {
     setShowNftGallery(true);
     setSelectedNft(null);
     setNftsError(null);
     if (!walletAddr) return;
     setNftsLoading(true);
     try {
-      const response = await axios.get(`${API_BASE}/nft/owned/${walletAddr}`, { timeout: 25000, headers: API_HEADERS });
+      const response = await axios.get(`${API_BASE}/nft/owned/${walletAddr}`, { params: { network: net }, timeout: 25000, headers: API_HEADERS });
       if (!response.data?.success) throw new Error(response.data?.error || 'Impossible de récupérer les NFT.');
       setNfts(response.data.nfts || []);
     } catch (err) {
-      setNftsError(err.message || 'Impossible de récupérer les NFT.');
+      setNftsError(err.response?.data?.error || err.message || 'Impossible de récupérer les NFT.');
     } finally {
       setNftsLoading(false);
     }
-  }, [walletAddr]);
+  }, [walletAddr, nftNetwork]);
 
   const handleSendNft = useCallback(async () => {
     if (!selectedNft) return;
@@ -3829,7 +3837,7 @@ function AppContent({ themeMode, changeTheme }) {
     { id: 'sell',    icon: '💰', label: 'Vendre',            bg: T.card2, onPress: () => setShowSell(true) },
     { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
-    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: openNftGallery },
+    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
@@ -6557,13 +6565,26 @@ function AppContent({ themeMode, changeTheme }) {
                 {nftSendLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Envoyer le NFT</Text>}
               </AnimPressable>
             </View>
-          ) : nftsLoading ? (
-            <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
-          ) : nftsError ? (
-            <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
-          ) : nfts.length === 0 ? (
-            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse (Ethereum).</Text>
           ) : (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+                {NFT_NETWORKS.map(net => (
+                  <TouchableOpacity
+                    key={net}
+                    style={[st.tok_chip, nftNetwork === net && st.tok_chip_on]}
+                    onPress={() => { setNftNetwork(net); openNftGallery(net); }}
+                  >
+                    <Text style={[st.tok_chip_txt, nftNetwork === net && { color: T.text }]}>{NETWORK_INFO[net]?.label || net}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {nftsLoading ? (
+                <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
+              ) : nftsError ? (
+                <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
+              ) : nfts.length === 0 ? (
+                <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse ({NETWORK_INFO[nftNetwork]?.label || nftNetwork}).</Text>
+              ) : (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
               {nfts.map((n) => (
                 <TouchableOpacity
@@ -6582,6 +6603,8 @@ function AppContent({ themeMode, changeTheme }) {
                 </TouchableOpacity>
               ))}
             </View>
+              )}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>

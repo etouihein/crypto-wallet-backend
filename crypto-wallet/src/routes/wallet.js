@@ -745,6 +745,21 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
 // n'importe qui via les DevTools). L'envoi d'un NFT reste 100% côté client
 // (signature locale + POST /tx/broadcast existant, comme un envoi ERC20) —
 // cette route ne fait QUE lire les NFT déjà possédés, aucune clé privée ici.
+// Sous-domaines Alchemy par réseau — la clé (process.env.ALCHEMY_API_KEY)
+// est la MÊME pour tous, mais chaque réseau doit être activé séparément sur
+// le tableau de bord Alchemy (Settings > Networks) pour cette clé, sinon
+// Alchemy répond 403 "XXX_MAINNET is not enabled for this app". Vérifié en
+// direct : seul ethereum est activé sur la clé actuelle (2026-08-18) — les
+// autres réseaux fonctionneront dès qu'ils seront activés côté dashboard,
+// aucun changement de code nécessaire à ce moment-là.
+const ALCHEMY_NFT_SUBDOMAINS = {
+  ethereum: 'eth-mainnet',
+  polygon: 'polygon-mainnet',
+  arbitrum: 'arb-mainnet',
+  optimism: 'opt-mainnet',
+  base: 'base-mainnet',
+};
+
 router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
   try {
     const apiKey = process.env.ALCHEMY_API_KEY;
@@ -755,11 +770,28 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
     if (!ethers.utils.isAddress(address)) {
       return res.status(400).json({ success: false, error: 'Adresse invalide.' });
     }
-    const url = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
+    const requestedNetwork = normalizeNetwork(req.query.network || 'ethereum');
+    const subdomain = ALCHEMY_NFT_SUBDOMAINS[requestedNetwork];
+    if (!subdomain) {
+      return res.status(400).json({ success: false, error: `Galerie NFT non supportée sur ${requestedNetwork}.` });
+    }
+    const url = `https://${subdomain}.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
     const response = await fetch(url);
-    const data = await response.json();
+    // Alchemy répond parfois en texte brut (pas du JSON) sur certaines
+    // erreurs — ex. 403 "XXX_MAINNET is not enabled for this app" — .json()
+    // planterait dessus (vu en vrai : "Unexpected token 'M'..."). Lit le
+    // texte d'abord, ne parse en JSON que si ça y ressemble.
+    const rawBody = await response.text();
+    let data = null;
+    try { data = JSON.parse(rawBody); } catch { /* réponse non-JSON, on garde rawBody */ }
     if (!response.ok) {
-      return res.status(400).json({ success: false, error: data?.message || 'Impossible de récupérer les NFT.' });
+      const notEnabled = response.status === 403 && /not enabled for this app/i.test(data?.message || rawBody || '');
+      return res.status(400).json({
+        success: false,
+        error: notEnabled
+          ? `Réseau ${requestedNetwork} pas encore activé sur le tableau de bord Alchemy pour cette clé.`
+          : (data?.message || 'Impossible de récupérer les NFT.'),
+      });
     }
     const nfts = (data.ownedNfts || [])
       .filter((n) => (n.id?.tokenMetadata?.tokenType || 'ERC721') === 'ERC721')
