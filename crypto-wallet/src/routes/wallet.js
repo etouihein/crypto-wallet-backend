@@ -44,6 +44,16 @@ const MOONPAY_SECRET_KEY = (process.env.MOONPAY_SECRET_KEY || '').trim();
 const MOONPAY_BASE_URL = process.env.MOONPAY_ENV === 'production'
   ? 'https://buy.moonpay.com'
   : 'https://buy-sandbox.moonpay.com';
+// Widget de VENTE (off-ramp) — chemin /v2/sell, mais TOUJOURS sur le domaine
+// buy.moonpay.com (production), jamais buy-sandbox.moonpay.com, contrairement
+// à l'achat ci-dessus. Vérifié en chargeant les deux pour de vrai avec la
+// clé de test (pk_test_...) : buy-sandbox.moonpay.com/v2/sell plante côté
+// MoonPay ("Cannot read properties of undefined (reading 'TenantFeatures')",
+// bug/limitation de LEUR bac à sable sur ce produit) alors que
+// buy.moonpay.com/v2/sell charge sans erreur avec la MÊME clé de test —
+// MoonPay détecte le mode sandbox/production via le préfixe de la clé
+// (pk_test_ vs pk_live_), pas via le domaine, pour ce produit précis.
+const MOONPAY_SELL_BASE_URL = 'https://buy.moonpay.com/v2/sell';
 const MOONPAY_CURRENCY_CODES = {
   ethereum: { ETH: 'eth', USDT: 'usdt_eth', USDC: 'usdc_eth' },
   bsc:      { BNB: 'bnb_bsc', USDT: 'usdt_bsc', USDC: 'usdc_bsc' },
@@ -86,6 +96,28 @@ function buildMoonPayUrl({ currencyCode, walletAddress, baseCurrencyAmount, redi
   const url = `${MOONPAY_BASE_URL}?${params.toString()}`;
   if (!MOONPAY_SECRET_KEY) return url;
 
+  const signature = crypto
+    .createHmac('sha256', MOONPAY_SECRET_KEY)
+    .update(new URL(url).search)
+    .digest('base64');
+  return `${url}&signature=${encodeURIComponent(signature)}`;
+}
+
+// Widget de vente : `refundWalletAddress` (où MoonPay renvoie les fonds en
+// cas d'échec KYC/mauvais actif envoyé) exige une signature HMAC dès qu'il
+// est présent — contrairement à l'achat, on ne peut donc PAS proposer de
+// mode "sans clé secrète" ici : la clé secrète MoonPay est obligatoire.
+function buildMoonPaySellUrl({ currencyCode, refundWalletAddress, baseCurrencyAmount, redirectURL }) {
+  const fields = {
+    apiKey: MOONPAY_API_KEY,
+    baseCurrencyCode: currencyCode,
+    quoteCurrencyCode: 'usd',
+    baseCurrencyAmount: String(baseCurrencyAmount),
+    refundWalletAddress,
+    redirectURL,
+  };
+  const params = new URLSearchParams(fields);
+  const url = `${MOONPAY_SELL_BASE_URL}?${params.toString()}`;
   const signature = crypto
     .createHmac('sha256', MOONPAY_SECRET_KEY)
     .update(new URL(url).search)
@@ -815,6 +847,63 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
   } catch (error) {
     console.error('Checkout error:', error);
     res.status(500).json({ success: false, error: 'Erreur de paiement.' });
+  }
+});
+
+// Vente de crypto (off-ramp) via le widget MoonPay — l'utilisateur envoie
+// lui-même les fonds depuis son wallet vers l'adresse de dépôt que le widget
+// affiche (aucun accès à sa clé privée requis côté backend, cohérent avec
+// l'architecture non-custodiale : voir NOTES.md / lib/wallet.js côté client).
+router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) => {
+  try {
+    const { amountCrypto, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
+    if (!amountCrypto || !tokenSymbol) {
+      return res.status(400).json({ success: false, error: 'Montant et token requis.' });
+    }
+    if (PAYMENT_PROVIDER !== 'moonpay') {
+      return res.status(503).json({ success: false, error: 'La vente n’est disponible que via MoonPay pour l’instant.' });
+    }
+    if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
+      return res.status(503).json({ success: false, error: 'MoonPay non configuré (clé API/secrète manquante dans .env).' });
+    }
+    const normalizedSellNetwork = normalizeNetwork(network);
+    const walletAddressValid = normalizedSellNetwork === 'solana'
+      ? isValidSolanaAddress(walletAddress || '')
+      : normalizedSellNetwork === 'bitcoin'
+      ? isValidBitcoinAddress(walletAddress || '')
+      : ethers.utils.isAddress(walletAddress || '');
+    if (!walletAddressValid) {
+      return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
+    }
+    const amount = parseFloat(amountCrypto);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    }
+    const currencyCode = MOONPAY_CURRENCY_CODES[normalizedSellNetwork]?.[tokenSymbol.toUpperCase()];
+    if (!currencyCode) {
+      return res.status(400).json({ success: false, error: `Vente de ${tokenSymbol} non supportée sur ce wallet.` });
+    }
+
+    const frontendBase = (() => {
+      if (returnUrl && typeof returnUrl === 'string' && returnUrl.startsWith('http')) {
+        try { return new URL(returnUrl).origin; } catch (err) { /* ignore invalid URL */ }
+      }
+      if (req.headers.origin) {
+        try { return new URL(req.headers.origin).origin; } catch (err) { /* ignore invalid origin */ }
+      }
+      return FRONTEND_URL;
+    })();
+
+    const url = buildMoonPaySellUrl({
+      currencyCode,
+      refundWalletAddress: walletAddress,
+      baseCurrencyAmount: amount,
+      redirectURL: frontendBase,
+    });
+    res.json({ success: true, provider: 'moonpay', url });
+  } catch (error) {
+    console.error('Sell session error:', error);
+    res.status(500).json({ success: false, error: 'Erreur lors de la création de la session de vente.' });
   }
 });
 

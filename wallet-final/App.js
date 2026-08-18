@@ -1730,6 +1730,10 @@ function AppContent({ themeMode, changeTheme }) {
   const [buyToken, setBuyToken]           = useState('ETH');
   const [buyAmount, setBuyAmount]         = useState('10');
   const [buyLoading, setBuyLoading]       = useState(false);
+  const [showSell, setShowSell]           = useState(false);
+  const [sellToken, setSellToken]         = useState('ETH');
+  const [sellAmount, setSellAmount]       = useState('');
+  const [sellLoading, setSellLoading]     = useState(false);
   const [walletAddr, setWalletAddr]       = useState('');
   const [walletBalance, setWalletBalance] = useState('0');
   const [backendReady, setBackendReady]   = useState(false);
@@ -3709,6 +3713,7 @@ function AppContent({ themeMode, changeTheme }) {
   const QUICK_ACTIONS_BASE = [
     { id: 'send',    icon: '↑',  label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
     { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
+    { id: 'sell',    icon: '💰', label: 'Vendre',            bg: T.card2, onPress: () => setShowSell(true) },
     { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
     { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: openNftGallery },
@@ -3844,6 +3849,46 @@ function AppContent({ themeMode, changeTheme }) {
       showAlert('Erreur paiement', err.message || 'Impossible de lancer le paiement.');
     } finally {
       setBuyLoading(false);
+    }
+  };
+
+  // ── VENTE (off-ramp MoonPay) ── même principe que l'achat, sens inverse :
+  // le widget MoonPay affiche une adresse de dépôt, l'utilisateur y envoie
+  // lui-même ses fonds depuis ce wallet (aucune clé privée transmise au
+  // backend — cohérent avec l'architecture non-custodiale du reste de l'app).
+  const handleSellNow = async () => {
+    if (!sellAmount || isNaN(Number(sellAmount)) || Number(sellAmount) <= 0) {
+      showAlert('Montant invalide', `Entre un montant en ${sellToken}.`);
+      return;
+    }
+    setSellLoading(true);
+    try {
+      const isSolanaSell = sellToken === 'SOL';
+      const isBitcoinSell = sellToken === 'BTC';
+      const sellNetwork = isSolanaSell ? 'solana' : isBitcoinSell ? 'bitcoin' : network;
+      const sellWalletAddress = isSolanaSell ? solanaAddr : isBitcoinSell ? bitcoinAddr : walletAddr;
+      const res = await axios.post(`${API_BASE}/payments/create-sell-session`, {
+        amountCrypto: Number(sellAmount),
+        tokenSymbol: sellToken,
+        network: sellNetwork,
+        walletAddress: sellWalletAddress,
+        returnUrl: Platform.OS === 'web' ? window.location.origin : `exp://${HOST_OVERRIDE}:8087`,
+      }, { timeout: 20000, headers: API_HEADERS });
+
+      if (!res.data?.success || !res.data.url) {
+        throw new Error(res.data?.error || 'Impossible de créer la session de vente.');
+      }
+
+      setShowSell(false);
+      if (Platform.OS === 'web') {
+        window.location.href = res.data.url;
+      } else {
+        await Linking.openURL(res.data.url);
+      }
+    } catch (err) {
+      showAlert('Erreur', err.message || 'Impossible de lancer la vente.');
+    } finally {
+      setSellLoading(false);
     }
   };
 
@@ -7114,6 +7159,65 @@ function AppContent({ themeMode, changeTheme }) {
     </Modal>
   );
 
+  const renderSell = () => {
+    const sellableBalance = sellToken === nativeSymbol
+      ? parseFloat(walletBalance || '0')
+      : (tokens[sellToken]?.balance || 0);
+    return (
+      <Modal visible={showSell} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setShowSell(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Vendre des crypto</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={st.form_label}>Token</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+              {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
+                const tk = tokens[sym];
+                if (!tk) return null;
+                return (
+                  <TouchableOpacity key={sym} style={[st.tok_chip, sellToken === sym && st.tok_chip_on]} onPress={() => setSellToken(sym)}>
+                    <CoinLogo logo={tk.logo} icon={tk.icon} size={24} />
+                    <Text style={[st.tok_chip_txt, sellToken === sym && { color: T.text }]}>{sym}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={st.form_label}>Montant {sellToken}</Text>
+            <TextInput style={st.form_input} value={sellAmount} onChangeText={setSellAmount}
+              placeholder="0.1" placeholderTextColor={T.text3} keyboardType="numeric" />
+            {!!sellableBalance && (
+              <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
+                {[0.25, 0.5, 1].map(pct => (
+                  <TouchableOpacity key={pct} style={st.quick_pct_btn} onPress={() => setSellAmount(String(sellableBalance * pct))}>
+                    <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <View style={st.send_info_box}>
+              <Text style={st.send_info_line}>≈ {fmt((parseFloat(sellAmount) || 0) * (tokens[sellToken]?.price || 0))}</Text>
+              <Text style={st.send_info_line}>Solde disponible : {sellableBalance.toFixed(6)} {sellToken}</Text>
+              <Text style={st.send_info_line}>Tu enverras toi-même les fonds à l'adresse de dépôt affichée par MoonPay.</Text>
+            </View>
+
+            <AnimPressable style={[st.green_btn, { opacity: sellLoading ? 0.7 : 1, marginTop: 24 }]}
+              onPress={handleSellNow} disabled={sellLoading}>
+              {sellLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Vendre via MoonPay</Text>}
+            </AnimPressable>
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   // ════════════════════════════════════════════════════════
   //  RENDER PRINCIPAL
   // ════════════════════════════════════════════════════════
@@ -7187,6 +7291,7 @@ function AppContent({ themeMode, changeTheme }) {
         </>
       )}
       {renderBuy()}
+      {renderSell()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
       {renderSend()}
