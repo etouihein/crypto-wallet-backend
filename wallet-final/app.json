@@ -58,7 +58,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#070A1A"
         }
-      ]
+      ],
+      "@sentry/react-native"
     ]
   }
 }
