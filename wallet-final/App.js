@@ -68,6 +68,7 @@ const DARK_THEME = {
   up:      '#7fb69a',
   upBg:    'rgba(127, 182, 154, 0.12)',
   down:    '#c98a8a',
+  
   downBg:  'rgba(201, 138, 138, 0.12)',
   red:     '#c9605f',
   redBg:   'rgba(201, 96, 95, 0.12)',
@@ -152,6 +153,14 @@ const useTheme = () => useContext(ThemeContext);
 // une imprécision de quelques % est acceptable pour un affichage indicatif,
 // mais ne pas s'y fier pour un calcul exact (à rafraîchir à la main de temps
 // en temps, ou brancher sur une vraie API de taux de change plus tard).
+const LOCALE_DISPLAY = {
+  fr: { flag: '🇫🇷', name: 'Français' },
+  en: { flag: '🇬🇧', name: 'English' },
+  es: { flag: '🇪🇸', name: 'Español' },
+  de: { flag: '🇩🇪', name: 'Deutsch' },
+  pt: { flag: '🇵🇹', name: 'Português' },
+};
+
 const CURRENCIES = {
   USD: { symbol: '$',   name: 'Dollar US',        flag: '🇺🇸', rate: 1      },
   EUR: { symbol: '€',   name: 'Euro',              flag: '🇪🇺', rate: 0.922  },
@@ -7361,9 +7370,9 @@ function AppContent({ themeMode, changeTheme }) {
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
           {SUPPORTED_LOCALES.map(code => (
             <TouchableOpacity key={code} style={[st.settings_row, locale === code && st.settings_row_on]} onPress={() => changeLocale(code)}>
-              <Text style={{ fontSize: 22 }}>{code === 'fr' ? '🇫🇷' : '🇬🇧'}</Text>
+              <Text style={{ fontSize: 22 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>{code === 'fr' ? 'Français' : 'English'}</Text>
+                <Text style={st.settings_row_title}>{LOCALE_DISPLAY[code]?.name || code}</Text>
               </View>
               {locale === code && <Text style={{ color: T.gold }}>✓</Text>}
             </TouchableOpacity>
