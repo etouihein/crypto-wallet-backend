@@ -29,6 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider } from './lib/dappBrowserProvider';
+import { simulateTransaction } from './lib/txSimulation';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -1760,6 +1761,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
   const [wcRequestLoading, setWcRequestLoading] = useState(false);
   const [wcRequestError, setWcRequestError]     = useState(null);
+  const [wcSimResult, setWcSimResult]           = useState(null); // voir lib/txSimulation.js
   // Navigateur dApp intégré — WebView + provider EIP-1193 injecté (voir
   // lib/dappBrowserProvider.js). Pont direct WebView <-> natif (pas de
   // relais WalletConnect), mais la signature réutilise exactement
@@ -1772,6 +1774,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [dappBridgeRequest, setDappBridgeRequest] = useState(null); // { id, method, params, origin } en attente de confirmation
   const [dappBridgeLoading, setDappBridgeLoading] = useState(false);
   const [dappBridgeError, setDappBridgeError]     = useState(null);
+  const [dappSimResult, setDappSimResult]         = useState(null); // voir lib/txSimulation.js
   const dappWebViewRef = useRef(null);
   // Staking natif Solana — voir getSolanaValidators/getSolanaStakeAccounts/
   // createAndDelegateStake/deactivateStake/withdrawStake dans lib/wallet.js.
@@ -2777,6 +2780,34 @@ function AppContent({ themeMode, changeTheme }) {
     setDappBridgeRequest(null);
     setDappBridgeError(null);
   }, [dappBridgeRequest, dappBridgeRespond]);
+
+  // Simulation avant signature (voir lib/txSimulation.js) — décodage local du
+  // calldata (approbations dangereuses) + une estimation de gas réelle pour
+  // détecter un revert probable. Ne bloque jamais la signature, affiche juste
+  // un avertissement dans la modale de confirmation.
+  useEffect(() => {
+    const method = wcRequest?.params?.request?.method;
+    if (method !== 'eth_sendTransaction') { setWcSimResult(null); return; }
+    let cancelled = false;
+    setWcSimResult(null);
+    const tx = wcRequest.params.request.params?.[0] || {};
+    const net = walletConnect.SUPPORTED_EVM_CHAINS[wcRequest.params.chainId] || 'ethereum';
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network: net })
+      .then((res) => { if (!cancelled) setWcSimResult(res); })
+      .catch(() => { if (!cancelled) setWcSimResult(null); });
+    return () => { cancelled = true; };
+  }, [wcRequest]);
+
+  useEffect(() => {
+    if (dappBridgeRequest?.method !== 'eth_sendTransaction') { setDappSimResult(null); return; }
+    let cancelled = false;
+    setDappSimResult(null);
+    const tx = dappBridgeRequest.params?.[0] || {};
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network })
+      .then((res) => { if (!cancelled) setDappSimResult(res); })
+      .catch(() => { if (!cancelled) setDappSimResult(null); });
+    return () => { cancelled = true; };
+  }, [dappBridgeRequest, network]);
 
   // ── Staking natif Solana ──
   // La liste des comptes de stake connus de cet appareil (par adresse de
@@ -5584,6 +5615,16 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]}>Réseau : {network}</Text>
             <View style={st.alert_form}>{detail}</View>
+            {method === 'eth_sendTransaction' && !wcSimResult && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            )}
+            {!!wcSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: wcSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {wcSimResult.warnings.map((w, i) => (
+                  <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
+                ))}
+              </View>
+            )}
             {!!wcRequestError && <Text style={[st.auth_error, { marginTop: 10 }]}>{wcRequestError}</Text>}
             <View style={{ flexDirection: 'row', marginTop: 24 }}>
               <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleWcRejectRequest} disabled={wcRequestLoading}>
@@ -5753,6 +5794,16 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]} numberOfLines={1}>{origin}</Text>
             <View style={st.alert_form}>{detail}</View>
+            {method === 'eth_sendTransaction' && !dappSimResult && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            )}
+            {!!dappSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: dappSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {dappSimResult.warnings.map((w, i) => (
+                  <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
+                ))}
+              </View>
+            )}
             {!!dappBridgeError && <Text style={[st.auth_error, { marginTop: 10 }]}>{dappBridgeError}</Text>}
             <View style={{ flexDirection: 'row', marginTop: 24 }}>
               <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleDappBridgeReject} disabled={dappBridgeLoading}>
