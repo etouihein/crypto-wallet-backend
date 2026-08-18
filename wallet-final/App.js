@@ -634,6 +634,18 @@ const saveVibrationEnabled = async (enabled) => {
   try { await AsyncStorage.setItem(VIBRATION_ENABLED_KEY, String(enabled)); } catch { /* rien à faire */ }
 };
 
+// "Masquer les soldes à zéro" sur l'accueil — préférence d'affichage pure,
+// ne cache rien ailleurs (Envoyer/Swap/Acheter listent toujours tout).
+const HIDE_ZERO_BALANCES_KEY = 'wallet-pro-hide-zero-balances-v1';
+
+const loadHideZeroBalances = async () => {
+  try { return (await AsyncStorage.getItem(HIDE_ZERO_BALANCES_KEY)) === 'true'; } catch { return false; }
+};
+
+const saveHideZeroBalances = async (enabled) => {
+  try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
 // Langue de l'interface (fr/en) — voir lib/i18n.js. Français par défaut
 // (langue d'origine de l'app), persistée dès que l'utilisateur en choisit
 // une autre dans Paramètres.
@@ -1890,6 +1902,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [simAmount, setSimAmount]               = useState('100'); // simulateur "et si le prix x2/x5/x10" sur la landing
   const [simCoin, setSimCoin]                   = useState('BTC');
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  const [hideZeroBalances, setHideZeroBalances] = useState(false);
   const [locale, setLocale] = useState('fr');
   // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
   // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
@@ -3259,6 +3272,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadRecentAddresses().then(setRecentAddresses);
     loadPriceAlerts().then(list => { setPriceAlerts(list); setPriceAlertsLoaded(true); });
     loadVibrationEnabled().then(setVibrationEnabled);
+    loadHideZeroBalances().then(setHideZeroBalances);
     loadLocale().then(setLocale);
     loadBalancePeriod().then(setBalancePeriod);
     loadLastSend().then(setLastSend);
@@ -3886,6 +3900,13 @@ function AppContent({ themeMode, changeTheme }) {
   const sortedTokenEntries = useMemo(() =>
     Object.entries(tokens).sort(([symA], [symB]) => (tokenUsage[symB] || 0) - (tokenUsage[symA] || 0)),
   [tokens, tokenUsage]);
+
+  // "Masquer les soldes à zéro" (voir réglage hideZeroBalances) : ne cache
+  // QUE l'affichage de l'accueil, jamais les autres écrans (Envoyer/Swap/
+  // Acheter continuent de proposer tous les tokens configurés).
+  const visibleTokenEntries = useMemo(() =>
+    hideZeroBalances ? sortedTokenEntries.filter(([, t]) => (t.balance || 0) * (t.price || 0) >= 0.01) : sortedTokenEntries,
+  [sortedTokenEntries, hideZeroBalances]);
 
   // Token détenu (solde > 0) dont le prix bouge le plus aujourd'hui, dans un
   // sens ou l'autre -- ignoré sous 1% pour ne pas polluer l'accueil avec du
@@ -7215,6 +7236,19 @@ function AppContent({ themeMode, changeTheme }) {
             </>
           )}
 
+          <Text style={[st.settings_section, { marginTop: 24 }]}>👛 Affichage du portefeuille</Text>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => { const next = !hideZeroBalances; setHideZeroBalances(next); saveHideZeroBalances(next); }}
+          >
+            <Text style={{ fontSize: 22 }}>🧹</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Masquer les soldes à zéro</Text>
+              <Text style={st.settings_row_sub}>Ne montre que les tokens que tu possèdes réellement</Text>
+            </View>
+            <View style={[st.status_dot, { backgroundColor: hideZeroBalances ? T.gold : T.text3 }]} />
+          </AnimPressable>
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 {t('settings_quick_actions')}</Text>
           {QUICK_ACTIONS_BASE.map(a => {
             const isHidden = hiddenQuickActions.includes(a.id);
@@ -7501,7 +7535,7 @@ function AppContent({ themeMode, changeTheme }) {
           Object.keys(tokens).map(sym => (
             <TokenRowSkeleton key={sym} style={[isWideWeb && st.token_row_wide]} />
           ))
-        ) : sortedTokenEntries.map(([sym, t], i) => {
+        ) : visibleTokenEntries.map(([sym, t], i) => {
           const val = (t.balance || 0) * (t.price || 0);
           const isFav = favorites.includes(sym);
           return (
