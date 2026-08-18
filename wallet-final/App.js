@@ -28,8 +28,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
+import { buildInjectedProvider } from './lib/dappBrowserProvider';
 import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
 import { ethers } from 'ethers';
+// react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
+// dans le paquet) — l'importer statiquement ferait planter le bundle web au
+// rendu. Chargé dynamiquement, natif uniquement (voir renderDappBrowser).
+const WebView = Platform.OS === 'web' ? null : require('react-native-webview').WebView;
 
 const { width } = Dimensions.get('window');
 
@@ -1699,6 +1704,11 @@ function AppContent({ themeMode, changeTheme }) {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showSettings, setShowSettings]   = useState(false);
   const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
+  // true seulement quand renderLegal() a été ouvert depuis Paramètres (et pas
+  // depuis le pied de page de la landing publique, qui n'a pas de Settings à
+  // rouvrir) — sert uniquement à décider si le bouton retour doit rouvrir
+  // Paramètres.
+  const [legalDocFromSettings, setLegalDocFromSettings] = useState(false);
   const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
@@ -1750,6 +1760,19 @@ function AppContent({ themeMode, changeTheme }) {
   const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
   const [wcRequestLoading, setWcRequestLoading] = useState(false);
   const [wcRequestError, setWcRequestError]     = useState(null);
+  // Navigateur dApp intégré — WebView + provider EIP-1193 injecté (voir
+  // lib/dappBrowserProvider.js). Pont direct WebView <-> natif (pas de
+  // relais WalletConnect), mais la signature réutilise exactement
+  // walletConnect.executeSessionRequest — même code que pour WalletConnect.
+  // Natif uniquement : react-native-webview n'a pas d'implémentation web.
+  const [showDappBrowser, setShowDappBrowser]     = useState(false);
+  const [dappUrlInput, setDappUrlInput]           = useState('');
+  const [dappCurrentUrl, setDappCurrentUrl]       = useState(null);
+  const [dappConnectedOrigins, setDappConnectedOrigins] = useState([]); // origines autorisées à voir l'adresse (session app en cours)
+  const [dappBridgeRequest, setDappBridgeRequest] = useState(null); // { id, method, params, origin } en attente de confirmation
+  const [dappBridgeLoading, setDappBridgeLoading] = useState(false);
+  const [dappBridgeError, setDappBridgeError]     = useState(null);
+  const dappWebViewRef = useRef(null);
   // Staking natif Solana — voir getSolanaValidators/getSolanaStakeAccounts/
   // createAndDelegateStake/deactivateStake/withdrawStake dans lib/wallet.js.
   const [showStaking, setShowStaking]           = useState(false);
@@ -2674,6 +2697,86 @@ function AppContent({ themeMode, changeTheme }) {
     try { await walletConnect.disconnectSession(topic); } catch (err) { console.warn('disconnectSession error', err.message); }
     refreshWcSessions();
   }, [refreshWcSessions]);
+
+  // ── Navigateur dApp intégré ──
+  const dappBridgeRespond = useCallback((id, errorMessage, result) => {
+    const script = `window.__nexiaRespond(${id}, ${errorMessage ? JSON.stringify(errorMessage) : 'null'}, ${JSON.stringify(result === undefined ? null : result)}); true;`;
+    dappWebViewRef.current?.injectJavaScript(script);
+  }, []);
+
+  const handleDappBrowserOpen = useCallback((url) => {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return;
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    setDappCurrentUrl(withScheme);
+    setDappUrlInput(withScheme);
+  }, []);
+
+  // Messages venant de la page web (voir lib/dappBrowserProvider.js). Les
+  // méthodes purement lecture (pas de signature, pas de nouvelle
+  // autorisation) sont résolues tout de suite ; le reste passe par une
+  // confirmation explicite (renderDappBridgeRequest).
+  const handleDappMessage = useCallback((event) => {
+    let msg;
+    try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
+    if (!msg || msg.source !== 'nexiawallet-provider') return;
+    const { id, method, params } = msg;
+    let origin = dappCurrentUrl || '';
+    try { origin = new URL(dappCurrentUrl).origin; } catch { /* garde l'URL brute si non parsable */ }
+
+    if (method === 'eth_chainId') {
+      return dappBridgeRespond(id, null, '0x' + localWallet.getNetworkConfig(network).chainId.toString(16));
+    }
+    if (method === 'net_version') {
+      return dappBridgeRespond(id, null, String(localWallet.getNetworkConfig(network).chainId));
+    }
+    if (method === 'eth_accounts') {
+      return dappBridgeRespond(id, null, dappConnectedOrigins.includes(origin) && walletAddr ? [walletAddr] : []);
+    }
+    // eth_requestAccounts / personal_sign / eth_sign / eth_signTypedData(_v4)
+    // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
+    setDappBridgeError(null);
+    setDappBridgeRequest({ id, method, params, origin });
+  }, [dappCurrentUrl, dappConnectedOrigins, walletAddr, network, dappBridgeRespond]);
+
+  const handleDappBridgeApprove = useCallback(async () => {
+    if (!dappBridgeRequest) return;
+    const { id, method, params, origin } = dappBridgeRequest;
+    setDappBridgeLoading(true);
+    setDappBridgeError(null);
+    try {
+      if (method === 'eth_requestAccounts') {
+        setDappConnectedOrigins(prev => (prev.includes(origin) ? prev : [...prev, origin]));
+        dappBridgeRespond(id, null, walletAddr ? [walletAddr] : []);
+      } else if (method === 'wallet_switchEthereumChain') {
+        const requestedHex = params?.[0]?.chainId;
+        const targetNetwork = walletConnect.SUPPORTED_EVM_CHAINS[`eip155:${parseInt(requestedHex, 16)}`];
+        if (!targetNetwork) throw new Error('Réseau non supporté par NexiaWallet.');
+        setNetwork(targetNetwork);
+        dappBridgeRespond(id, null, null);
+        dappWebViewRef.current?.injectJavaScript(`window.__nexiaEmit('chainChanged', ${JSON.stringify(requestedHex)}); true;`);
+      } else {
+        if (!unlockedPrivateKey) throw new Error('Wallet verrouillé.');
+        const chainIdCaip = `eip155:${localWallet.getNetworkConfig(network).chainId}`;
+        const result = await walletConnect.executeSessionRequest({ chainId: chainIdCaip, method, params }, unlockedPrivateKey);
+        dappBridgeRespond(id, null, result);
+      }
+      setDappBridgeRequest(null);
+    } catch (err) {
+      const message = err.message || 'Requête refusée.';
+      setDappBridgeError(message);
+      dappBridgeRespond(id, message, null);
+    } finally {
+      setDappBridgeLoading(false);
+    }
+  }, [dappBridgeRequest, walletAddr, unlockedPrivateKey, network, dappBridgeRespond]);
+
+  const handleDappBridgeReject = useCallback(() => {
+    if (!dappBridgeRequest) return;
+    dappBridgeRespond(dappBridgeRequest.id, "Refusé par l'utilisateur.", null);
+    setDappBridgeRequest(null);
+    setDappBridgeError(null);
+  }, [dappBridgeRequest, dappBridgeRespond]);
 
   // ── Staking natif Solana ──
   // La liste des comptes de stake connus de cet appareil (par adresse de
@@ -5291,7 +5394,10 @@ function AppContent({ themeMode, changeTheme }) {
       <Modal visible transparent animationType="slide">
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => setLegalDoc(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <TouchableOpacity
+              onPress={() => { setLegalDoc(null); if (legalDocFromSettings) { setShowSettings(true); setLegalDocFromSettings(false); } }}
+              style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+            >
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <Text style={st.modal_title}>{doc.title}</Text>
@@ -5350,7 +5456,7 @@ function AppContent({ themeMode, changeTheme }) {
     <Modal visible={showWalletConnect} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+          <TouchableOpacity onPress={() => { setShowWalletConnect(false); setWcError(null); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>{t('settings_connect_dapp')}</Text>
@@ -5485,6 +5591,175 @@ function AppContent({ themeMode, changeTheme }) {
               </TouchableOpacity>
               <AnimPressable style={[st.green_btn, { flex: 1, opacity: wcRequestLoading ? 0.7 : 1 }]} onPress={handleWcApproveRequest} disabled={wcRequestLoading}>
                 {wcRequestLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Signer</Text>}
+              </AnimPressable>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
+  const DAPP_SHORTCUTS = [
+    { name: 'Uniswap', url: 'https://app.uniswap.org' },
+    { name: 'OpenSea', url: 'https://opensea.io' },
+    { name: 'PancakeSwap', url: 'https://pancakeswap.finance' },
+  ];
+
+  // Navigateur dApp intégré — natif uniquement (react-native-webview n'a pas
+  // d'implémentation web, voir l'import de WebView tout en haut du fichier).
+  const renderDappBrowser = () => (
+    <Modal visible={showDappBrowser} animationType="slide" onRequestClose={() => setShowDappBrowser(false)}>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide, { flex: 1 }]}>
+        {Platform.OS === 'web' ? (
+          <>
+            <View style={st.modal_hdr}>
+              <TouchableOpacity onPress={() => { setShowDappBrowser(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+                <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+              </TouchableOpacity>
+              <Text style={st.modal_title}>Navigateur Web3</Text>
+              <View style={{ width: 40 }} />
+            </View>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center' }}>
+                Le navigateur dApp n'est disponible que dans l'app mobile NexiaWallet (pas sur le web).
+              </Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={st.modal_hdr}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (dappCurrentUrl) { setDappCurrentUrl(null); return; }
+                  setShowDappBrowser(false);
+                  setShowSettings(true);
+                }}
+                style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+              >
+                <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+              </TouchableOpacity>
+              <Text style={st.modal_title} numberOfLines={1}>Navigateur Web3</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            {!dappCurrentUrl ? (
+              <ScrollView style={{ flex: 1, padding: 16 }}>
+                <Text style={{ color: T.text2, fontSize: 13, marginBottom: 12, lineHeight: 19 }}>
+                  Colle l'adresse d'une dApp (Uniswap, OpenSea...) ou choisis un raccourci ci-dessous. Ton adresse n'est
+                  partagée qu'après ta confirmation explicite, et chaque signature/transaction te sera toujours demandée.
+                </Text>
+                <TextInput
+                  style={st.form_input}
+                  placeholder="app.uniswap.org"
+                  placeholderTextColor={T.text3}
+                  value={dappUrlInput}
+                  onChangeText={setDappUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  onSubmitEditing={() => handleDappBrowserOpen(dappUrlInput)}
+                />
+                <AnimPressable style={[st.green_btn, { marginTop: 12 }]} onPress={() => handleDappBrowserOpen(dappUrlInput)}>
+                  <Text style={st.green_btn_txt}>Ouvrir</Text>
+                </AnimPressable>
+                <Text style={[st.settings_row_sub, { marginTop: 24, marginBottom: 10 }]}>Raccourcis</Text>
+                {DAPP_SHORTCUTS.map(s => (
+                  <TouchableOpacity key={s.url} style={st.settings_row} onPress={() => handleDappBrowserOpen(s.url)}>
+                    <Text style={st.settings_row_title}>{s.name}</Text>
+                    <Text style={st.settings_row_sub}>{s.url}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <>
+                <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={1}>{dappCurrentUrl}</Text>
+                </View>
+                <WebView
+                  ref={dappWebViewRef}
+                  source={{ uri: dappCurrentUrl }}
+                  style={{ flex: 1 }}
+                  onMessage={handleDappMessage}
+                  onNavigationStateChange={(nav) => { if (nav?.url) setDappUrlInput(nav.url); }}
+                  injectedJavaScriptBeforeContentLoaded={buildInjectedProvider({
+                    chainId: '0x' + localWallet.getNetworkConfig(network).chainId.toString(16),
+                    address: dappConnectedOrigins.length ? walletAddr : null,
+                  })}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  originWhitelist={['https://*', 'http://*']}
+                />
+              </>
+            )}
+          </>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+
+  const renderDappBridgeRequest = () => {
+    const method = dappBridgeRequest?.method;
+    const params = dappBridgeRequest?.params || [];
+    const origin = dappBridgeRequest?.origin || '';
+
+    let title = 'Demande de signature';
+    let detail = null;
+    if (method === 'eth_requestAccounts') {
+      title = 'Connexion à cette dApp';
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>Autoriser {origin} à voir l'adresse de ton wallet ?</Text>;
+    } else if (method === 'wallet_switchEthereumChain') {
+      title = 'Changement de réseau';
+      const requestedHex = params?.[0]?.chainId;
+      const targetNetwork = walletConnect.SUPPORTED_EVM_CHAINS[`eip155:${parseInt(requestedHex, 16)}`];
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>{origin} demande à passer sur {targetNetwork || requestedHex}.</Text>;
+    } else if (method === 'personal_sign' || method === 'eth_sign') {
+      const hex = method === 'personal_sign' ? params[0] : params[1];
+      let text = hex;
+      try { text = ethers.utils.toUtf8String(hex); } catch { /* reste en hex si pas de l'UTF-8 valide */ }
+      detail = <Text style={{ color: T.text, fontSize: 14 }}>{text}</Text>;
+    } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+      title = 'Signature de données typées';
+      const raw = params[1];
+      detail = <Text style={{ color: T.text3, fontSize: 12 }} numberOfLines={8}>{typeof raw === 'string' ? raw : JSON.stringify(raw)}</Text>;
+    } else if (method === 'eth_sendTransaction') {
+      title = 'Demande de transaction';
+      const tx = params[0] || {};
+      detail = (
+        <View style={{ width: '100%' }}>
+          <Text style={st.settings_row_sub}>Vers</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>{tx.to}</Text>
+          <Text style={st.settings_row_sub}>Montant</Text>
+          <Text style={{ color: T.text, marginBottom: 10 }}>
+            {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+          </Text>
+          {!!tx.data && tx.data !== '0x' && (
+            <>
+              <Text style={st.settings_row_sub}>Données</Text>
+              <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={3}>{tx.data}</Text>
+            </>
+          )}
+        </View>
+      );
+    }
+
+    return (
+      <Modal visible={!!dappBridgeRequest} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <View style={{ width: 40 }} />
+            <Text style={st.modal_title}>{title}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={[st.settings_row_sub, { marginBottom: 10 }]} numberOfLines={1}>{origin}</Text>
+            <View style={st.alert_form}>{detail}</View>
+            {!!dappBridgeError && <Text style={[st.auth_error, { marginTop: 10 }]}>{dappBridgeError}</Text>}
+            <View style={{ flexDirection: 'row', marginTop: 24 }}>
+              <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleDappBridgeReject} disabled={dappBridgeLoading}>
+                <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
+              </TouchableOpacity>
+              <AnimPressable style={[st.green_btn, { flex: 1, opacity: dappBridgeLoading ? 0.7 : 1 }]} onPress={handleDappBridgeApprove} disabled={dappBridgeLoading}>
+                {dappBridgeLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>{method === 'eth_requestAccounts' ? 'Connecter' : method === 'wallet_switchEthereumChain' ? 'Changer' : 'Signer'}</Text>}
               </AnimPressable>
             </View>
           </ScrollView>
@@ -5965,11 +6240,23 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 );
               })}
-              <AnimPressable style={st.settings_row} onPress={() => { setShowWalletConnect(true); refreshWcSessions(); }}>
+              {/* setShowSettings(false) avant d'ouvrir un second <Modal> : sur
+                  iOS/SDK54 (New Architecture), présenter un Modal RN par-dessus
+                  un Modal déjà visible ignore silencieusement le premier tap
+                  (aucune erreur, juste rien ne s'ouvre) — confirmé en testant
+                  en vrai sur iPhone. On referme Settings au lieu d'empiler. */}
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowWalletConnect(true); refreshWcSessions(); }}>
                 <Text style={{ fontSize: 22 }}>➕</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>{t('settings_connect_dapp')}</Text>
                   <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
+                </View>
+              </AnimPressable>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
+                <Text style={{ fontSize: 22 }}>🌐</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Navigateur Web3</Text>
+                  <Text style={st.settings_row_sub}>Parcourir une dApp directement dans l'app</Text>
                 </View>
               </AnimPressable>
 
@@ -6133,7 +6420,7 @@ function AppContent({ themeMode, changeTheme }) {
             </AnimPressable>
           )}
           {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
-            <AnimPressable key={key} style={st.settings_row} onPress={() => setLegalDoc(key)}>
+            <AnimPressable key={key} style={st.settings_row} onPress={() => { setShowSettings(false); setLegalDocFromSettings(true); setLegalDoc(key); }}>
               <Text style={{ fontSize: 22 }}>📄</Text>
               <View style={{ flex: 1, marginLeft: 14 }}>
                 <Text style={st.settings_row_title}>{doc.title}</Text>
@@ -6702,6 +6989,8 @@ function AppContent({ themeMode, changeTheme }) {
       {renderSettings()}
       {renderWalletConnect()}
       {!!wcProposal && renderWcProposal()}
+      {renderDappBrowser()}
+      {!!dappBridgeRequest && renderDappBridgeRequest()}
       {!!wcRequest && renderWcRequest()}
       {renderStaking()}
       {renderNftGallery()}
