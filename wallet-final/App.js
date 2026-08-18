@@ -1155,7 +1155,7 @@ function showAlert(title, message, buttons) {
 // interne (icône | texte | valeur sur une ligne) intacte.
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
+function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95, ...rest }) {
   const scale = useRef(new Animated.Value(1)).current;
   const animateTo = (toValue) => {
     Animated.spring(scale, { toValue, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
@@ -1167,6 +1167,7 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95 }) {
       disabled={disabled}
       onPressIn={() => animateTo(scaleTo)}
       onPressOut={() => animateTo(1)}
+      {...rest}
     >
       {children}
     </AnimatedPressable>
@@ -7554,7 +7555,7 @@ function AppContent({ themeMode, changeTheme }) {
 
       <View style={st.quick_actions}>
         {visibleQuickActions.map(a => (
-          <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress}>
+          <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress} accessibilityRole="button" accessibilityLabel={a.label}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
               <Text style={[st.quick_icon_txt, { color: a.bg === T.gold ? '#000' : T.text }]}>{a.icon}</Text>
             </View>
@@ -7637,7 +7638,13 @@ function AppContent({ themeMode, changeTheme }) {
           const isFav = favorites.includes(sym);
           return (
             <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
-              <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedToken(sym)}>
+              <AnimPressable
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                scaleTo={0.98}
+                onPress={() => setSelectedToken(sym)}
+                accessibilityRole="button"
+                accessibilityLabel={`${t.name}, ${fmt(val)}, ${(t.balance || 0).toFixed(4)} ${sym}`}
+              >
                 <CoinLogo logo={t.logo} icon={t.icon} size={44} />
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -8033,7 +8040,15 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={st.sidebar_logo}>⬡ NexiaWallet</Text>
             <View style={{ marginTop: 34, gap: 4 }}>
               {navItems.map(n => (
-                <AnimPressable key={n.id} style={[st.sidebar_item, tab === n.id && st.sidebar_item_on]} scaleTo={0.97} onPress={() => setTab(n.id)}>
+                <AnimPressable
+                  key={n.id}
+                  style={[st.sidebar_item, tab === n.id && st.sidebar_item_on]}
+                  scaleTo={0.97}
+                  onPress={() => setTab(n.id)}
+                  accessibilityRole="tab"
+                  accessibilityLabel={n.label}
+                  accessibilityState={{ selected: tab === n.id }}
+                >
                   <View style={{ width: 22, marginRight: 12, alignItems: 'center' }}>
                     <Ionicons name={n.icon} size={18} color={tab === n.id ? T.gold : T.text2} />
                   </View>
@@ -8041,7 +8056,13 @@ function AppContent({ themeMode, changeTheme }) {
                 </AnimPressable>
               ))}
             </View>
-            <AnimPressable style={[st.sidebar_item, { marginTop: 'auto' }]} scaleTo={0.97} onPress={() => setShowSettings(true)}>
+            <AnimPressable
+              style={[st.sidebar_item, { marginTop: 'auto' }]}
+              scaleTo={0.97}
+              onPress={() => setShowSettings(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t('nav_settings')}
+            >
               <View style={{ width: 22, marginRight: 12, alignItems: 'center' }}>
                 <Ionicons name="settings-outline" size={18} color={T.text2} />
               </View>
@@ -8057,7 +8078,15 @@ function AppContent({ themeMode, changeTheme }) {
           {tabContent}
           <View style={st.bottom_nav}>
             {navItems.map(n => (
-              <AnimPressable key={n.id} style={[st.nav_item, n.big && st.nav_item_big]} scaleTo={0.92} onPress={() => setTab(n.id)}>
+              <AnimPressable
+                key={n.id}
+                style={[st.nav_item, n.big && st.nav_item_big]}
+                scaleTo={0.92}
+                onPress={() => setTab(n.id)}
+                accessibilityRole="tab"
+                accessibilityLabel={n.label}
+                accessibilityState={{ selected: tab === n.id }}
+              >
                 {n.big ? (
                   <View style={[st.nav_big_btn, { backgroundColor: tab === n.id ? T.gold : T.card2 }]}>
                     <Ionicons name={n.icon} size={20} color={tab === n.id ? '#000' : T.text2} />
