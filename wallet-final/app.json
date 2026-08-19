@@ -59,7 +59,8 @@
           "backgroundColor": "#070A1A"
         }
       ],
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font"
     ]
   }
 }

@@ -27,6 +27,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as Font from 'expo-font';
+
+// Cloudflare Pages refuse d'uploader tout fichier sous un chemin
+// contenant "node_modules" (comportement cote plateforme, pas un bug
+// de config) — la police Ionicons vendue par @expo/vector-icons vit a
+// .../node_modules/expo/node_modules/@expo/vector-icons/... et finissait
+// donc en 404 (fallback HTML de la SPA) en production, cassant toutes
+// les icones. On heberge une copie dans ce depot (assets/fonts/) et on
+// la precharge sous le meme nom de famille AVANT le montage de tout
+// composant <Ionicons>. expo-font deduplique par nom de police + verifie
+// une promesse deja en cours avant de charger quoi que ce soit : cet
+// appel gagne toujours la course et l'appel interne de @expo/vector-icons
+// se contente de reutiliser cette promesse, sans jamais toucher au
+// fichier casse.
+Font.loadAsync({ Ionicons: require('./assets/fonts/Ionicons.ttf') });
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider } from './lib/dappBrowserProvider';
