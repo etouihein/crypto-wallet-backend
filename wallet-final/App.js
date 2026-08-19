@@ -2124,6 +2124,18 @@ function AppContent({ themeMode, changeTheme }) {
   // la création d'un wallet — sans ça, il n'a AUCUN moyen de récupérer ses
   // fonds s'il perd son appareil ou vide son navigateur.
   const [pendingMnemonic, setPendingMnemonic] = useState(null);
+  // Re-authentification (re-saisie du PIN) avant d'afficher la phrase de
+  // récupération, même app déjà déverrouillée — sans ça, quiconque récupère
+  // le téléphone pendant la fenêtre de déverrouillage (jusqu'à 2 min
+  // d'inactivité, voir AUTO_LOCK_MS) pourrait voir la phrase avec un simple
+  // "Afficher" sur une boîte de dialogue, sans jamais retaper le PIN — pour
+  // le secret qui donne un contrôle total sur TOUS les fonds (EVM/Solana/
+  // Bitcoin), c'est nettement insuffisant face au risque le plus courant
+  // pour un wallet mobile : un accès physique bref à l'appareil déverrouillé.
+  const [showMnemonicReauth, setShowMnemonicReauth] = useState(false);
+  const [mnemonicReauthPin, setMnemonicReauthPin]   = useState('');
+  const [mnemonicReauthError, setMnemonicReauthError] = useState(null);
+  const [mnemonicReauthLoading, setMnemonicReauthLoading] = useState(false);
 
   // Favoris : liste de symboles (ex. "DOGE") marqués depuis le Marché ou
   // l'accueil — persistée localement, pas de compte ni de backend impliqué.
@@ -2436,6 +2448,31 @@ function AppContent({ themeMode, changeTheme }) {
     if (!walletSession?.encryptedKeystore) return;
     await copyToClipboard(walletSession.encryptedKeystore, 'Keystore chiffré copié — colle-le dans un fichier .json en lieu sûr');
   }, [walletSession, copyToClipboard]);
+
+  // Revérifie le PIN (déchiffre réellement le keystore, ne compare aucun code
+  // en clair — même principe que attemptUnlock) avant de révéler la phrase de
+  // récupération. isDuressMode ne devrait jamais atteindre ce point (le bouton
+  // est masqué en mode détresse), mais on le revérifie ici par sécurité :
+  // jamais la vraie phrase tant que ce mode est actif.
+  const handleMnemonicReauthConfirm = useCallback(async () => {
+    if (!walletSession?.encryptedKeystore || isDuressMode) return;
+    setMnemonicReauthLoading(true);
+    setMnemonicReauthError(null);
+    try {
+      const result = await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, mnemonicReauthPin);
+      if (result.address.toLowerCase() !== walletSession.address.toLowerCase() || !result.mnemonic) {
+        throw new Error('PIN incorrect.');
+      }
+      setShowMnemonicReauth(false);
+      setMnemonicReauthPin('');
+      setIsFirstTimeMnemonicBackup(false);
+      setPendingMnemonic(result.mnemonic);
+    } catch {
+      setMnemonicReauthError('PIN incorrect.');
+    } finally {
+      setMnemonicReauthLoading(false);
+    }
+  }, [walletSession, isDuressMode, mnemonicReauthPin]);
 
   const exportUserData = useCallback(async () => {
     const payload = { version: 1, favorites, recentAddresses, priceAlerts, txTags };
@@ -4744,6 +4781,48 @@ function AppContent({ themeMode, changeTheme }) {
     setSwapLoading(false);
   };
 
+  const renderMnemonicReauth = () => (
+    <Modal visible={showMnemonicReauth} animationType="fade" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowMnemonicReauth(false); setMnemonicReauthPin(''); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Annuler">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Confirme ton PIN</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <View style={st.warning_box}>
+            <Text style={st.warning_txt}>
+              ⚠️ Ta phrase de récupération va s'afficher — assure-toi que personne ne regarde ton écran. Retape ton
+              code PIN pour confirmer que c'est bien toi.
+            </Text>
+          </View>
+          <TextInput
+            style={[st.form_input, { marginTop: 16 }]}
+            value={mnemonicReauthPin}
+            onChangeText={(v) => { setMnemonicReauthPin(v.replace(/\D/g, '').slice(0, 6)); setMnemonicReauthError(null); }}
+            placeholder="Code PIN"
+            placeholderTextColor={T.text3}
+            keyboardType="numeric"
+            secureTextEntry
+            maxLength={6}
+            autoFocus
+          />
+          {!!mnemonicReauthError && <Text style={[st.auth_error, { marginTop: 10 }]}>{mnemonicReauthError}</Text>}
+          <AnimPressable
+            style={[st.green_btn, { marginTop: 20, opacity: mnemonicReauthLoading ? 0.7 : 1 }]}
+            disabled={mnemonicReauthLoading || mnemonicReauthPin.length !== 6}
+            onPress={handleMnemonicReauthConfirm}
+          >
+            {mnemonicReauthLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Afficher la phrase</Text>}
+          </AnimPressable>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   // ════════════════════════════════════════════════════════
   //  SAUVEGARDE OBLIGATOIRE DE LA PHRASE DE RÉCUPÉRATION
   // ════════════════════════════════════════════════════════
@@ -4778,6 +4857,8 @@ function AppContent({ themeMode, changeTheme }) {
                   setIsFirstTimeMnemonicBackup(false);
                   setOnboardingStep(0);
                   setShowOnboarding(true);
+                } else {
+                  setShowSettings(true);
                 }
               }}
             >
@@ -7377,17 +7458,10 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
 
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
-              {!!unlockedMnemonic && (
+              {!!unlockedMnemonic && !isDuressMode && (
                 <AnimPressable
                   style={st.settings_row}
-                  onPress={() => showAlert(
-                    '⚠️ Attention',
-                    'Ta phrase de récupération va s\'afficher. Assure-toi que personne ne regarde ton écran.',
-                    [
-                      { text: 'Annuler', style: 'cancel' },
-                      { text: 'Afficher', onPress: () => { setIsFirstTimeMnemonicBackup(false); setPendingMnemonic(unlockedMnemonic); } },
-                    ]
-                  )}
+                  onPress={() => { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); }}
                 >
                   <Text style={{ fontSize: 22 }}>🔑</Text>
                   <View style={{ flex: 1, marginLeft: 14 }}>
@@ -8275,6 +8349,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderStaking()}
       {renderNftGallery()}
       {renderLegal()}
+      {renderMnemonicReauth()}
       {renderMnemonicBackup()}
       {renderOnboarding()}
       <ToastBanner toast={toast} />
