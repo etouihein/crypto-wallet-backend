@@ -4682,13 +4682,21 @@ function AppContent({ themeMode, changeTheme }) {
       // Si le contrat du swap n'a pas encore l'autorisation de dépenser ce
       // token ERC20, on signe et diffuse d'abord une approbation, puis on
       // attend sa confirmation on-chain avant de tenter le swap lui-même.
+      // Approuve UNIQUEMENT le montant de ce swap, jamais MaxUint256: notre
+      // propre simulation anti-arnaque (voir txSimulation.js) signale une
+      // autorisation quasi-illimitée comme un risque ÉLEVÉ quand c'est une
+      // dApp tierce qui la demande — appliquer le même risque à nos propres
+      // swaps serait incohérent, et exposerait tout le solde du token (pas
+      // seulement le montant échangé) si jamais le contrat du swap était un
+      // jour compromis. Coût : une nouvelle approbation à chaque swap du même
+      // token, accepté comme contrepartie normale de cette protection.
       const spender = quote.issues?.allowance?.spender;
       if (spender) {
         const { rawTx: approveRawTx } = await localWallet.signApproveTx({
           privateKey: unlockedPrivateKey,
           tokenAddress: sellAddress,
           spender,
-          amount: ethers.constants.MaxUint256,
+          amount: sellAmountUnits,
           network,
         });
         const approveResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: approveRawTx, network }, { timeout: 25000, headers: API_HEADERS });
@@ -4700,7 +4708,7 @@ function AppContent({ themeMode, changeTheme }) {
         try { approveTokenSymbol = (await localWallet.getCustomTokenInfo(sellAddress, walletAddr, network)).symbol; } catch { /* garde swapFrom en repli */ }
         approvals.recordApproval(walletAddr, {
           network, tokenAddress: sellAddress, tokenSymbol: approveTokenSymbol, spender,
-          amount: ethers.constants.MaxUint256.toString(), isNft: false, txHash: approveResp.data.txHash,
+          amount: sellAmountUnits, isNft: false, txHash: approveResp.data.txHash,
         }).catch(() => {});
       }
 
