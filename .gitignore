@@ -1,4 +1,6 @@
-﻿node_modules/
+﻿/node_modules/
+/crypto-wallet/node_modules/
+/wallet-final/node_modules/
 .expo/
 dist/
 *.log
