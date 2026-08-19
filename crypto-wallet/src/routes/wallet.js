@@ -3,13 +3,15 @@ const router = express.Router();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
 const dns = require('dns');
+const http = require('http');
+const https = require('https');
 const ipaddr = require('ipaddr.js');
 const Stripe = require('stripe');
 const rateLimit = require('express-rate-limit');
 const { Connection: SolanaConnection, PublicKey: SolanaPublicKey } = require('@solana/web3.js');
+const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:8083';
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'demo').toLowerCase();
 const APP_API_KEYS = new Set(
   (process.env.APP_API_KEYS || '')
@@ -632,6 +634,15 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
 // transforme ce proxy en SSRF vers le réseau interne de la plateforme
 // d'hébergement. maxRedirects désactivé (une redirection pourrait repointer
 // vers une IP interne sans revalidation), taille et type de contenu limités.
+//
+// IMPORTANT : l'IP validée ici est ensuite FIXÉE pour la requête réelle
+// (voir fetchImagePinned) — on ne se contente pas de vérifier le nom
+// d'hôte puis de laisser une deuxième résolution DNS indépendante avoir
+// lieu au moment de la requête. Un attaquant contrôlant le domaine (toute
+// métadonnée NFT peut pointer où il veut) pourrait sinon faire répondre
+// une IP publique à la vérification puis une IP interne à la requête
+// réelle quelques millisecondes plus tard (DNS rebinding / TOCTOU),
+// contournant entièrement la protection.
 const IMAGE_PROXY_MAX_BYTES = 5 * 1024 * 1024; // 5 Mo — largement suffisant pour une image NFT
 const IMAGE_PROXY_TIMEOUT_MS = 8000;
 
@@ -639,6 +650,34 @@ async function resolvePublicImageHost(hostname) {
   const { address } = await dns.promises.lookup(hostname);
   const range = ipaddr.parse(address).range();
   if (range !== 'unicast') throw new Error(`Hôte non autorisé (${range}).`);
+  return address;
+}
+
+// Se connecte directement à `pinnedIp` (déjà validée) tout en envoyant le
+// Host d'origine et, en HTTPS, le bon SNI/`servername` pour que la
+// vérification du certificat porte sur le VRAI nom d'hôte — jamais sur
+// l'IP. Aucune deuxième résolution DNS n'a lieu : c'est précisément ce qui
+// empêche le rebinding.
+function fetchImagePinned(parsed, pinnedIp, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const isHttps = parsed.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const req = transport.request({
+      host: pinnedIp,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      servername: isHttps ? parsed.hostname : undefined,
+      headers: {
+        Host: parsed.hostname,
+        'User-Agent': 'NexiaWallet-ImageProxy/1.0',
+      },
+    }, resolve);
+    req.on('error', reject);
+    const timer = setTimeout(() => req.destroy(new Error('Délai dépassé.')), timeoutMs);
+    req.on('close', () => clearTimeout(timer));
+    req.end();
+  });
 }
 
 router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
@@ -653,34 +692,32 @@ router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Seuls http/https sont autorisés.' });
     }
 
+    let pinnedIp;
     try {
-      await resolvePublicImageHost(parsed.hostname);
+      pinnedIp = await resolvePublicImageHost(parsed.hostname);
     } catch {
       return res.status(400).json({ success: false, error: 'Cette image ne peut pas être chargée.' });
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), IMAGE_PROXY_TIMEOUT_MS);
     let upstream;
     try {
-      upstream = await fetch(rawUrl, {
-        redirect: 'manual', // pas de suivi auto : une redirection pourrait repointer vers une IP interne non revalidée
-        signal: controller.signal,
-        headers: { 'User-Agent': 'NexiaWallet-ImageProxy/1.0' },
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!upstream.ok || !upstream.body) {
+      upstream = await fetchImagePinned(parsed, pinnedIp, IMAGE_PROXY_TIMEOUT_MS);
+    } catch {
       return res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
     }
-    const contentType = upstream.headers.get('content-type') || '';
+
+    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+      upstream.destroy();
+      return res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
+    }
+    const contentType = upstream.headers['content-type'] || '';
     if (!contentType.startsWith('image/')) {
+      upstream.destroy();
       return res.status(400).json({ success: false, error: "Ce contenu n'est pas une image." });
     }
-    const declaredLength = parseInt(upstream.headers.get('content-length') || '0', 10);
+    const declaredLength = parseInt(upstream.headers['content-length'] || '0', 10);
     if (declaredLength > IMAGE_PROXY_MAX_BYTES) {
+      upstream.destroy();
       return res.status(400).json({ success: false, error: 'Image trop volumineuse.' });
     }
 
@@ -689,12 +726,17 @@ router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
     // grand (déni de service mémoire).
     const chunks = [];
     let total = 0;
-    for await (const chunk of upstream.body) {
-      total += chunk.length;
-      if (total > IMAGE_PROXY_MAX_BYTES) {
-        return res.status(400).json({ success: false, error: 'Image trop volumineuse.' });
+    try {
+      for await (const chunk of upstream) {
+        total += chunk.length;
+        if (total > IMAGE_PROXY_MAX_BYTES) {
+          upstream.destroy();
+          return res.status(400).json({ success: false, error: 'Image trop volumineuse.' });
+        }
+        chunks.push(chunk);
       }
-      chunks.push(chunk);
+    } catch {
+      return res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
     }
 
     res.set('Content-Type', contentType);
@@ -726,15 +768,23 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       return res.status(400).json({ success: false, error: 'Montant invalide (entre 1 et 5000 USD).' });
     }
 
+    // returnUrl/Origin ne sont acceptés comme cible de redirection QUE s'ils
+    // correspondent à une origine de confiance connue (voir
+    // src/config/allowedOrigins.js) — sinon on retombe sur FRONTEND_URL.
+    // Sans ce garde-fou, n'importe qui peut appeler cette route directement
+    // (x-api-key n'est pas un vrai secret, il est dans le bundle public) avec
+    // un returnUrl arbitraire et obtenir une URL de paiement MoonPay/Stripe
+    // légitime qui redirige ensuite la victime vers un site de phishing.
     const frontendBase = (() => {
       if (returnUrl && typeof returnUrl === 'string' && returnUrl.startsWith('http')) {
         try {
-          return new URL(returnUrl).origin;
+          const candidate = new URL(returnUrl).origin;
+          if (isTrustedOrigin(candidate)) return candidate;
         } catch (err) {
           // ignore invalid URL
         }
       }
-      if (req.headers.origin) {
+      if (req.headers.origin && isTrustedOrigin(req.headers.origin)) {
         try {
           return new URL(req.headers.origin).origin;
         } catch (err) {
@@ -833,11 +883,16 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
       return res.status(400).json({ success: false, error: `Vente de ${tokenSymbol} non supportée sur ce wallet.` });
     }
 
+    // Même garde-fou que create-checkout-session — voir le commentaire
+    // au-dessus de son frontendBase.
     const frontendBase = (() => {
       if (returnUrl && typeof returnUrl === 'string' && returnUrl.startsWith('http')) {
-        try { return new URL(returnUrl).origin; } catch (err) { /* ignore invalid URL */ }
+        try {
+          const candidate = new URL(returnUrl).origin;
+          if (isTrustedOrigin(candidate)) return candidate;
+        } catch (err) { /* ignore invalid URL */ }
       }
-      if (req.headers.origin) {
+      if (req.headers.origin && isTrustedOrigin(req.headers.origin)) {
         try { return new URL(req.headers.origin).origin; } catch (err) { /* ignore invalid origin */ }
       }
       return FRONTEND_URL;

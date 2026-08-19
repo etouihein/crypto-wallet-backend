@@ -1943,7 +1943,8 @@ function AppContent({ themeMode, changeTheme }) {
   // Natif uniquement : react-native-webview n'a pas d'implémentation web.
   const [showDappBrowser, setShowDappBrowser]     = useState(false);
   const [dappUrlInput, setDappUrlInput]           = useState('');
-  const [dappCurrentUrl, setDappCurrentUrl]       = useState(null);
+  const [dappCurrentUrl, setDappCurrentUrl]       = useState(null); // URL initiale chargée par la WebView (source={{uri}}) — ne pas mettre à jour sur navigation interne, ça rechargerait la page
+  const [dappDisplayUrl, setDappDisplayUrl]       = useState(null); // URL réellement affichée à l'instant, pour l'en-tête — voir onNavigationStateChange
   const [dappConnectedOrigins, setDappConnectedOrigins] = useState([]); // origines autorisées à voir l'adresse (session app en cours)
   const [dappBridgeRequest, setDappBridgeRequest] = useState(null); // { id, method, params, origin } en attente de confirmation
   const [dappBridgeLoading, setDappBridgeLoading] = useState(false);
@@ -3080,6 +3081,7 @@ function AppContent({ themeMode, changeTheme }) {
     if (!trimmed) return;
     const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     setDappCurrentUrl(withScheme);
+    setDappDisplayUrl(withScheme);
     setDappUrlInput(withScheme);
   }, []);
 
@@ -3092,8 +3094,13 @@ function AppContent({ themeMode, changeTheme }) {
     try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
     if (!msg || msg.source !== 'nexiawallet-provider') return;
     const { id, method, params } = msg;
-    let origin = dappCurrentUrl || '';
-    try { origin = new URL(dappCurrentUrl).origin; } catch { /* garde l'URL brute si non parsable */ }
+    // L'origine vient du message lui-même (window.location.origin lu par le
+    // script injecté au moment de l'envoi, voir lib/dappBrowserProvider.js) —
+    // PAS d'un état React ("URL ouverte au départ"), qui ne suit pas les
+    // navigations internes (lien, redirection) dans la même WebView et
+    // permettrait sinon à une page différente de celle réellement affichée
+    // d'hériter d'une autorisation/adresse accordée à une autre origine.
+    const origin = typeof msg.origin === 'string' ? msg.origin : '';
 
     if (method === 'eth_chainId') {
       return dappBridgeRespond(id, null, '0x' + localWallet.getNetworkConfig(network).chainId.toString(16));
@@ -3108,7 +3115,7 @@ function AppContent({ themeMode, changeTheme }) {
     // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
     setDappBridgeError(null);
     setDappBridgeRequest({ id, method, params, origin });
-  }, [dappCurrentUrl, dappConnectedOrigins, walletAddr, network, dappBridgeRespond]);
+  }, [dappConnectedOrigins, walletAddr, network, dappBridgeRespond]);
 
   const handleDappBridgeApprove = useCallback(async () => {
     if (!dappBridgeRequest) return;
@@ -3119,6 +3126,14 @@ function AppContent({ themeMode, changeTheme }) {
       if (method === 'eth_requestAccounts') {
         setDappConnectedOrigins(prev => (prev.includes(origin) ? prev : [...prev, origin]));
         dappBridgeRespond(id, null, walletAddr ? [walletAddr] : []);
+        // Met a jour selectedAddress dans la page COURANTE uniquement (voir
+        // dappBrowserProvider.js) — si l'utilisateur a navigue ailleurs entre
+        // la demande et cette approbation, ce message atterrit dans le
+        // document qui est reellement affiche maintenant, jamais dans un
+        // document deja ferme/remplace.
+        if (walletAddr) {
+          dappWebViewRef.current?.injectJavaScript(`window.__nexiaEmit('accountsChanged', ${JSON.stringify([walletAddr])}); true;`);
+        }
       } else if (method === 'wallet_switchEthereumChain') {
         const requestedHex = params?.[0]?.chainId;
         const targetNetwork = walletConnect.SUPPORTED_EVM_CHAINS[`eip155:${parseInt(requestedHex, 16)}`];
@@ -6448,7 +6463,7 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={st.modal_hdr}>
               <TouchableOpacity
                 onPress={() => {
-                  if (dappCurrentUrl) { setDappCurrentUrl(null); return; }
+                  if (dappCurrentUrl) { setDappCurrentUrl(null); setDappDisplayUrl(null); return; }
                   setShowDappBrowser(false);
                   setShowSettings(true);
                 }}
@@ -6491,17 +6506,16 @@ function AppContent({ themeMode, changeTheme }) {
             ) : (
               <>
                 <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-                  <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={1}>{dappCurrentUrl}</Text>
+                  <Text style={{ color: T.text3, fontSize: 11 }} numberOfLines={1}>{dappDisplayUrl}</Text>
                 </View>
                 <WebView
                   ref={dappWebViewRef}
                   source={{ uri: dappCurrentUrl }}
                   style={{ flex: 1 }}
                   onMessage={handleDappMessage}
-                  onNavigationStateChange={(nav) => { if (nav?.url) setDappUrlInput(nav.url); }}
+                  onNavigationStateChange={(nav) => { if (nav?.url) { setDappUrlInput(nav.url); setDappDisplayUrl(nav.url); } }}
                   injectedJavaScriptBeforeContentLoaded={buildInjectedProvider({
                     chainId: '0x' + localWallet.getNetworkConfig(network).chainId.toString(16),
-                    address: dappConnectedOrigins.length ? walletAddr : null,
                   })}
                   javaScriptEnabled
                   domStorageEnabled
@@ -7436,7 +7450,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
                 </View>
               </AnimPressable>
-              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappDisplayUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
                 <Text style={{ fontSize: 22 }}>🌐</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Navigateur Web3</Text>

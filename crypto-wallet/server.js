@@ -13,7 +13,6 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 const ENV  = process.env.NODE_ENV || 'development';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:8083';
 
 if (ENV === 'production') {
   // Nécessaire pour que express-rate-limit voie la vraie IP du client
@@ -45,38 +44,14 @@ if (ENV === 'production') {
 // localhost/IP privée et les tunnels Expo, même en production : ce backend
 // sert à la fois de backend de dev et de prod, et ces routes sont déjà
 // protégées par x-api-key, donc l'origine n'est pas la seule barrière.
-// En plus de ça, la liste explicite FRONTEND_URLS reste vérifiée pour un
-// vrai domaine de prod (site vitrine, app web publiée...).
-//
-// PRODUCTION_ORIGINS est un filet de sécurité en dur : si jamais la variable
-// Railway FRONTEND_URLS est absente, mal configurée ou réinitialisée, le
-// site public ne se retrouve pas entièrement casse (plus aucune donnee de
-// marche/historique ne charge, cf. incident du 2026-07-05 ou FRONTEND_URLS
-// ne contenait plus ce domaine et personne ne l'avait remarque car les tests
-// curl sans en-tete Origin passent toujours, meme quand un vrai navigateur
-// serait bloque). nexiawallet.fr (+ www) ajouté le 2026-07-11, nexiawallet.com
-// (+ www) ajouté le 2026-08-12 (nexiawallet.fr bloqué en "client hold" chez
-// le registrar au moment de l'achat de .com) — garder tous tant que le DNS/
-// rattachement Cloudflare Pages de chaque domaine n'est pas confirmé stable.
-const PRODUCTION_ORIGINS = [
-  'https://nexiawallet.pages.dev',
-  'https://nexiawallet.fr',
-  'https://www.nexiawallet.fr',
-  'https://nexiawallet.com',
-  'https://www.nexiawallet.com',
-];
-const FRONTEND_URLS = (process.env.FRONTEND_URLS || FRONTEND_URL)
-  .split(',').map(s => s.trim()).filter(Boolean);
-for (const origin of PRODUCTION_ORIGINS) {
-  if (!FRONTEND_URLS.includes(origin)) FRONTEND_URLS.push(origin);
-}
-const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
-const EXPO_TUNNEL_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.exp\.direct$/i;
+// En plus de ça, la liste explicite FRONTEND_URLS (voir
+// src/config/allowedOrigins.js, partagé avec la validation de returnUrl
+// dans src/routes/wallet.js) reste vérifiée pour un vrai domaine de prod.
+const { isTrustedOrigin } = require('./src/config/allowedOrigins');
 
 function corsOriginCheck(origin, callback) {
   if (!origin) return callback(null, true); // apps natives / requêtes serveur à serveur : pas d'en-tête Origin
-  if (FRONTEND_URLS.includes(origin)) return callback(null, true);
-  if (LOCAL_ORIGIN_RE.test(origin) || EXPO_TUNNEL_ORIGIN_RE.test(origin)) return callback(null, true);
+  if (isTrustedOrigin(origin)) return callback(null, true);
   return callback(new Error(`Origine non autorisée par CORS : ${origin}`));
 }
 

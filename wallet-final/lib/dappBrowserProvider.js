@@ -37,10 +37,9 @@ const CONFIRMATION_METHODS = new Set([
   'wallet_switchEthereumChain',
 ]);
 
-function buildInjectedProvider({ chainId, address }) {
+function buildInjectedProvider({ chainId }) {
   // JSON.stringify pour échapper proprement les valeurs dans le script injecté.
   const chainIdJson = JSON.stringify(chainId || '0x1');
-  const addressJson = JSON.stringify(address || null);
 
   return `
 (function () {
@@ -53,11 +52,19 @@ function buildInjectedProvider({ chainId, address }) {
     return new Promise(function (resolve, reject) {
       var id = ++requestId;
       pending[id] = { resolve: resolve, reject: reject };
+      // window.location.origin est lu ICI, au moment de l'envoi, dans le
+      // contexte JS du document reellement charge — une page ne peut pas
+      // usurper l'origine d'une AUTRE page. C'est la seule source fiable :
+      // un etat React cote natif (ex. l'URL au moment de l'ouverture) ne
+      // suit pas les navigations internes (lien, redirection) dans la
+      // meme WebView et peut donc mentir sur "qui" fait vraiment la
+      // demande apres une navigation.
       window.ReactNativeWebView.postMessage(JSON.stringify({
         source: 'nexiawallet-provider',
         id: id,
         method: method,
         params: params || [],
+        origin: window.location.origin,
       }));
     });
   }
@@ -83,6 +90,9 @@ function buildInjectedProvider({ chainId, address }) {
   }
   // Appelé depuis App.js pour notifier un changement de compte/chaîne côté page.
   window.__nexiaEmit = function (event, data) {
+    if (event === 'accountsChanged') {
+      provider.selectedAddress = (data && data[0]) || null;
+    }
     (listeners[event] || []).forEach(function (cb) { try { cb(data); } catch (e) {} });
   };
 
@@ -90,7 +100,13 @@ function buildInjectedProvider({ chainId, address }) {
     isNexiaWallet: true,
     chainId: ${chainIdJson},
     networkVersion: String(parseInt(${chainIdJson}, 16)),
-    selectedAddress: ${addressJson},
+    // Jamais pre-rempli a l'injection : l'adresse ne doit etre visible
+    // qu'apres un round-trip eth_accounts/eth_requestAccounts verifie
+    // par origine cote natif (voir handleDappMessage dans App.js). La
+    // remplir ici depuis un etat React global ("une dApp est connectee
+    // cette session") exposerait l'adresse a N'IMPORTE QUELLE page
+    // chargee ensuite dans la meme WebView, sans confirmation.
+    selectedAddress: null,
     isConnected: function () { return true; },
     request: function (args) {
       args = args || {};
