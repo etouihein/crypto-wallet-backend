@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
+const dns = require('dns');
+const ipaddr = require('ipaddr.js');
 const Stripe = require('stripe');
 const rateLimit = require('express-rate-limit');
 const { Connection: SolanaConnection, PublicKey: SolanaPublicKey } = require('@solana/web3.js');
@@ -330,7 +332,12 @@ router.use((req, res, next) => {
   const apiKey = req.header('x-api-key');
   // MoonPay appelle ce endpoint directement — il ne connaît pas notre clé API,
   // sa légitimité est prouvée par la signature HMAC vérifiée dans le handler.
-  if (req.path === '/' || req.path === '/webhooks/moonpay' || req.method === 'OPTIONS') return next();
+  // /nft/image-proxy : chargé depuis <Image source={{uri}}> côté client, qui
+  // ne peut pas joindre d'en-tête personnalisé sur le web (limite de <img>,
+  // pas de cette app) — sa protection vient de ses propres garde-fous SSRF/
+  // taille/type de contenu et du rate-limit, pas de cette clé (qui n'est de
+  // toute façon pas un vrai secret, voir commentaire sur APP_API_KEYS).
+  if (req.path === '/' || req.path === '/webhooks/moonpay' || req.path === '/nft/image-proxy' || req.method === 'OPTIONS') return next();
   if (!apiKey || !APP_API_KEYS.has(apiKey)) {
     return res.status(401).json({ success: false, error: 'Clé API invalide ou absente.' });
   }
@@ -607,6 +614,94 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
   } catch (error) {
     console.error('Wallet route error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
+  }
+});
+
+// Proxy d'image NFT — le client ne charge JAMAIS directement une URL d'image
+// tirée des métadonnées d'un NFT. Un NFT peut être envoyé à N'IMPORTE QUELLE
+// adresse sans consentement (spam/phishing bien connu : "NFT airdrop"), et son
+// champ `image` pointe vers un serveur entièrement contrôlé par l'attaquant —
+// le charger directement depuis l'app révélerait l'IP (et l'horodatage précis
+// d'ouverture de la galerie) de l'utilisateur à cet attaquant, reliant son
+// adresse de wallet à son IP. En relayant l'image depuis ce backend, c'est
+// l'IP de Railway que voit l'attaquant, jamais celle de l'utilisateur.
+//
+// resolvePublicImageHost bloque toute IP privée/loopback/link-local/réservée
+// AVANT la requête, pour empêcher qu'une métadonnée malveillante
+// (ex. image pointant vers 169.254.169.254 ou un service interne) ne
+// transforme ce proxy en SSRF vers le réseau interne de la plateforme
+// d'hébergement. maxRedirects désactivé (une redirection pourrait repointer
+// vers une IP interne sans revalidation), taille et type de contenu limités.
+const IMAGE_PROXY_MAX_BYTES = 5 * 1024 * 1024; // 5 Mo — largement suffisant pour une image NFT
+const IMAGE_PROXY_TIMEOUT_MS = 8000;
+
+async function resolvePublicImageHost(hostname) {
+  const { address } = await dns.promises.lookup(hostname);
+  const range = ipaddr.parse(address).range();
+  if (range !== 'unicast') throw new Error(`Hôte non autorisé (${range}).`);
+}
+
+router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
+  try {
+    const rawUrl = req.query.url;
+    if (!rawUrl || typeof rawUrl !== 'string') {
+      return res.status(400).json({ success: false, error: 'Paramètre url requis.' });
+    }
+    let parsed;
+    try { parsed = new URL(rawUrl); } catch { return res.status(400).json({ success: false, error: 'URL invalide.' }); }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return res.status(400).json({ success: false, error: 'Seuls http/https sont autorisés.' });
+    }
+
+    try {
+      await resolvePublicImageHost(parsed.hostname);
+    } catch {
+      return res.status(400).json({ success: false, error: 'Cette image ne peut pas être chargée.' });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IMAGE_PROXY_TIMEOUT_MS);
+    let upstream;
+    try {
+      upstream = await fetch(rawUrl, {
+        redirect: 'manual', // pas de suivi auto : une redirection pourrait repointer vers une IP interne non revalidée
+        signal: controller.signal,
+        headers: { 'User-Agent': 'NexiaWallet-ImageProxy/1.0' },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!upstream.ok || !upstream.body) {
+      return res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
+    }
+    const contentType = upstream.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) {
+      return res.status(400).json({ success: false, error: "Ce contenu n'est pas une image." });
+    }
+    const declaredLength = parseInt(upstream.headers.get('content-length') || '0', 10);
+    if (declaredLength > IMAGE_PROXY_MAX_BYTES) {
+      return res.status(400).json({ success: false, error: 'Image trop volumineuse.' });
+    }
+
+    // Lecture en flux avec plafond dur — un Content-Length absent ou mensonger
+    // ne doit jamais permettre de faire lire au serveur un corps arbitrairement
+    // grand (déni de service mémoire).
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of upstream.body) {
+      total += chunk.length;
+      if (total > IMAGE_PROXY_MAX_BYTES) {
+        return res.status(400).json({ success: false, error: 'Image trop volumineuse.' });
+      }
+      chunks.push(chunk);
+    }
+
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(Buffer.concat(chunks));
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
   }
 });
 

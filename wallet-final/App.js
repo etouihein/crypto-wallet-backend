@@ -358,6 +358,14 @@ const LOCAL_API_HOST = `${getExpoHost()}:3000`;
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || `http://${LOCAL_API_HOST}/wallet`;
 const APP_API_KEY = process.env.EXPO_PUBLIC_APP_API_KEY || 'wallet-pro-dev-key-2026-7f3a9b2c';
 const API_HEADERS = { 'x-api-key': APP_API_KEY };
+
+// Ne JAMAIS charger une image de métadonnées NFT directement (voir
+// GET /wallet/nft/image-proxy côté backend) : un NFT peut être envoyé à
+// n'importe quelle adresse sans consentement (spam/phishing "airdrop NFT"),
+// avec un champ `image` pointant vers un serveur contrôlé par l'attaquant —
+// le charger directement révélerait l'IP de l'utilisateur (et le moment où
+// il ouvre sa galerie) à cet attaquant, reliant son wallet à son IP.
+const nftImageProxyUrl = (url) => (url ? `${API_BASE}/nft/image-proxy?url=${encodeURIComponent(url)}` : null);
 const WALLET_STORAGE_KEY = 'wallet-pro-session-v1';
 // Comptes multiples : la session "active" ci-dessus reste la source de vérité
 // pour tout le code d'unlock/PIN existant (inchangé) ; ces deux clés
@@ -6903,7 +6911,7 @@ function AppContent({ themeMode, changeTheme }) {
           {selectedNft ? (
             <View>
               {!!selectedNft.image && (
-                <Image source={{ uri: selectedNft.image }} style={{ width: '100%', aspectRatio: 1, borderRadius: 16, marginBottom: 16, backgroundColor: T.card2 }} resizeMode="cover" />
+                <Image source={{ uri: nftImageProxyUrl(selectedNft.image) }} style={{ width: '100%', aspectRatio: 1, borderRadius: 16, marginBottom: 16, backgroundColor: T.card2 }} resizeMode="cover" />
               )}
               <Text style={st.settings_row_sub}>Contrat</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>{selectedNft.contract.slice(0, 10)}…{selectedNft.contract.slice(-8)}</Text>
@@ -6952,7 +6960,7 @@ function AppContent({ themeMode, changeTheme }) {
                   onPress={() => { setSelectedNft(n); setNftSendAddress(''); setNftSendError(null); }}
                 >
                   {n.image ? (
-                    <Image source={{ uri: n.image }} style={{ width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: T.card2 }} resizeMode="cover" />
+                    <Image source={{ uri: nftImageProxyUrl(n.image) }} style={{ width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: T.card2 }} resizeMode="cover" />
                   ) : (
                     <View style={{ width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: T.card2, alignItems: 'center', justifyContent: 'center' }}>
                       <Text style={{ fontSize: 32 }}>🖼️</Text>
