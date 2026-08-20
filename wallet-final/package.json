@@ -2,6 +2,9 @@
   "name": "wallet-final",
   "version": "1.0.0",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.19.4"
+  },
   "dependencies": {
     "@bitcoinerlab/secp256k1": "^1.2.0",
     "@ethersproject/shims": "^5.8.0",
