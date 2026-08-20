@@ -24,15 +24,19 @@ const PRODUCTION_ORIGINS = [
 // le passé (contenant la même liste multi-domaines que FRONTEND_URLS,
 // virgules et retour à la ligne compris, au lieu d'une seule origine) — ne
 // jamais l'utiliser telle quelle comme cible de redirection de secours.
-// FRONTEND_URLS (ci-dessous) est déjà correctement découpée/nettoyée ; on en
-// tire la première entrée pour garantir que le fallback est TOUJOURS une
-// seule origine bien formée, quoi que contienne la variable brute.
 const FRONTEND_URLS = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:8083')
   .split(',').map(s => s.trim()).filter(Boolean);
 for (const origin of PRODUCTION_ORIGINS) {
   if (!FRONTEND_URLS.includes(origin)) FRONTEND_URLS.push(origin);
 }
-const FRONTEND_URL = FRONTEND_URLS[0];
+
+// Domaine principal de prod : nexiawallet.com. Constante fixe (et non dérivée
+// de FRONTEND_URLS[0]) pour que le fallback de redirection reste TOUJOURS une
+// URL absolue bien formée, quoi que contienne la variable d'environnement
+// brute (liste mal séparée, entrée sans schéma http(s), etc.) — voir
+// PRODUCTION_ORIGINS ci-dessus, qui garantit que ce domaine est de toute
+// façon toujours présent dans FRONTEND_URLS.
+const FRONTEND_URL = 'https://nexiawallet.com';
 
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
 const EXPO_TUNNEL_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.exp\.direct$/i;
