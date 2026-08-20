@@ -9,9 +9,11 @@ const ipaddr = require('ipaddr.js');
 const Stripe = require('stripe');
 const rateLimit = require('express-rate-limit');
 const { Connection: SolanaConnection, PublicKey: SolanaPublicKey } = require('@solana/web3.js');
+const { generateJwt } = require('@coinbase/cdp-sdk/auth');
 const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
+// demo | stripe | moonpay | coinbase
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'demo').toLowerCase();
 const APP_API_KEYS = new Set(
   (process.env.APP_API_KEYS || '')
@@ -64,6 +66,54 @@ const MOONPAY_CURRENCY_CODES = {
   solana:   { SOL: 'sol' },
   bitcoin:  { BTC: 'btc' },
 };
+
+// Coinbase Onramp — API non-custodiale, gratuite, aucune verification
+// business requise (contrairement a MoonPay/Ramp qui exigent un KYB complet
+// avec preuve d'incorporation de societe). Cle CDP recuperee sur
+// portal.cdp.coinbase.com > Coinbase APIs > API Keys (Secret API Key).
+const COINBASE_CDP_API_KEY_ID = (process.env.COINBASE_CDP_API_KEY_ID || '').trim();
+const COINBASE_CDP_API_KEY_SECRET = (process.env.COINBASE_CDP_API_KEY_SECRET || '').trim();
+
+// Reseaux dont l'identifiant "blockchains" officiel est confirme dans la doc
+// CDP (docs.cdp.coinbase.com/onramp/additional-resources/layer-2-networks).
+// BSC et Bitcoin sont volontairement exclus tant que leur identifiant exact
+// n'est pas verifie individuellement — un mauvais identifiant ferait
+// silencieusement echouer/ignorer l'adresse de destination, meme risque que
+// les contrats ERC20 non verifies ailleurs dans ce fichier.
+const COINBASE_ONRAMP_NETWORKS = {
+  ethereum: 'ethereum',
+  base: 'base',
+  polygon: 'polygon',
+  arbitrum: 'arbitrum',
+  optimism: 'optimism',
+  solana: 'solana',
+};
+
+async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp }) {
+  const chain = COINBASE_ONRAMP_NETWORKS[normalizeNetwork(network)];
+  if (!chain) return null;
+  const jwt = await generateJwt({
+    apiKeyId: COINBASE_CDP_API_KEY_ID,
+    apiKeySecret: COINBASE_CDP_API_KEY_SECRET,
+    requestMethod: 'POST',
+    requestHost: 'api.developer.coinbase.com',
+    requestPath: '/onramp/v1/token',
+    expiresIn: 120,
+  });
+  const response = await fetch('https://api.developer.coinbase.com/onramp/v1/token', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      addresses: [{ address: walletAddress, blockchains: [chain] }],
+      clientIp,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Coinbase Onramp session token error: ${response.status} ${await response.text()}`);
+  }
+  const data = await response.json();
+  return `https://pay.coinbase.com/buy/select-asset?sessionToken=${encodeURIComponent(data.token)}`;
+}
 
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const solanaConnection = new SolanaConnection(SOLANA_RPC_URL, 'confirmed');
@@ -759,7 +809,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       : normalizedBuyNetwork === 'bitcoin'
       ? isValidBitcoinAddress(walletAddress || '')
       : ethers.utils.isAddress(walletAddress || '');
-    if (PAYMENT_PROVIDER === 'moonpay' && !walletAddressValid) {
+    if ((PAYMENT_PROVIDER === 'moonpay' || PAYMENT_PROVIDER === 'coinbase') && !walletAddressValid) {
       return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
     }
 
@@ -793,6 +843,23 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       }
       return FRONTEND_URL;
     })();
+
+    if (PAYMENT_PROVIDER === 'coinbase') {
+      if (!COINBASE_CDP_API_KEY_ID || !COINBASE_CDP_API_KEY_SECRET) {
+        return res.status(503).json({ success: false, error: 'Coinbase Onramp non configuré (clé CDP manquante dans .env).' });
+      }
+      let url;
+      try {
+        url = await buildCoinbaseOnrampUrl({ walletAddress, network, clientIp: req.ip });
+      } catch (err) {
+        console.error('Coinbase Onramp error:', err);
+        return res.status(502).json({ success: false, error: 'Impossible de générer la session Coinbase Onramp.' });
+      }
+      if (!url) {
+        return res.status(400).json({ success: false, error: `Achat sur le réseau "${network}" non supporté par Coinbase Onramp pour l'instant — choisis Ethereum, Base, Polygon, Arbitrum, Optimism ou Solana.` });
+      }
+      return res.json({ success: true, provider: 'coinbase', url });
+    }
 
     if (PAYMENT_PROVIDER === 'moonpay') {
       if (!MOONPAY_API_KEY) {
