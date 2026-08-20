@@ -19,6 +19,10 @@ const PRODUCTION_ORIGINS = [
   'https://nexiawallet.com',
   'https://www.nexiawallet.com',
 ];
+// Domaine principal de prod, utilisé comme fallback de redirection quand
+// aucune origine de confiance n'est fournie par le client (voir FRONTEND_URL
+// ci-dessous).
+const PRIMARY_ORIGIN = 'https://nexiawallet.com';
 
 // process.env.FRONTEND_URL a déjà été trouvée mal configurée sur Railway par
 // le passé (contenant la même liste multi-domaines que FRONTEND_URLS,
@@ -30,13 +34,17 @@ for (const origin of PRODUCTION_ORIGINS) {
   if (!FRONTEND_URLS.includes(origin)) FRONTEND_URLS.push(origin);
 }
 
-// Domaine principal de prod : nexiawallet.com. Constante fixe (et non dérivée
-// de FRONTEND_URLS[0]) pour que le fallback de redirection reste TOUJOURS une
-// URL absolue bien formée, quoi que contienne la variable d'environnement
-// brute (liste mal séparée, entrée sans schéma http(s), etc.) — voir
-// PRODUCTION_ORIGINS ci-dessus, qui garantit que ce domaine est de toute
-// façon toujours présent dans FRONTEND_URLS.
-const FRONTEND_URL = 'https://nexiawallet.com';
+// FRONTEND_URL sert de fallback de redirection (Stripe/MoonPay) quand aucune
+// origine de confiance n'est fournie par le client — voir wallet.js. On
+// n'accepte process.env.FRONTEND_URL brute que si c'est une SEULE URL http(s)
+// bien formée (ex. FRONTEND_URL=http://192.168.1.2:8083 pour tester sur un
+// device physique en LAN, cf. .env.example) ; toute valeur qui contient une
+// virgule ou un retour à la ligne (comme la liste multi-domaines mal
+// configurée sur Railway) est ignorée au profit du domaine principal de prod,
+// garanti bien formé.
+const SINGLE_WELL_FORMED_ORIGIN_RE = /^https?:\/\/[^\s,]+$/;
+const rawFrontendUrl = (process.env.FRONTEND_URL || '').trim();
+const FRONTEND_URL = SINGLE_WELL_FORMED_ORIGIN_RE.test(rawFrontendUrl) ? rawFrontendUrl : PRIMARY_ORIGIN;
 
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
 const EXPO_TUNNEL_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.exp\.direct$/i;
