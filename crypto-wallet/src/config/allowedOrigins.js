@@ -12,17 +12,21 @@
 // 2026-07-05). nexiawallet.fr (+ www) ajouté le 2026-07-11, nexiawallet.com
 // (+ www) ajouté le 2026-08-12 — garder tous tant que le DNS/rattachement
 // Cloudflare Pages de chaque domaine n'est pas confirmé stable.
+// Domaine principal de prod, utilisé comme fallback de redirection quand
+// aucune origine de confiance n'est fournie par le client (voir FRONTEND_URL
+// plus bas) — référencé depuis PRODUCTION_ORIGINS ci-dessous plutôt que
+// dupliqué en litéral, pour n'avoir qu'une seule source de vérité si ce
+// domaine change un jour (cf. historique des migrations dans le commentaire
+// au-dessus de PRODUCTION_ORIGINS).
+const PRIMARY_ORIGIN = 'https://nexiawallet.com';
+
 const PRODUCTION_ORIGINS = [
   'https://nexiawallet.pages.dev',
   'https://nexiawallet.fr',
   'https://www.nexiawallet.fr',
-  'https://nexiawallet.com',
+  PRIMARY_ORIGIN,
   'https://www.nexiawallet.com',
 ];
-// Domaine principal de prod, utilisé comme fallback de redirection quand
-// aucune origine de confiance n'est fournie par le client (voir FRONTEND_URL
-// ci-dessous).
-const PRIMARY_ORIGIN = 'https://nexiawallet.com';
 
 // process.env.FRONTEND_URL a déjà été trouvée mal configurée sur Railway par
 // le passé (contenant la même liste multi-domaines que FRONTEND_URLS,
