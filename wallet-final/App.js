@@ -8188,19 +8188,34 @@ function AppContent({ themeMode, changeTheme }) {
             <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={setBuyAmount}
               placeholder="10" placeholderTextColor={T.text3} keyboardType="numeric" />
           </View>
+          <Text style={st.buy_amount_convert}>
+            ≈ {(() => {
+              const price = tokens[buyToken]?.price || 0;
+              if (!price) return '0';
+              const qty = (parseFloat(buyAmount) || 0) / price;
+              return qty.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+            })()} {buyToken}
+          </Text>
 
-          <View style={st.send_info_box}>
-            <Text style={st.send_info_line}>≈ {fmt((parseFloat(buyAmount) || 0) / (tokens[buyToken]?.price || 1))} {buyToken}</Text>
-            <Text style={st.send_info_line}>Réseau: {{ SOL: 'Solana', BTC: 'Bitcoin' }[buyToken] || activeNetwork.label}</Text>
-            <Text style={st.send_info_line}>
-              Paiement sécurisé par carte — livré directement à ton adresse {(() => {
-                const addr = buyToken === 'SOL' ? solanaAddr : buyToken === 'BTC' ? bitcoinAddr : walletAddr;
-                return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '';
-              })()}, sans passer par un compte tiers
-            </Text>
+          <View style={st.buy_info_box}>
+            <View style={st.buy_info_row}>
+              <Text style={st.buy_info_label}>Réseau</Text>
+              <Text style={st.buy_info_value}>{{ SOL: 'Solana', BTC: 'Bitcoin' }[buyToken] || activeNetwork.label}</Text>
+            </View>
+            <View style={st.buy_info_divider} />
+            <View style={st.buy_info_row}>
+              <Text style={st.buy_info_label}>Destination</Text>
+              <Text style={st.buy_info_value}>
+                {(() => {
+                  const addr = buyToken === 'SOL' ? solanaAddr : buyToken === 'BTC' ? bitcoinAddr : walletAddr;
+                  return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
+                })()}
+              </Text>
+            </View>
           </View>
+          <Text style={st.buy_disclaimer}>🔒 Paiement sécurisé par carte, crypto livrée directement à ton wallet — aucun compte tiers requis.</Text>
 
-          <AnimPressable style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 24 }]}
+          <AnimPressable style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 20 }]}
             onPress={handleBuyNow} disabled={buyLoading}>
             {buyLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Payer avec carte</Text>}
           </AnimPressable>
@@ -8622,9 +8637,16 @@ function buildSt(T) {
 
   form_label:    { color: T.text2, fontSize: 12, fontWeight: 'bold', marginBottom: 8, textTransform: 'uppercase' },
   form_input:    { backgroundColor: T.card, color: T.text, borderRadius: 12, padding: 14, fontSize: 15, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
-  buy_amount_row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border, paddingVertical: 24, marginBottom: 16 },
-  buy_amount_currency: { color: T.text2, fontSize: 32, fontWeight: '700', marginRight: 6 },
-  buy_amount_input: { color: T.text, fontSize: 40, fontWeight: 'bold', textAlign: 'center', minWidth: 80, padding: 0 },
+  buy_amount_row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 18, borderWidth: 1, borderColor: T.border, paddingVertical: 26, marginBottom: 10 },
+  buy_amount_currency: { color: T.text2, fontSize: 30, fontWeight: '700', marginRight: 6 },
+  buy_amount_input: { color: T.text, fontSize: 42, fontWeight: 'bold', textAlign: 'center', minWidth: 90, padding: 0 },
+  buy_amount_convert: { color: T.text2, fontSize: 14, fontWeight: '600', textAlign: 'center', marginBottom: 18 },
+  buy_info_box: { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, paddingHorizontal: 16, paddingVertical: 4, marginBottom: 12 },
+  buy_info_row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  buy_info_divider: { height: 1, backgroundColor: T.border },
+  buy_info_label: { color: T.text3, fontSize: 13 },
+  buy_info_value: { color: T.text, fontSize: 13, fontWeight: '600' },
+  buy_disclaimer: { color: T.text3, fontSize: 12, textAlign: 'center', lineHeight: 17, paddingHorizontal: 8 },
   max_btn:       { backgroundColor: T.goldBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginLeft: 8, marginBottom: 16, borderWidth: 1, borderColor: T.gold + '55' },
   addr_action_btn: { width: 48, height: 48, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   max_btn_txt:   { color: T.gold, fontWeight: 'bold', fontSize: 13 },
