@@ -89,7 +89,7 @@ const COINBASE_ONRAMP_NETWORKS = {
   solana: 'solana',
 };
 
-async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp }) {
+async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp, amountEur, tokenSymbol }) {
   const chain = COINBASE_ONRAMP_NETWORKS[normalizeNetwork(network)];
   if (!chain) return null;
   const jwt = await generateJwt({
@@ -112,7 +112,15 @@ async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp }) {
     throw new Error(`Coinbase Onramp session token error: ${response.status} ${await response.text()}`);
   }
   const data = await response.json();
-  return `https://pay.coinbase.com/buy/select-asset?sessionToken=${encodeURIComponent(data.token)}`;
+  const params = new URLSearchParams({ sessionToken: data.token, fiatCurrency: 'EUR' });
+  // presetFiatAmount/defaultAsset/defaultNetwork sont juste des presets pour
+  // l'ecran d'accueil du widget Coinbase — l'utilisateur reste libre de tout
+  // changer sur leur page, contrairement a l'adresse/reseau ci-dessus qui
+  // conditionnent ou la crypto est reellement livree.
+  if (amountEur > 0) params.set('presetFiatAmount', String(amountEur));
+  if (tokenSymbol) params.set('defaultAsset', tokenSymbol.toUpperCase());
+  params.set('defaultNetwork', chain);
+  return `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
 }
 
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -815,7 +823,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
 
     const intAmount = Math.round(parseFloat(amountUsd) * 100);
     if (!Number.isFinite(intAmount) || intAmount <= 0 || intAmount > 5_000_00) {
-      return res.status(400).json({ success: false, error: 'Montant invalide (entre 1 et 5000 USD).' });
+      return res.status(400).json({ success: false, error: 'Montant invalide (entre 1 et 5000).' });
     }
 
     // returnUrl/Origin ne sont acceptés comme cible de redirection QUE s'ils
@@ -850,7 +858,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       }
       let url;
       try {
-        url = await buildCoinbaseOnrampUrl({ walletAddress, network, clientIp: req.ip });
+        url = await buildCoinbaseOnrampUrl({ walletAddress, network, clientIp: req.ip, amountEur: intAmount / 100, tokenSymbol });
       } catch (err) {
         console.error('Coinbase Onramp error:', err);
         return res.status(502).json({ success: false, error: 'Impossible de générer la session Coinbase Onramp.' });
@@ -890,7 +898,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
         provider: 'demo',
         demo: true,
         url: demoUrl,
-        message: 'Flux d’achat prêt en mode test. Branche Stripe/MoonPay pour un paiement réel.',
+        message: 'Flux d’achat prêt en mode test. Configure PAYMENT_PROVIDER (coinbase/moonpay/stripe) pour un paiement réel.',
       });
     }
 

@@ -8182,14 +8182,22 @@ function AppContent({ themeMode, changeTheme }) {
             })}
           </ScrollView>
 
-          <Text style={st.form_label}>Montant USD</Text>
-          <TextInput style={st.form_input} value={buyAmount} onChangeText={setBuyAmount}
-            placeholder="10" placeholderTextColor={T.text3} keyboardType="numeric" />
+          <Text style={st.form_label}>Montant (EUR)</Text>
+          <View style={st.buy_amount_row}>
+            <Text style={st.buy_amount_currency}>€</Text>
+            <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={setBuyAmount}
+              placeholder="10" placeholderTextColor={T.text3} keyboardType="numeric" />
+          </View>
 
           <View style={st.send_info_box}>
             <Text style={st.send_info_line}>≈ {fmt((parseFloat(buyAmount) || 0) / (tokens[buyToken]?.price || 1))} {buyToken}</Text>
             <Text style={st.send_info_line}>Réseau: {{ SOL: 'Solana', BTC: 'Bitcoin' }[buyToken] || activeNetwork.label}</Text>
-            <Text style={st.send_info_line}>Paiement sécurisé par carte (MoonPay)</Text>
+            <Text style={st.send_info_line}>
+              Paiement sécurisé par carte — livré directement à ton adresse {(() => {
+                const addr = buyToken === 'SOL' ? solanaAddr : buyToken === 'BTC' ? bitcoinAddr : walletAddr;
+                return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '';
+              })()}, sans passer par un compte tiers
+            </Text>
           </View>
 
           <AnimPressable style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 24 }]}
@@ -8614,6 +8622,9 @@ function buildSt(T) {
 
   form_label:    { color: T.text2, fontSize: 12, fontWeight: 'bold', marginBottom: 8, textTransform: 'uppercase' },
   form_input:    { backgroundColor: T.card, color: T.text, borderRadius: 12, padding: 14, fontSize: 15, borderWidth: 1, borderColor: T.border, marginBottom: 16 },
+  buy_amount_row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border, paddingVertical: 24, marginBottom: 16 },
+  buy_amount_currency: { color: T.text2, fontSize: 32, fontWeight: '700', marginRight: 6 },
+  buy_amount_input: { color: T.text, fontSize: 40, fontWeight: 'bold', textAlign: 'center', minWidth: 80, padding: 0 },
   max_btn:       { backgroundColor: T.goldBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginLeft: 8, marginBottom: 16, borderWidth: 1, borderColor: T.gold + '55' },
   addr_action_btn: { width: 48, height: 48, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   max_btn_txt:   { color: T.gold, fontWeight: 'bold', fontSize: 13 },
