@@ -117,11 +117,11 @@ const DARK_THEME = {
 // lisible sur fond clair) et mêmes rôles sémantiques (up/down/red/blue/
 // orange assombris pour le contraste), fond papier chaud plutôt que blanc pur.
 const LIGHT_THEME = {
-  bg:      '#f7f5f0',
+  bg:      '#f6f6f8',
   card:    '#ffffff',
-  card2:   '#f1efe7',
-  border:  '#e3ddd0',
-  borderSoft: '#ece7db',
+  card2:   '#f0f1f4',
+  border:  '#e7e8ec',
+  borderSoft: '#eff0f3',
   gold:    '#9c7b3f',
   goldBg:  'rgba(156, 123, 63, 0.10)',
   goldLine:'rgba(156, 123, 63, 0.35)',
@@ -200,10 +200,10 @@ const LEGAL_DOCS = {
     title: "Conditions Générales d'Utilisation",
     updated: '5 juillet 2026',
     body: `1. Objet
-NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille Ethereum/BNB Smart Chain sans que NexiaWallet ne détienne ou ne contrôle jamais les fonds de l'utilisateur (voir §2 pour le détail du traitement de la clé privée).
+NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille multi-réseaux (Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, Solana, Bitcoin) sans que NexiaWallet ne détienne ou ne contrôle jamais les fonds de l'utilisateur (voir §2 pour le détail du traitement de la clé privée).
 
 2. Nature non-custodiale
-NexiaWallet ne détient et ne contrôle jamais les fonds de l'utilisateur, et ne conserve jamais durablement sa clé privée ou sa phrase de récupération : elles ne sont jamais écrites sur disque ni en base de données. Pour permettre la création, l'import et la signature des transactions, la clé privée transite par le serveur applicatif et y reste en mémoire pendant la durée de la session (expiration automatique sous 24h d'inactivité) — voir la Politique de Confidentialité pour le détail. En conséquence, NexiaWallet ne peut techniquement ni récupérer ni réinitialiser un accès perdu.
+NexiaWallet ne détient et ne contrôle jamais les fonds de l'utilisateur. La clé privée et la phrase de récupération sont générées, chiffrées et utilisées EXCLUSIVEMENT sur l'appareil de l'utilisateur : elles ne quittent jamais cet appareil, ne transitent jamais par un serveur NexiaWallet et ne sont jamais écrites sur un disque ou une base de données qui nous appartient. Toute transaction est signée localement ; seule la transaction déjà signée (donnée publique dès sa diffusion) est relayée au réseau. En conséquence, NexiaWallet ne peut techniquement ni récupérer ni réinitialiser un accès perdu.
 
 3. Responsabilité de l'utilisateur
 L'utilisateur est seul responsable de la conservation de sa phrase de récupération et de son code PIN. Leur perte entraîne la perte définitive et irréversible de l'accès aux fonds. NexiaWallet ne peut en aucun cas restaurer un accès perdu.
@@ -212,7 +212,7 @@ L'utilisateur est seul responsable de la conservation de sa phrase de récupéra
 Les transactions sur une blockchain publique sont irréversibles. L'utilisateur doit vérifier l'adresse et le montant avant toute confirmation d'envoi. NexiaWallet n'est pas responsable des transactions envoyées à une adresse erronée.
 
 5. Services tiers
-L'achat de crypto par carte bancaire est assuré par un prestataire de paiement tiers (MoonPay), soumis à ses propres conditions et vérifications. Les prix et données de marché proviennent de fournisseurs tiers (CoinGecko, Etherscan) fournis "en l'état", sans garantie d'exactitude en temps réel.
+L'achat de crypto par carte bancaire est assuré par un prestataire tiers (Coinbase Onramp), soumis à ses propres conditions et vérifications ; les fonds achetés sont livrés directement à l'adresse du wallet de l'utilisateur, jamais sur un compte détenu par NexiaWallet. Les prix et données de marché proviennent de fournisseurs tiers (CoinGecko, Etherscan) fournis "en l'état", sans garantie d'exactitude en temps réel.
 
 6. Limitation de responsabilité
 NexiaWallet est fourni "en l'état", sans garantie d'absence d'erreur ou d'interruption. L'utilisation de cryptomonnaies comporte des risques de marché et de sécurité que l'utilisateur accepte en connaissance de cause.
@@ -229,11 +229,11 @@ NexiaWallet ne demande ni email, ni nom, ni numéro de téléphone pour créer u
 2. Ce qui reste uniquement sur l'appareil
 Le code PIN (chiffré), les favoris, le carnet d'adresses récentes et les alertes de prix sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
 
-3. Ce qui transite par le serveur
-Lors de la création, de l'import ou de l'envoi d'une transaction, la clé privée transite par le serveur applicatif (protégé par HTTPS) et y est conservée en mémoire vive uniquement — jamais sur disque ni en base de données — associée à un jeton de session propre à chaque wallet, avec expiration automatique après 24h d'inactivité. Le serveur reçoit aussi les données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces dernières sont publiques par nature sur une blockchain.
+3. Ce qui ne transite JAMAIS par le serveur
+La clé privée et la phrase de récupération sont générées et utilisées exclusivement sur l'appareil (génération, chiffrement et signature des transactions 100% locaux) — elles ne sont ni envoyées ni conservées, même temporairement, par un serveur NexiaWallet. Le serveur reçoit uniquement des données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces dernières sont publiques par nature sur une blockchain.
 
 4. Fournisseurs tiers
-Les prix de marché (CoinGecko), l'historique de transactions (Etherscan) et le paiement par carte (MoonPay) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté.
+Les prix de marché (CoinGecko), l'historique de transactions (Etherscan) et le paiement par carte (Coinbase Onramp) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté.
 
 5. Cookies et tracking
 Aucun cookie publicitaire ni outil de suivi tiers n'est utilisé sur ce site.
@@ -255,7 +255,7 @@ Nature du service
 NexiaWallet met à disposition un outil technique de génération et de gestion de portefeuille crypto non-custodial. NexiaWallet n'est ni un établissement de paiement, ni un prestataire de services sur actifs numériques (PSAN) au sens où elle ne détient jamais les fonds des utilisateurs.
 
 Propriété intellectuelle
-L'interface, le code et les visuels de NexiaWallet sont la propriété de leur auteur, sauf logos et données de marché appartenant à leurs fournisseurs respectifs (CoinGecko, MoonPay).
+L'interface, le code et les visuels de NexiaWallet sont la propriété de leur auteur, sauf logos et données de marché appartenant à leurs fournisseurs respectifs (CoinGecko, Coinbase).
 
 Contact
 Pour toute question, un formulaire ou une adresse de contact sera ajouté prochainement.`,
@@ -268,8 +268,8 @@ Pour toute question, un formulaire ou une adresse de contact sera ajouté procha
 // réceptif avant de découvrir l'app par lui-même.
 const ONBOARDING_SLIDES = [
   { icon: '🔐', title: 'Tes clés, tes cryptos', desc: "Ta phrase de récupération est la seule clé de tes fonds. NexiaWallet ne détient jamais tes cryptos et ne peut ni la récupérer ni la réinitialiser si tu la perds." },
-  { icon: '📤', title: 'Envoie et reçois', desc: 'Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum et BNB Smart Chain.' },
-  { icon: '💳', title: 'Achète et échange', desc: "Achète par carte via MoonPay, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app." },
+  { icon: '📤', title: 'Envoie et reçois', desc: "Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Solana ou Bitcoin." },
+  { icon: '💳', title: 'Achète et échange', desc: "Achète par carte via Coinbase Onramp, livré directement sur ton wallet, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app." },
 ];
 
 // FAQ affichée sur la landing — questions réellement posées par les
@@ -769,15 +769,17 @@ const saveLocale = async (locale) => {
 };
 
 // Thème clair/sombre — voir DARK_THEME/LIGHT_THEME tout en haut du fichier.
-// Sombre par défaut (thème d'origine de l'app), persisté dès que
-// l'utilisateur en choisit un autre dans Paramètres.
+// Clair par défaut depuis 2026-08-28 (aligné sur les wallets grand public
+// type Trust Wallet), persisté dès que l'utilisateur en choisit un autre
+// dans Paramètres. Un choix "sombre" déjà enregistré avant ce changement
+// reste bien respecté (seule l'absence de préférence bascule vers clair).
 const THEME_KEY = 'wallet-pro-theme-v1';
 
 const loadTheme = async () => {
   try {
     const raw = await AsyncStorage.getItem(THEME_KEY);
-    return raw === 'light' ? 'light' : 'dark';
-  } catch { return 'dark'; }
+    return raw === 'dark' ? 'dark' : 'light';
+  } catch { return 'light'; }
 };
 
 const saveTheme = async (mode) => {
@@ -1331,6 +1333,15 @@ function TokenRowSkeleton({ style }) {
 //  rapide). Fondu + léger glissement à l'apparition, auto-disparition gérée
 //  par l'appelant (showToast) via un minuteur, pas ici.
 // ═══════════════════════════════════════════════════════════
+// Un emoji est déjà inclus dans la plupart des messages existants
+// (`showToast('✓ Copié', ...)`) depuis l'ancien style à une ligne — la
+// pilule a maintenant sa propre icône ronde, donc on retire cet emoji
+// initial pour éviter d'en afficher deux côte à côte. Liste explicite
+// plutôt qu'une regex Unicode générique : évite de couper un texte qui
+// commencerait légitimement par un caractère non-ASCII.
+const TOAST_LEADING_EMOJI_RE = /^(✓|✅|⚠️|❌|🔔|🛡️|🚨)\s*/u;
+const stripToastLeadingEmoji = (s) => (s || '').replace(TOAST_LEADING_EMOJI_RE, '');
+
 function ToastBanner({ toast }) {
   const { T, st } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
@@ -1340,8 +1351,8 @@ function ToastBanner({ toast }) {
     Animated.timing(anim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
   }, [toast, anim]);
   if (!toast) return null;
-  const bg = toast.type === 'success' ? T.goldBg : toast.type === 'error' ? T.redBg : T.card2;
-  const fg = toast.type === 'success' ? T.gold : toast.type === 'error' ? T.red : T.text;
+  const iconName = toast.type === 'success' ? 'checkmark' : toast.type === 'error' ? 'close' : 'information';
+  const iconBg = toast.type === 'success' ? '#2ecC71' : toast.type === 'error' ? '#e5534b' : '#5b9bf7';
   return (
     // Modal transparent = même mécanisme d'overlay que les autres popups
     // (Envoyer, Paramètres...) — sans ça, un toast simple sibling passait
@@ -1352,10 +1363,16 @@ function ToastBanner({ toast }) {
         <Animated.View
           style={[
             st.toast_wrap,
-            { backgroundColor: bg, borderColor: fg + '55', opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+            { opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }] },
           ]}
         >
-          <Text style={[st.toast_txt, { color: fg }]}>{toast.message}</Text>
+          <View style={[st.toast_icon_circle, { backgroundColor: iconBg }]}>
+            <Ionicons name={iconName} size={13} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={st.toast_title} numberOfLines={1}>{stripToastLeadingEmoji(toast.message)}</Text>
+            {!!toast.subtitle && <Text style={st.toast_subtitle} numberOfLines={1}>{toast.subtitle}</Text>}
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -2070,11 +2087,43 @@ function AppContent({ themeMode, changeTheme }) {
     try { return localWallet.getBitcoinAddress(unlockedMnemonic); } catch (e) { console.warn('getBitcoinAddress error', e.message); return ''; }
   }, [unlockedMnemonic]);
   const [bitcoinBalance, setBitcoinBalance] = useState('0');
-  const showToast = useCallback((message, type = 'info') => {
+  // `subtitle` optionnel (3e argument, rétrocompatible avec tous les appels
+  // existants qui ne passent que message+type) : deuxième ligne grise sous le
+  // titre, comme "Envoyé !" / "0,19 USDT" dans la pilule de notification.
+  const showToast = useCallback((message, type = 'info', subtitle = null) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({ message, type });
+    setToast({ message, type, subtitle });
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   }, []);
+
+  // Barre du bas qui se rétracte en scrollant vers le bas et réapparaît vers
+  // le haut (ou tout en haut de la liste) — même geste que la plupart des
+  // apps mobiles grand public. `navBarAnim` (0=visible, 1=masquée) piloté à
+  // la main plutôt que par Animated.event : il faut lire la DIRECTION du
+  // scroll (delta avec la position précédente), pas juste sa valeur brute.
+  // Déclaré ici (avec les autres hooks, avant tout `return` conditionnel de
+  // AppContent) plutôt que près de son usage dans navItems/bottom_nav plus
+  // bas dans le fichier -- sinon ce hook ne s'exécute que sur les rendus qui
+  // atteignent cette portion (wallet déverrouillé), pas sur les écrans PIN/
+  // onboarding qui rendent AVANT, ce qui viole les Rules of Hooks ("Rendered
+  // more hooks than during the previous render", vu en testant ce jour).
+  const navBarAnim = useRef(new Animated.Value(0)).current;
+  const lastScrollYRef = useRef(0);
+  const navBarHiddenRef = useRef(false);
+  const handleTabScroll = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const delta = y - lastScrollYRef.current;
+    lastScrollYRef.current = y;
+    const shouldHide = y > 60 && delta > 4;
+    const shouldShow = delta < -4 || y <= 60;
+    if (shouldHide && !navBarHiddenRef.current) {
+      navBarHiddenRef.current = true;
+      Animated.timing(navBarAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    } else if (shouldShow && navBarHiddenRef.current) {
+      navBarHiddenRef.current = false;
+      Animated.timing(navBarAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    }
+  }, [navBarAnim]);
   const copyToClipboard = useCallback(async (value, label = 'Copié') => {
     try {
       await Clipboard.setStringAsync(value);
@@ -6302,6 +6351,8 @@ function AppContent({ themeMode, changeTheme }) {
       <ScrollView
         style={{ flex: 1, padding: 16 }}
         contentContainerStyle={isWideWeb ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : undefined}
+        onScroll={handleTabScroll}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl refreshing={historyLoading} onRefresh={fetchHistory} tintColor={T.gold} />
         }
@@ -7913,6 +7964,8 @@ function AppContent({ themeMode, changeTheme }) {
     <ScrollView
       style={{ flex: 1 }}
       showsVerticalScrollIndicator={false}
+      onScroll={handleTabScroll}
+      scrollEventThrottle={16}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchMarket(); }} tintColor={T.gold} />
       }
@@ -8168,6 +8221,8 @@ function AppContent({ themeMode, changeTheme }) {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        onScroll={handleTabScroll}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -8257,6 +8312,90 @@ function AppContent({ themeMode, changeTheme }) {
         <View style={{ height: 90 }} />
       </ScrollView>
     </View>
+  );
+
+  // ════════════════════════════════════════════════════════
+  //  TAB: DÉCOUVRIR — assemble des fonctionnalités déjà existantes
+  //  (navigateur dApp intégré, staking Lido) dans une grille de découverte,
+  //  plutôt que d'inventer de nouvelles intégrations. Volontairement AUCUN
+  //  produit à effet de levier (perpétuels) ni pari (prédictions) : hors de
+  //  portée réglementaire/technique pour ce wallet non-custodial.
+  // ════════════════════════════════════════════════════════
+  const FEATURED_DAPPS = [
+    { name: 'Uniswap',     url: 'https://app.uniswap.org',   color: '#FF007A', letter: 'U' },
+    { name: 'Aave',        url: 'https://app.aave.com',      color: '#B6509E', letter: 'A' },
+    { name: 'Lido',        url: 'https://stake.lido.fi',     color: '#00A3FF', letter: 'L' },
+    { name: 'PancakeSwap', url: 'https://pancakeswap.finance', color: '#D1884F', letter: 'P' },
+    { name: '1inch',       url: 'https://app.1inch.io',      color: '#94A6C3', letter: '1' },
+    { name: 'OpenSea',     url: 'https://opensea.io',        color: '#2081E2', letter: 'O' },
+  ];
+
+  const renderDiscover = () => (
+    <ScrollView
+      style={{ flex: 1 }}
+      showsVerticalScrollIndicator={false}
+      onScroll={handleTabScroll}
+      scrollEventThrottle={16}
+      contentContainerStyle={{ padding: 16 }}
+    >
+      <Text style={st.tab_title}>{t('nav_discover')}</Text>
+
+      <TouchableOpacity
+        style={st.search_wrap}
+        onPress={() => { setDappUrlInput(''); setShowDappBrowser(true); }}
+      >
+        <View pointerEvents="none">
+          <TextInput
+            style={st.search_input}
+            placeholder="🔍 Rechercher ou saisir l'URL d'une dApp"
+            placeholderTextColor={T.text3}
+            editable={false}
+          />
+        </View>
+      </TouchableOpacity>
+
+      <View style={[st.section_hdr, { marginTop: 20 }]}>
+        <SectionTitle>Explorer les dApps</SectionTitle>
+      </View>
+      <View style={st.discover_grid}>
+        {FEATURED_DAPPS.map((d) => (
+          <AnimPressable key={d.name} style={st.discover_tile} scaleTo={0.96} onPress={() => { handleDappBrowserOpen(d.url); setShowDappBrowser(true); }}>
+            <View style={[st.discover_tile_icon, { backgroundColor: d.color }]}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18 }}>{d.letter}</Text>
+            </View>
+            <Text style={st.discover_tile_name} numberOfLines={1}>{d.name}</Text>
+          </AnimPressable>
+        ))}
+      </View>
+
+      <View style={[st.section_hdr, { marginTop: 24 }]}>
+        <SectionTitle>Earn</SectionTitle>
+      </View>
+      <AnimPressable style={st.settings_row} scaleTo={0.98} onPress={() => setShowStaking(true)}>
+        <Text style={{ fontSize: 22 }}>🌊</Text>
+        <View style={{ flex: 1, marginLeft: 14 }}>
+          <Text style={st.settings_row_title}>Staker de l'ETH (Lido)</Text>
+          <Text style={st.settings_row_sub}>Staking liquide non-custodial — reçois du stETH</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={T.text3} />
+      </AnimPressable>
+
+      <View style={[st.section_hdr, { marginTop: 16 }]}>
+        <SectionTitle>Raccourcis</SectionTitle>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <AnimPressable style={[st.settings_row, { flex: 1 }]} scaleTo={0.97} onPress={() => setTab('swap')}>
+          <Ionicons name="swap-horizontal" size={20} color={T.gold} />
+          <Text style={[st.settings_row_title, { marginLeft: 10 }]}>Swap</Text>
+        </AnimPressable>
+        <AnimPressable style={[st.settings_row, { flex: 1 }]} scaleTo={0.97} onPress={() => setShowBridge(true)}>
+          <Ionicons name="git-network" size={20} color={T.gold} />
+          <Text style={[st.settings_row_title, { marginLeft: 10 }]}>Pont</Text>
+        </AnimPressable>
+      </View>
+
+      <View style={{ height: 90 }} />
+    </ScrollView>
   );
 
   // ════════════════════════════════════════════════════════
@@ -8474,6 +8613,7 @@ function AppContent({ themeMode, changeTheme }) {
     { id: 'home',     icon: 'home',              label: t('nav_home')   },
     { id: 'markets',  icon: 'trending-up',       label: t('nav_market') },
     { id: 'stats',    icon: 'stats-chart',       label: t('nav_stats')  },
+    { id: 'discover', icon: 'compass',           label: t('nav_discover') },
     { id: 'swap',     icon: 'swap-horizontal',   label: t('nav_swap'), big: true },
   ];
 
@@ -8484,6 +8624,7 @@ function AppContent({ themeMode, changeTheme }) {
       {tab === 'home'     && renderHome()}
       {tab === 'markets'  && renderMarkets()}
       {tab === 'stats'    && renderStatsTab()}
+      {tab === 'discover' && renderDiscover()}
       {tab === 'swap'     && renderSwap()}
     </FadeInView>
   );
@@ -8533,6 +8674,16 @@ function AppContent({ themeMode, changeTheme }) {
       ) : (
         <>
           {tabContent}
+          <Animated.View
+            style={[
+              st.bottom_nav_float,
+              {
+                opacity: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                transform: [{ translateY: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 24] }) }],
+              },
+            ]}
+            pointerEvents={navBarHiddenRef.current ? 'none' : 'auto'}
+          >
           <View style={st.bottom_nav}>
             {navItems.map(n => (
               <AnimPressable
@@ -8559,6 +8710,7 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
             ))}
           </View>
+          </Animated.View>
         </>
       )}
       {renderBuy()}
@@ -8597,7 +8749,7 @@ function AppContent({ themeMode, changeTheme }) {
 // dans le Provider — voir le commentaire au-dessus de AppContent pour
 // pourquoi ça doit être fait de l'extérieur plutôt qu'avec un seul `return`.
 export default function App() {
-  const [themeMode, setThemeMode] = useState('dark');
+  const [themeMode, setThemeMode] = useState('light');
   useEffect(() => { loadTheme().then(setThemeMode); }, []);
   const T = themeMode === 'light' ? LIGHT_THEME : DARK_THEME;
   const cs = useMemo(() => buildCs(T), [T]);
@@ -8664,13 +8816,19 @@ function buildSt(T) {
   pin_key_txt:     { color: T.text, fontSize: 24, fontWeight: '500' },
   biometric_btn:     { marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 999, borderWidth: 1, borderColor: T.border },
   biometric_btn_txt: { color: T.text2, fontSize: 13, fontWeight: '600' },
-  toast_layer: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 90, paddingHorizontal: 20 },
+  // Pilule flottante EN HAUT (sous l'encoche/île dynamique), toujours sombre
+  // quel que soit le thème actif — comme les notifications système/Trust
+  // Wallet, pas un composant qui doit s'accorder au thème clair/sombre.
+  toast_layer: { flex: 1, justifyContent: 'flex-start', alignItems: 'center', paddingTop: 56, paddingHorizontal: 20 },
   toast_wrap: {
-    width: '100%', maxWidth: 440, borderRadius: 14,
-    paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8,
+    flexDirection: 'row', alignItems: 'center', maxWidth: 420,
+    backgroundColor: '#1c1c1e', borderRadius: 999,
+    paddingVertical: 10, paddingHorizontal: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14, elevation: 10,
   },
-  toast_txt: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  toast_icon_circle: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  toast_title:    { color: '#fff', fontSize: 13, fontWeight: '700' },
+  toast_subtitle: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '500', marginTop: 1 },
   network_switch:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   network_chip:    { backgroundColor: T.card2, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: T.border, marginRight: 6 },
   network_chip_on: { backgroundColor: T.blueBg, borderColor: T.blue },
@@ -8793,6 +8951,10 @@ function buildSt(T) {
   news_desc:  { color: T.text2, fontSize: 12, lineHeight: 17, marginBottom: 6 },
   news_date:  { color: T.text3, fontSize: 10 },
 
+  discover_grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4 },
+  discover_tile: { width: '30%', alignItems: 'center', backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.borderSoft, paddingVertical: 14 },
+  discover_tile_icon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  discover_tile_name: { color: T.text, fontSize: 11, fontWeight: '600' },
   market_grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 14 },
   // La largeur (part de grille) vit sur le wrapper FadeInView ; `market_card`
   // ne porte que l'habillage visuel et remplit ce wrapper (stretch par défaut).
@@ -8904,7 +9066,11 @@ function buildSt(T) {
   settings_row_sub:   { color: T.text2, fontSize: 11, marginTop: 2 },
   status_dot:         { width: 10, height: 10, borderRadius: 5 },
 
-  bottom_nav:  { flexDirection: 'row', height: 64, backgroundColor: T.card, borderTopWidth: 1, borderTopColor: T.border, alignItems: 'center', justifyContent: 'space-around', paddingBottom: 4 },
+  // Conteneur qui "flotte" au-dessus du bas de l'écran (marge + coins très
+  // arrondis + ombre) — c'est cette View qui est animée (masquage au scroll),
+  // `bottom_nav` reste la pilule elle-même à l'intérieur.
+  bottom_nav_float: { marginHorizontal: 14, marginBottom: 10 },
+  bottom_nav:  { flexDirection: 'row', height: 60, backgroundColor: T.card, borderRadius: 30, alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 8, borderWidth: 1, borderColor: T.borderSoft },
   nav_item:    { flex: 1, alignItems: 'center', justifyContent: 'center', height: '100%' },
   nav_item_big:{ flex: 1.2 },
   nav_big_btn: {

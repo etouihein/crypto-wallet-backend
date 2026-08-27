@@ -19,6 +19,7 @@ const fr = {
   nav_home: 'Accueil',
   nav_market: 'Marché',
   nav_stats: 'Stats',
+  nav_discover: 'Découvrir',
   nav_swap: 'Swap',
   nav_settings: 'Paramètres',
 
@@ -89,6 +90,7 @@ const en = {
   nav_home: 'Home',
   nav_market: 'Market',
   nav_stats: 'Stats',
+  nav_discover: 'Discover',
   nav_swap: 'Swap',
   nav_settings: 'Settings',
 
@@ -159,6 +161,7 @@ const es = {
   nav_home: 'Inicio',
   nav_market: 'Mercado',
   nav_stats: 'Stats',
+  nav_discover: 'Descubrir',
   nav_swap: 'Swap',
   nav_settings: 'Ajustes',
 
@@ -229,6 +232,7 @@ const de = {
   nav_home: 'Start',
   nav_market: 'Markt',
   nav_stats: 'Statistik',
+  nav_discover: 'Entdecken',
   nav_swap: 'Swap',
   nav_settings: 'Einstellungen',
 
@@ -299,6 +303,7 @@ const pt = {
   nav_home: 'Início',
   nav_market: 'Mercado',
   nav_stats: 'Stats',
+  nav_discover: 'Descobrir',
   nav_swap: 'Swap',
   nav_settings: 'Config.',
 
