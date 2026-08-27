@@ -2478,15 +2478,56 @@ function AppContent({ themeMode, changeTheme }) {
   // et étiquettes -- rien de sensible (aucune clé, aucune donnée privée),
   // copié en JSON via le presse-papier plutôt qu'un vrai fichier (même choix
   // que l'export CSV, pas de expo-file-system installé).
-  // Exporte le keystore DÉJÀ chiffré (format JSON standard ethers/geth —
-  // scrypt+AES, le même format que MetaMask) — pas une nouvelle sauvegarde en
-  // clair, juste rendre portable ce qui est déjà stocké chiffré localement.
-  // Toujours protégé par le même PIN qu'aujourd'hui : sur un autre appareil,
-  // il faudra quand même le PIN d'origine pour le déchiffrer.
-  const exportEncryptedKeystore = useCallback(async () => {
-    if (!walletSession?.encryptedKeystore) return;
-    await copyToClipboard(walletSession.encryptedKeystore, 'Keystore chiffré copié — colle-le dans un fichier .json en lieu sûr');
-  }, [walletSession, copyToClipboard]);
+  // Exporte le keystore, mais RE-chiffré avec une phrase de passe dédiée
+  // saisie ici, jamais avec le PIN app à 6 chiffres.
+  //
+  // Pourquoi : le PIN protège un keystore qui ne quitte normalement jamais le
+  // SecureStore matériel du téléphone (Keychain iOS / Keystore Android) —
+  // dans ce contexte, un PIN à 6 chiffres est une défense secondaire
+  // raisonnable, la vraie barrière étant l'accès physique+déverrouillage de
+  // l'appareil. Mais CE bouton produit un fichier .json destiné à en sortir
+  // ("colle-le en lieu sûr" — mail, cloud, clé USB...). Mesuré en local avec
+  // les mêmes paramètres scrypt que ce fichier (N=16384) : déchiffrer UN
+  // essai prend ~115ms, donc épuiser les 1 000 000 de PIN à 6 chiffres
+  // possibles prend seulement ~32h sur un seul cœur, et ~2h sur 16 cœurs —
+  // largement à la portée de quiconque récupère ce fichier (mail piraté,
+  // service cloud compromis...). Une vraie phrase de passe (8+ caractères,
+  // alphanumérique) rend ce même brute-force pratiquement infaisable, sans
+  // rien changer au format (toujours ethers/geth V3 standard, déchiffrable
+  // par ce wallet OU par MetaMask/n'importe quel outil compatible).
+  const [showExportKeystore, setShowExportKeystore] = useState(false);
+  const [exportPassphraseInput, setExportPassphraseInput] = useState('');
+  const [exportPassphraseConfirm, setExportPassphraseConfirm] = useState('');
+  const [exportPassphraseError, setExportPassphraseError] = useState(null);
+  const [exportPassphraseLoading, setExportPassphraseLoading] = useState(false);
+
+  const confirmExportKeystore = useCallback(async () => {
+    if (!unlockedPrivateKey) { setExportPassphraseError('Wallet verrouillé.'); return; }
+    if (exportPassphraseInput.length < 8) {
+      setExportPassphraseError('Au moins 8 caractères — c\'est ce qui protège le fichier exporté, pas ton PIN.');
+      return;
+    }
+    if (exportPassphraseInput !== exportPassphraseConfirm) {
+      setExportPassphraseError('Les deux saisies ne correspondent pas.');
+      return;
+    }
+    setExportPassphraseLoading(true);
+    setExportPassphraseError(null);
+    try {
+      const freshlyEncrypted = await localWallet.encryptWalletKeystore(
+        { privateKey: unlockedPrivateKey, mnemonic: unlockedMnemonic },
+        exportPassphraseInput
+      );
+      await copyToClipboard(freshlyEncrypted, 'Keystore copié — colle-le dans un fichier .json en lieu sûr');
+      setShowExportKeystore(false);
+      setExportPassphraseInput('');
+      setExportPassphraseConfirm('');
+    } catch (err) {
+      setExportPassphraseError(err.message || "Échec de l'export.");
+    } finally {
+      setExportPassphraseLoading(false);
+    }
+  }, [unlockedPrivateKey, unlockedMnemonic, exportPassphraseInput, exportPassphraseConfirm, copyToClipboard]);
 
   // Revérifie le PIN (déchiffre réellement le keystore, ne compare aucun code
   // en clair — même principe que attemptUnlock) avant de révéler la phrase de
@@ -7614,23 +7655,52 @@ function AppContent({ themeMode, changeTheme }) {
                 </AnimPressable>
               )}
               {isUnlocked && !isDuressMode && (
-                <AnimPressable
-                  style={st.settings_row}
-                  onPress={() => showAlert(
-                    '⚠️ Keystore chiffré',
-                    "Ce fichier reste protégé par ton code PIN actuel — il ne sert à rien sans lui. Garde-le quand même en lieu sûr, distinct de ton PIN.",
-                    [
-                      { text: 'Annuler', style: 'cancel' },
-                      { text: 'Copier', onPress: exportEncryptedKeystore },
-                    ]
+                <>
+                  <AnimPressable
+                    style={st.settings_row}
+                    onPress={() => { setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); }}
+                  >
+                    <Text style={{ fontSize: 22 }}>🗄️</Text>
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
+                      <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par une phrase de passe dédiée</Text>
+                    </View>
+                  </AnimPressable>
+                  {showExportKeystore && (
+                    <View style={st.alert_form}>
+                      <Text style={{ color: T.text, fontSize: 13, marginBottom: 10 }}>
+                        Choisis une phrase de passe pour ce fichier — pas ton code PIN. Un PIN à 6 chiffres se
+                        devine en quelques heures une fois le fichier sorti de l'appareil ; une vraie phrase de
+                        passe, non.
+                      </Text>
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPassphraseInput}
+                        onChangeText={setExportPassphraseInput}
+                        placeholder="Phrase de passe (8+ caractères)"
+                        placeholderTextColor={T.text3}
+                        secureTextEntry
+                        autoCapitalize="none"
+                      />
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPassphraseConfirm}
+                        onChangeText={setExportPassphraseConfirm}
+                        placeholder="Confirme la phrase de passe"
+                        placeholderTextColor={T.text3}
+                        secureTextEntry
+                        autoCapitalize="none"
+                      />
+                      {!!exportPassphraseError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{exportPassphraseError}</Text>}
+                      <AnimPressable style={[st.green_btn, { opacity: exportPassphraseLoading ? 0.7 : 1 }]} onPress={confirmExportKeystore} disabled={exportPassphraseLoading}>
+                        {exportPassphraseLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Chiffrer et copier</Text>}
+                      </AnimPressable>
+                      <TouchableOpacity onPress={() => { setShowExportKeystore(false); setExportPassphraseInput(''); setExportPassphraseConfirm(''); }} style={{ marginTop: 10 }}>
+                        <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
-                >
-                  <Text style={{ fontSize: 22 }}>🗄️</Text>
-                  <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
-                    <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par ton PIN</Text>
-                  </View>
-                </AnimPressable>
+                </>
               )}
               {Platform.OS !== 'web' && biometricEnabled && (
                 <AnimPressable
