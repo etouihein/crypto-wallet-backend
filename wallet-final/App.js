@@ -305,7 +305,7 @@ const COIN_LOGOS = {
   solana:        'https://assets.coingecko.com/coins/images/4128/large/solana.png',
   tether:        'https://assets.coingecko.com/coins/images/325/large/Tether.png',
   cardano:       'https://assets.coingecko.com/coins/images/975/large/cardano.png',
-  'matic-network':'https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png',
+  'polygon-ecosystem-token':'https://coin-images.coingecko.com/coins/images/32440/large/pol.png',
   ripple:        'https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png',
   'usd-coin':    'https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png',
 };
@@ -326,7 +326,13 @@ const WALLET_TOKENS = {
   USDT: { name: 'Tether',   cgId: 'tether',        balance: 0,   icon: '💚', color: '#26A17B', logo: COIN_LOGOS.tether },
   USDC: { name: 'USD Coin', cgId: 'usd-coin',      balance: 0,   icon: '🟦', color: '#2775CA', logo: COIN_LOGOS['usd-coin'] },
   ADA:  { name: 'Cardano',  cgId: 'cardano',       balance: 0,   icon: '🔵', color: '#0033AD', logo: COIN_LOGOS.cardano, readOnly: true },
-  MATIC:{ name: 'Polygon',  cgId: 'matic-network', balance: 0,   icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['matic-network'] },
+  // cgId corrigé (2026-08-27) : 'matic-network' est l'ancien token, migré
+  // vers POL en 2024 (capitalisation tombée à $0, absent du top 50 -> le
+  // prix affiché ne se mettait plus JAMAIS à jour). 'polygon-ecosystem-token'
+  // est le vrai id CoinGecko de POL (ex-MATIC) aujourd'hui. Symbole gardé
+  // "MATIC" ici pour ne pas casser tout ce qui s'y réfère ailleurs (réseau,
+  // écran d'envoi...) — à rediscuter si on veut afficher "POL" partout.
+  MATIC:{ name: 'Polygon (POL)',  cgId: 'polygon-ecosystem-token', balance: 0,   icon: '🟪', color: '#8247E5', logo: COIN_LOGOS['polygon-ecosystem-token'] },
 };
 
 // Le wallet a une adresse EVM (0x...) et une adresse Solana (dérivée de la

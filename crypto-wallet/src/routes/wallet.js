@@ -288,11 +288,29 @@ const FALLBACK_MARKET_DATA = [
   { id: 'solana', symbol: 'SOL', name: 'Solana', current_price: 150, market_cap: 68000000000, price_change_percentage_24h: -0.6, image: 'https://assets.coingecko.com/coins/images/4128/large/solana.png' },
   { id: 'tether', symbol: 'USDT', name: 'Tether', current_price: 1, market_cap: 110000000000, price_change_percentage_24h: 0.1, image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png' },
   { id: 'cardano', symbol: 'ADA', name: 'Cardano', current_price: 0.65, market_cap: 23000000000, price_change_percentage_24h: -0.4, image: 'https://assets.coingecko.com/coins/images/975/large/cardano.png' },
-  { id: 'matic-network', symbol: 'MATIC', name: 'Polygon', current_price: 0.9, market_cap: 8500000000, price_change_percentage_24h: 0.2, image: 'https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png' },
+  { id: 'polygon-ecosystem-token', symbol: 'POL', name: 'POL (ex-MATIC)', current_price: 0.11, market_cap: 1100000000, price_change_percentage_24h: 0.2, image: 'https://coin-images.coingecko.com/coins/images/32440/large/pol.png' },
 ];
 
+// Ids qui doivent TOUJOURS apparaître dans /market, qu'ils soient ou non
+// dans le top ${limit} par capitalisation -- doit rester synchronisé à la
+// main avec WALLET_TOKENS dans wallet-final/App.js (mêmes tokens dont le
+// wallet a besoin du prix pour calculer les soldes en $). Ajouté après avoir
+// découvert en audit que 'polygon-ecosystem-token' (POL, ex-MATIC depuis la
+// migration de Polygon en 2024) est classé ~68e par capitalisation -- hors
+// du top 50 -- donc silencieusement absent de la réponse générale, ce qui
+// gelait le prix affiché de MATIC/POL côté client (jamais mis à jour).
+const ALWAYS_INCLUDED_COIN_IDS = [
+  'ethereum', 'bitcoin', 'binancecoin', 'solana', 'tether', 'usd-coin', 'cardano', 'polygon-ecosystem-token',
+];
+
+// 'x-api-key' n'est PAS le bon nom d'en-tête pour CoinGecko -- vérifié en
+// direct : CoinGecko l'ignore silencieusement (200 OK, requête traitée comme
+// anonyme, peu importe la valeur envoyée), alors que 'x-cg-demo-api-key'
+// (plan Demo gratuit, à récupérer sur coingecko.com/en/api) est bien reconnu
+// et validé (401 explicite si la clé est absente/invalide). Avec l'ancien
+// nom, une clé configurée dans .env/Railway n'aurait jamais eu d'effet.
 function coingeckoHeaders() {
-  return process.env.COINGECKO_API_KEY ? { 'x-api-key': process.env.COINGECKO_API_KEY } : {};
+  return process.env.COINGECKO_API_KEY ? { 'x-cg-demo-api-key': process.env.COINGECKO_API_KEY } : {};
 }
 
 // Cache mémoire partagé entre TOUS les appelants — sans lui, chaque client qui
@@ -314,6 +332,20 @@ async function cachedFetch(key, ttlMs, loader) {
 // marché large (façon Trust Wallet), pas juste les quelques tokens du wallet.
 // Les tokens du wallet (WALLET_TOKENS) sont de toute façon dans ce top N,
 // donc l'écran d'accueil continue de trouver ses prix dans la même réponse.
+function mapCoinGeckoMarketItem(item) {
+  return {
+    id: item.id,
+    symbol: item.symbol?.toUpperCase(),
+    name: item.name,
+    current_price: item.current_price,
+    market_cap: item.market_cap,
+    price_change_percentage_24h: item.price_change_percentage_24h,
+    price_change_percentage_7d: item.price_change_percentage_7d_in_currency,
+    price_change_percentage_30d: item.price_change_percentage_30d_in_currency,
+    image: item.image,
+  };
+}
+
 async function fetchCoinGeckoMarket(limit = 50) {
   return cachedFetch(`market:${limit}`, 30_000, async () => {
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h,7d,30d`;
@@ -321,17 +353,27 @@ async function fetchCoinGeckoMarket(limit = 50) {
       const response = await fetch(url, { headers: coingeckoHeaders() });
       if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
       const data = await response.json();
-      return data.map(item => ({
-        id: item.id,
-        symbol: item.symbol?.toUpperCase(),
-        name: item.name,
-        current_price: item.current_price,
-        market_cap: item.market_cap,
-        price_change_percentage_24h: item.price_change_percentage_24h,
-        price_change_percentage_7d: item.price_change_percentage_7d_in_currency,
-        price_change_percentage_30d: item.price_change_percentage_30d_in_currency,
-        image: item.image,
-      }));
+      const mapped = data.map(mapCoinGeckoMarketItem);
+
+      // Complète avec les ids garantis absents du top N (voir
+      // ALWAYS_INCLUDED_COIN_IDS) — un seul appel supplémentaire groupé,
+      // jamais un par id manquant.
+      const missingIds = ALWAYS_INCLUDED_COIN_IDS.filter(id => !mapped.some(t => t.id === id));
+      if (missingIds.length) {
+        try {
+          const extraUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${missingIds.join(',')}&sparkline=false&price_change_percentage=24h,7d,30d`;
+          const extraResponse = await fetch(extraUrl, { headers: coingeckoHeaders() });
+          if (extraResponse.ok) {
+            const extraData = await extraResponse.json();
+            mapped.push(...extraData.map(mapCoinGeckoMarketItem));
+          } else {
+            console.warn(`CoinGecko: impossible de récupérer les ids manquants (${missingIds.join(',')}), statut ${extraResponse.status}`);
+          }
+        } catch (extraError) {
+          console.warn('CoinGecko: appel complémentaire pour ids manquants échoué:', extraError.message);
+        }
+      }
+      return mapped;
     } catch (error) {
       console.warn('CoinGecko unavailable, using fallback market data:', error.message);
       return FALLBACK_MARKET_DATA;
