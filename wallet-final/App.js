@@ -1912,6 +1912,13 @@ function AppContent({ themeMode, changeTheme }) {
   const [importType, setImportType]       = useState('mnemonic');
   const [importError, setImportError]     = useState(null);
   const [importKeystorePassword, setImportKeystorePassword] = useState('');
+  // Saisie manuelle d'un code de parrainage sur l'écran d'accueil — complète
+  // la capture automatique du lien "?ref=" (voir captureRef plus bas) : un
+  // code entendu à l'oral ou vu sur une capture d'écran (Discord, etc.) n'a
+  // jamais de lien cliquable derrière, donc sans ce champ il était impossible
+  // à attribuer.
+  const [referralInputMode, setReferralInputMode] = useState(false);
+  const [referralInputValue, setReferralInputValue] = useState('');
   const [network, setNetwork]             = useState('ethereum');
   const [walletSession, setWalletSession] = useState(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -2074,7 +2081,7 @@ function AppContent({ themeMode, changeTheme }) {
   // que de laisser planter silencieusement, on retombe sur un copier-coller
   // du lien, avec un toast pour confirmer que quelque chose s'est bien passé.
   const shareApp = useCallback(async () => {
-    const shareUrl = 'https://nexiawallet.pages.dev';
+    const shareUrl = 'https://nexiawallet.com';
     const message = `NexiaWallet — portefeuille crypto non-custodial. Tes clés, tes cryptos. ${shareUrl}`;
     try {
       await Share.share({ title: 'NexiaWallet', message, url: shareUrl });
@@ -2092,7 +2099,7 @@ function AppContent({ themeMode, changeTheme }) {
 
   const shareReferralLink = useCallback(async () => {
     if (!referralCode) return;
-    const shareUrl = `https://nexiawallet.fr?ref=${referralCode}`;
+    const shareUrl = `https://nexiawallet.com?ref=${referralCode}`;
     const message = `Rejoins-moi sur NexiaWallet, mon portefeuille crypto non-custodial préféré : ${shareUrl}`;
     try {
       await Share.share({ title: 'NexiaWallet', message, url: shareUrl });
@@ -2100,6 +2107,20 @@ function AppContent({ themeMode, changeTheme }) {
       await copyToClipboard(shareUrl, 'Lien de parrainage copié');
     }
   }, [referralCode, copyToClipboard]);
+
+  // Saisie manuelle (voir referralInputMode plus haut) : même règle que la
+  // capture automatique via l'URL — saveReferredBy() n'écrase jamais une
+  // attribution déjà posée, donc entrer un code ici après avoir cliqué un
+  // lien de parrainage ne change rien (le premier code capté reste valide).
+  const applyReferralCode = useCallback(async (code) => {
+    const trimmed = (code || '').trim().toUpperCase();
+    if (!trimmed) return;
+    await saveReferredBy(trimmed);
+    setReferredByCode(prev => prev || trimmed);
+    setReferralInputMode(false);
+    setReferralInputValue('');
+    showToast('✓ Code de parrainage enregistré', 'success');
+  }, [showToast]);
 
   // Bip succès/échec via Web Audio API — web uniquement. Sur natif, la
   // vibration déjà en place (voir toggle "Sons et vibrations" dans
@@ -5300,6 +5321,31 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
             </View>
 
+            {!referredByCode && (
+              referralInputMode ? (
+                <View style={[st.import_card, { marginTop: 12 }]}>
+                  <TextInput
+                    style={st.import_input}
+                    value={referralInputValue}
+                    onChangeText={setReferralInputValue}
+                    placeholder="Code de parrainage (ex: A1B2C3D4)"
+                    placeholderTextColor={T.text3}
+                    autoCapitalize="characters"
+                  />
+                  <AnimPressable style={st.import_confirm_btn} onPress={() => applyReferralCode(referralInputValue)}>
+                    <Text style={st.green_btn_txt}>Valider le code</Text>
+                  </AnimPressable>
+                  <TouchableOpacity onPress={() => { setReferralInputMode(false); setReferralInputValue(''); }} style={{ marginTop: 10 }}>
+                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={() => setReferralInputMode(true)} style={{ marginTop: 12 }}>
+                  <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>J'ai un code de parrainage</Text>
+                </TouchableOpacity>
+              )
+            )}
+
             {importMode && (
               <View style={st.import_card}>
                 <View style={st.import_switch}>
@@ -6802,7 +6848,7 @@ function AppContent({ themeMode, changeTheme }) {
           </AnimPressable>
           <AnimPressable
             style={[st.green_btn, { marginTop: 10, backgroundColor: T.card2 }]}
-            onPress={() => referralCode && copyToClipboard(`https://nexiawallet.fr?ref=${referralCode}`, 'Lien copié')}
+            onPress={() => referralCode && copyToClipboard(`https://nexiawallet.com?ref=${referralCode}`, 'Lien copié')}
             disabled={!referralCode}
           >
             <Text style={[st.green_btn_txt, { color: T.text }]}>📋 Copier le lien</Text>
