@@ -1911,6 +1911,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [importValue, setImportValue]     = useState('');
   const [importType, setImportType]       = useState('mnemonic');
   const [importError, setImportError]     = useState(null);
+  const [importKeystorePassword, setImportKeystorePassword] = useState('');
   const [network, setNetwork]             = useState('ethereum');
   const [walletSession, setWalletSession] = useState(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -1923,6 +1924,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [addAccountValue, setAddAccountValue]   = useState('');
   const [addAccountType, setAddAccountType]     = useState('mnemonic');
   const [addAccountError, setAddAccountError]   = useState(null);
+  const [addAccountKeystorePassword, setAddAccountKeystorePassword] = useState('');
   const [accountRenameFor, setAccountRenameFor] = useState(null); // id du compte en cours de renommage, ou null
   const [accountRenameInput, setAccountRenameInput] = useState('');
   // WalletConnect (se connecter à des dApps tierces) — voir lib/walletconnect.js.
@@ -2545,14 +2547,28 @@ function AppContent({ themeMode, changeTheme }) {
   const importWallet = useCallback(async () => {
     try {
       setImportError(null);
-      if (!importValue.trim()) {
-        setImportError('Entrer une phrase mnémonique ou une clé privée.');
-        return false;
+      let imported;
+      if (importType === 'keystore') {
+        if (!importValue.trim() || !importKeystorePassword) {
+          setImportError('Colle le keystore JSON et son mot de passe.');
+          return false;
+        }
+        try {
+          imported = await localWallet.decryptWalletKeystore(importValue.trim(), importKeystorePassword);
+        } catch (err) {
+          setImportError('Keystore ou mot de passe invalide.');
+          return false;
+        }
+      } else {
+        if (!importValue.trim()) {
+          setImportError('Entrer une phrase mnémonique ou une clé privée.');
+          return false;
+        }
+        imported = localWallet.importLocalWallet(importValue, importType);
       }
-
-      const imported = localWallet.importLocalWallet(importValue, importType);
       setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, isImport: true, isMigration: false });
       setPinCode(''); setPendingPinDigits(''); setPinError(null);
+      setImportKeystorePassword('');
       setPinStage('choose');
       return true;
     } catch (err) {
@@ -2560,7 +2576,7 @@ function AppContent({ themeMode, changeTheme }) {
       setImportError(err.message || 'Mnémonique ou clé privée invalide.');
       return false;
     }
-  }, [importType, importValue]);
+  }, [importType, importValue, importKeystorePassword]);
 
   // Une fois le PIN choisi ET confirmé (deux saisies identiques), chiffre la
   // clé (+ mnémonique si dispo) avec ce PIN et persiste le résultat — c'est
@@ -2857,14 +2873,28 @@ function AppContent({ themeMode, changeTheme }) {
     createWallet(true);
   }, [createWallet]);
 
-  const addAccountImport = useCallback(() => {
+  const addAccountImport = useCallback(async () => {
     try {
       setAddAccountError(null);
-      if (!addAccountValue.trim()) {
-        setAddAccountError('Entrer une phrase mnémonique ou une clé privée.');
-        return;
+      let imported;
+      if (addAccountType === 'keystore') {
+        if (!addAccountValue.trim() || !addAccountKeystorePassword) {
+          setAddAccountError('Colle le keystore JSON et son mot de passe.');
+          return;
+        }
+        try {
+          imported = await localWallet.decryptWalletKeystore(addAccountValue.trim(), addAccountKeystorePassword);
+        } catch (err) {
+          setAddAccountError('Keystore ou mot de passe invalide.');
+          return;
+        }
+      } else {
+        if (!addAccountValue.trim()) {
+          setAddAccountError('Entrer une phrase mnémonique ou une clé privée.');
+          return;
+        }
+        imported = localWallet.importLocalWallet(addAccountValue, addAccountType);
       }
-      const imported = localWallet.importLocalWallet(addAccountValue, addAccountType);
       if (accounts.some(a => a.address.toLowerCase() === imported.address.toLowerCase())) {
         setAddAccountError('Ce wallet est déjà un compte sur cet appareil.');
         return;
@@ -2874,10 +2904,11 @@ function AppContent({ themeMode, changeTheme }) {
       setPinStage('choose');
       setShowAddAccount(false);
       setAddAccountValue('');
+      setAddAccountKeystorePassword('');
     } catch (err) {
-      setAddAccountError(err.message || 'Mnémonique ou clé privée invalide.');
+      setAddAccountError(err.message || 'Import invalide.');
     }
-  }, [addAccountValue, addAccountType, accounts]);
+  }, [addAccountValue, addAccountType, addAccountKeystorePassword, accounts]);
 
   // ── WalletConnect (mode wallet : se connecter à des dApps tierces) ──
   // Toute la logique protocolaire vit dans lib/walletconnect.js ; ici on ne
@@ -5278,16 +5309,30 @@ function AppContent({ themeMode, changeTheme }) {
                   <TouchableOpacity style={[st.import_type_btn, importType === 'privateKey' && st.import_type_btn_on]} onPress={() => setImportType('privateKey')}>
                     <Text style={[st.import_type_txt, importType === 'privateKey' && { color: T.text }]}>{'Clé privée'}</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity style={[st.import_type_btn, importType === 'keystore' && st.import_type_btn_on]} onPress={() => setImportType('keystore')}>
+                    <Text style={[st.import_type_txt, importType === 'keystore' && { color: T.text }]}>{'Keystore'}</Text>
+                  </TouchableOpacity>
                 </View>
                 <TextInput
                   style={st.import_input}
                   value={importValue}
                   onChangeText={setImportValue}
-                  placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : '0x... clé privée'}
+                  placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : importType === 'keystore' ? 'Colle le JSON du keystore chiffré...' : '0x... clé privée'}
                   placeholderTextColor={T.text3}
-                  multiline={importType === 'mnemonic'}
+                  multiline={importType === 'mnemonic' || importType === 'keystore'}
                   autoCapitalize="none"
                 />
+                {importType === 'keystore' && (
+                  <TextInput
+                    style={[st.import_input, { marginTop: 10 }]}
+                    value={importKeystorePassword}
+                    onChangeText={setImportKeystorePassword}
+                    placeholder="Mot de passe du keystore"
+                    placeholderTextColor={T.text3}
+                    secureTextEntry
+                    autoCapitalize="none"
+                  />
+                )}
                 {importError ? <Text style={st.import_error}>{importError}</Text> : null}
                 <AnimPressable style={st.import_confirm_btn} onPress={importWallet}>
                   <Text style={st.green_btn_txt}>Importer maintenant</Text>
@@ -7304,32 +7349,49 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8, textAlign: 'center' }}>— ou importer un wallet existant —</Text>
                   <View style={{ flexDirection: 'row', marginBottom: 10 }}>
                     <TouchableOpacity
-                      style={[st.import_type_btn, addAccountType === 'mnemonic' && st.import_type_btn_on, { flex: 1, marginRight: 8 }]}
+                      style={[st.import_type_btn, addAccountType === 'mnemonic' && st.import_type_btn_on, { flex: 1, marginRight: 6 }]}
                       onPress={() => setAddAccountType('mnemonic')}
                     >
                       <Text style={[st.import_type_txt, addAccountType === 'mnemonic' && { color: T.text }]}>Phrase (12 mots)</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[st.import_type_btn, addAccountType === 'privateKey' && st.import_type_btn_on, { flex: 1 }]}
+                      style={[st.import_type_btn, addAccountType === 'privateKey' && st.import_type_btn_on, { flex: 1, marginRight: 6 }]}
                       onPress={() => setAddAccountType('privateKey')}
                     >
                       <Text style={[st.import_type_txt, addAccountType === 'privateKey' && { color: T.text }]}>Clé privée</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[st.import_type_btn, addAccountType === 'keystore' && st.import_type_btn_on, { flex: 1 }]}
+                      onPress={() => setAddAccountType('keystore')}
+                    >
+                      <Text style={[st.import_type_txt, addAccountType === 'keystore' && { color: T.text }]}>Keystore</Text>
                     </TouchableOpacity>
                   </View>
                   <TextInput
                     style={[st.form_input, { marginBottom: 10 }]}
                     value={addAccountValue}
                     onChangeText={setAddAccountValue}
-                    placeholder={addAccountType === 'mnemonic' ? 'mot1 mot2 mot3 ...' : '0x...'}
+                    placeholder={addAccountType === 'mnemonic' ? 'mot1 mot2 mot3 ...' : addAccountType === 'keystore' ? 'Colle le JSON du keystore chiffré...' : '0x...'}
                     placeholderTextColor={T.text3}
                     autoCapitalize="none"
-                    multiline={addAccountType === 'mnemonic'}
+                    multiline={addAccountType === 'mnemonic' || addAccountType === 'keystore'}
                   />
+                  {addAccountType === 'keystore' && (
+                    <TextInput
+                      style={[st.form_input, { marginBottom: 10 }]}
+                      value={addAccountKeystorePassword}
+                      onChangeText={setAddAccountKeystorePassword}
+                      placeholder="Mot de passe du keystore"
+                      placeholderTextColor={T.text3}
+                      secureTextEntry
+                      autoCapitalize="none"
+                    />
+                  )}
                   {!!addAccountError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{addAccountError}</Text>}
                   <AnimPressable style={st.green_btn} onPress={addAccountImport}>
                     <Text style={st.green_btn_txt}>Importer</Text>
                   </AnimPressable>
-                  <TouchableOpacity onPress={() => { setShowAddAccount(false); setAddAccountValue(''); setAddAccountError(null); }} style={{ marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => { setShowAddAccount(false); setAddAccountValue(''); setAddAccountKeystorePassword(''); setAddAccountError(null); }} style={{ marginTop: 10 }}>
                     <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
                   </TouchableOpacity>
                 </View>
