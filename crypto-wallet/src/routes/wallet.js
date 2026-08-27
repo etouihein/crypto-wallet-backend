@@ -530,7 +530,17 @@ router.get('/news', async (req, res) => {
 // Historique des transactions — Etherscan API v2 (une seule clé couvre
 // Ethereum ET BSC depuis leur unification multichain). Clé côté serveur
 // uniquement : jamais exposée au client, comme pour CoinGecko/MoonPay.
-const ETHERSCAN_CHAIN_IDS = { ethereum: 1, bsc: 56 };
+// Etherscan v2 est une API unifiée : UNE seule clé couvre toutes ces chaînes
+// (plus besoin d'une clé Polygonscan/Arbiscan/etc. séparée). Trouvé en audit
+// (2026-08-28) : arbitrum/optimism/base/polygon manquaient ici -- un
+// utilisateur sur l'un de ces réseaux retombait silencieusement sur
+// ETHERSCAN_CHAIN_IDS.ethereum (chainid=1) et voyait donc l'historique
+// ETHEREUM de son adresse à la place du vrai historique de son réseau actif
+// (même adresse EVM sur toutes les chaînes -> aucune erreur, juste des
+// données trompeuses). Vérifié directement contre l'API v2 : les 4 chainid
+// ajoutés sont bien reconnus (erreur "clé invalide", pas "chainid non
+// supporté", avec un jeton bidon).
+const ETHERSCAN_CHAIN_IDS = { ethereum: 1, bsc: 56, polygon: 137, arbitrum: 42161, optimism: 10, base: 8453 };
 
 async function fetchEtherscan(params) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -569,7 +579,11 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
     const nativeItems = native.map(tx => ({
       hash: tx.hash,
       type: 'native',
-      symbol: normalizeNetwork(network) === 'bsc' ? 'BNB' : 'ETH',
+      // Même bug que ETHERSCAN_CHAIN_IDS ci-dessus : un ternaire bsc/ETH
+      // codait en dur "ETH" pour Polygon aussi, alors que son token natif
+      // est MATIC/POL -- utilise la config réseau déjà correcte partout
+      // ailleurs dans ce fichier plutôt qu'une deuxième liste à maintenir.
+      symbol: getNetworkConfig(network).nativeSymbol,
       direction: tx.from?.toLowerCase() === addrLower ? 'out' : 'in',
       amount: ethers.utils.formatEther(tx.value || '0'),
       timestamp: Number(tx.timeStamp) * 1000,
