@@ -285,7 +285,7 @@ const LANDING_FAQ = [
   },
   {
     q: 'Quels réseaux sont supportés ?',
-    a: 'Ethereum Mainnet et BNB Smart Chain pour le moment, avec ETH, BNB, USDT et USDC actifs (solde, envoi, réception). D\'autres tokens peuvent être ajoutés en lecture seule par adresse de contrat.',
+    a: 'Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism et Base côté EVM, plus Solana et Bitcoin en natif — solde, envoi et réception sur les huit. D\'autres tokens ERC20 peuvent être ajoutés en lecture seule par adresse de contrat.',
   },
   {
     q: "J'ai perdu mon téléphone, comment je récupère mon wallet ?",
@@ -293,7 +293,7 @@ const LANDING_FAQ = [
   },
   {
     q: 'Le swap et l\'achat par carte sont-ils sûrs ?',
-    a: "L'achat par carte passe par MoonPay, un prestataire de paiement tiers réglementé. Le swap passe par l'agrégateur DEX 0x pour trouver le meilleur prix, mais la signature de la transaction reste 100% locale sur ton appareil, comme un envoi classique.",
+    a: "L'achat par carte passe par Coinbase Onramp — la crypto est livrée directement sur l'adresse de ton wallet, jamais sur un compte tiers. Le swap passe par l'agrégateur DEX 0x pour trouver le meilleur prix, mais la signature de la transaction reste 100% locale sur ton appareil, comme un envoi classique.",
   },
 ];
 
@@ -5202,7 +5202,7 @@ function AppContent({ themeMode, changeTheme }) {
           {/* ── STATS ── */}
           <View style={st.land_stats_wrap}>
             <CountStat value={supportedCount} label="Cryptos suivies" style={isWideWeb && st.land_stat_wide} />
-            <CountStat value={2} label="Réseaux (ETH + BSC)" style={isWideWeb && st.land_stat_wide} />
+            <CountStat value={8} label="Réseaux (EVM, Solana, Bitcoin)" style={isWideWeb && st.land_stat_wide} />
             <CountStat value={100} suffix="%" label="Non-custodial" style={isWideWeb && st.land_stat_wide} />
             <CountStat value={0} label="Donnée revendue" style={isWideWeb && st.land_stat_wide} />
           </View>
@@ -7828,7 +7828,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>📱</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>NexiaWallet</Text>
-              <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • Ethereum + BSC</Text>
+              <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • EVM + Solana + Bitcoin</Text>
             </View>
           </View>
           <AnimPressable style={st.settings_row} onPress={shareApp}>
