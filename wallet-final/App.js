@@ -2096,20 +2096,21 @@ function AppContent({ themeMode, changeTheme }) {
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
-  // Barre du bas qui se rétracte en scrollant vers le bas et réapparaît vers
-  // le haut (ou tout en haut de la liste) — même geste que la plupart des
-  // apps mobiles grand public. `navBarAnim` (0=visible, 1=masquée) piloté à
-  // la main plutôt que par Animated.event : il faut lire la DIRECTION du
-  // scroll (delta avec la position précédente), pas juste sa valeur brute.
-  // Déclaré ici (avec les autres hooks, avant tout `return` conditionnel de
-  // AppContent) plutôt que près de son usage dans navItems/bottom_nav plus
-  // bas dans le fichier -- sinon ce hook ne s'exécute que sur les rendus qui
-  // atteignent cette portion (wallet déverrouillé), pas sur les écrans PIN/
-  // onboarding qui rendent AVANT, ce qui viole les Rules of Hooks ("Rendered
-  // more hooks than during the previous render", vu en testant ce jour).
+  // Barre du bas qui se réduit en scrollant vers le bas et redevient
+  // complète vers le haut (ou tout en haut de la liste). PAS un simple
+  // `scale` du même bloc (essayé d'abord, jugé "moche" par Pablo — le
+  // texte/les icônes rapetissés restent tous là, juste plus petits) : ici
+  // c'est un VRAI changement de contenu, deux blocs distincts en fondu
+  // croisé -- la barre complète, remplacée par une seule icône ronde
+  // "Accueil" ancrée à GAUCHE. `navCollapsed` (state, pas juste une
+  // Animated.Value) parce qu'il faut basculer entre deux arbres JSX
+  // différents, pas juste interpoler un style. Déclaré ici (avec les
+  // autres hooks, avant tout `return` conditionnel de AppContent) --
+  // voir le hooks-order bug rencontré plus tôt le même jour.
   const navBarAnim = useRef(new Animated.Value(0)).current;
   const lastScrollYRef = useRef(0);
   const navBarHiddenRef = useRef(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const handleTabScroll = useCallback((e) => {
     const y = e.nativeEvent.contentOffset.y;
     const delta = y - lastScrollYRef.current;
@@ -2118,9 +2119,11 @@ function AppContent({ themeMode, changeTheme }) {
     const shouldShow = delta < -4 || y <= 60;
     if (shouldHide && !navBarHiddenRef.current) {
       navBarHiddenRef.current = true;
+      setNavCollapsed(true);
       Animated.timing(navBarAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
     } else if (shouldShow && navBarHiddenRef.current) {
       navBarHiddenRef.current = false;
+      setNavCollapsed(false);
       Animated.timing(navBarAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     }
   }, [navBarAnim]);
@@ -8700,19 +8703,21 @@ function AppContent({ themeMode, changeTheme }) {
       ) : (
         <>
           {tabContent}
-          {/* Au scroll vers le bas, la barre ne disparaît JAMAIS complètement —
-              elle se réduit et glisse vers le bord droit (toujours visible,
-              toujours tapable), plutôt qu'un fondu qui la fait disparaître. */}
+          {/* Deux blocs distincts en fondu croisé (pas un `scale` du même
+              contenu — essayé d'abord, jugé "moche" : les icônes/texte
+              rétrécis restaient tous là, juste plus petits). Au scroll vers
+              le bas : la barre complète s'efface, seule une icône ronde
+              "Accueil" ancrée à GAUCHE reste — tout le reste (Marché, Stats,
+              Découvrir, Swap) disparaît complètement, pas juste réduit. */}
           <Animated.View
             style={[
               st.bottom_nav_float,
               {
-                transform: [
-                  { translateX: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 96] }) },
-                  { scale: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.62] }) },
-                ],
+                opacity: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                transform: [{ scale: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.9] }) }],
               },
             ]}
+            pointerEvents={navCollapsed ? 'none' : 'auto'}
           >
           <View style={st.bottom_nav}>
             {navItems.map(n => (
@@ -8740,6 +8745,21 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
             ))}
           </View>
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              st.nav_mini_float,
+              {
+                opacity: navBarAnim,
+                transform: [{ scale: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
+              },
+            ]}
+            pointerEvents={navCollapsed ? 'auto' : 'none'}
+          >
+            <AnimPressable style={st.nav_mini_btn} scaleTo={0.9} onPress={() => setTab('home')} accessibilityRole="button" accessibilityLabel={t('nav_home')}>
+              <Ionicons name="home" size={20} color={tab === 'home' ? T.gold : T.text2} />
+            </AnimPressable>
           </Animated.View>
         </>
       )}
@@ -9106,6 +9126,15 @@ function buildSt(T) {
   // arrondis + ombre) — c'est cette View qui est animée (masquage au scroll),
   // `bottom_nav` reste la pilule elle-même à l'intérieur.
   bottom_nav_float: { marginHorizontal: 14, marginBottom: 10 },
+  // État "réduit" de la barre au scroll — une seule icône ronde ancrée en
+  // BAS À GAUCHE (pas la même position que la barre complète, qui est
+  // centrée) : un vrai bouton flottant séparé, pas le même bloc rétréci.
+  nav_mini_float: { position: 'absolute', left: 14, bottom: 10 },
+  nav_mini_btn: {
+    width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: T.card, borderWidth: 1, borderColor: T.borderSoft,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.14, shadowRadius: 14, elevation: 8,
+  },
   bottom_nav:  { flexDirection: 'row', height: 60, backgroundColor: T.card, borderRadius: 30, alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 8, borderWidth: 1, borderColor: T.borderSoft },
   nav_item:    { flex: 1, alignItems: 'center', justifyContent: 'center', height: '100%' },
   nav_item_big:{ flex: 1.2 },
