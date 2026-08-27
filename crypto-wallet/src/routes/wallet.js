@@ -990,9 +990,12 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
     if (!amountCrypto || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
     }
-    if (PAYMENT_PROVIDER !== 'moonpay') {
-      return res.status(503).json({ success: false, error: 'La vente n’est disponible que via MoonPay pour l’instant.' });
-    }
+    // Vendre reste TOUJOURS via MoonPay (Coinbase Onramp ne fait que l'achat),
+    // donc gate uniquement sur la présence de sa propre clé -- pas sur
+    // PAYMENT_PROVIDER (qui ne concerne que l'achat, voir plus haut). Trouvé
+    // cassé en audit (2026-08-28) : ce garde-fou bloquait TOUTE vente en 503
+    // depuis le passage de PAYMENT_PROVIDER à 'coinbase' le 2026-08-21, alors
+    // que MOONPAY_API_KEY/SECRET_KEY sont restées configurées et valides.
     if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
       return res.status(503).json({ success: false, error: 'MoonPay non configuré (clé API/secrète manquante dans .env).' });
     }
