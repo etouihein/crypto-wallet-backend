@@ -8185,6 +8185,32 @@ function AppContent({ themeMode, changeTheme }) {
         </>
       )}
 
+      {!!newsItems.length && (
+        <View style={{ marginTop: 20 }}>
+          <View style={st.section_hdr}>
+            <SectionTitle>Actu crypto en direct</SectionTitle>
+            <Text style={st.section_sub}>MAJ / 5 min</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
+            {newsItems.slice(0, 10).map((item, i) => (
+              <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+                {item.image ? (
+                  <Image source={{ uri: item.image }} style={st.news_img} />
+                ) : (
+                  <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ fontSize: 30 }}>📰</Text>
+                  </View>
+                )}
+                <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
+                <Text style={st.news_date}>
+                  {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                </Text>
+              </AnimPressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       <View style={{ height: 90 }} />
     </ScrollView>
   );
@@ -8674,15 +8700,19 @@ function AppContent({ themeMode, changeTheme }) {
       ) : (
         <>
           {tabContent}
+          {/* Au scroll vers le bas, la barre ne disparaît JAMAIS complètement —
+              elle se réduit et glisse vers le bord droit (toujours visible,
+              toujours tapable), plutôt qu'un fondu qui la fait disparaître. */}
           <Animated.View
             style={[
               st.bottom_nav_float,
               {
-                opacity: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
-                transform: [{ translateY: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 24] }) }],
+                transform: [
+                  { translateX: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 96] }) },
+                  { scale: navBarAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.62] }) },
+                ],
               },
             ]}
-            pointerEvents={navBarHiddenRef.current ? 'none' : 'auto'}
           >
           <View style={st.bottom_nav}>
             {navItems.map(n => (
