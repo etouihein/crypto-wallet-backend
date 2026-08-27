@@ -2608,7 +2608,12 @@ function AppContent({ themeMode, changeTheme }) {
       setIsUnlocked(true);
       if (!pendingWalletForPin.isImport && !pendingWalletForPin.isMigration) {
         setPendingMnemonic(pendingWalletForPin.mnemonic);
-        setIsFirstTimeMnemonicBackup(true);
+        // Seul le tout premier wallet de l'appareil déclenche l'onboarding —
+        // un compte additionnel ("+ Ajouter un compte") affiche sa phrase de
+        // récupération mais ne doit pas rejouer les 3 slides d'intro.
+        if (!pendingWalletForPin.isNewAccount) {
+          setIsFirstTimeMnemonicBackup(true);
+        }
       }
       if (pendingWalletForPin.isImport) { setImportMode(false); setImportValue(''); }
       await refreshPortfolio(network);
@@ -2734,48 +2739,6 @@ function AppContent({ themeMode, changeTheme }) {
     }
   }, [network, refreshPortfolio]);
 
-  // Efface le wallet de cet appareil (clé privée comprise). Irréversible sans
-  // la phrase de récupération — d'où la double confirmation appuyée.
-  const handleLogout = useCallback(() => {
-    const multi = accounts.length > 1;
-    showAlert(
-      '⚠️ Déconnexion',
-      multi
-        ? `Ça efface les ${accounts.length} comptes de cet appareil. Sans leurs phrases de récupération notées ailleurs, tu ne pourras PAS les récupérer.`
-        : 'Ça efface le wallet de cet appareil. Sans ta phrase de récupération notée ailleurs, tu ne pourras PAS le récupérer.',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Déconnecter',
-          onPress: async () => {
-            await clearWalletSession();
-            await clearAccountsList();
-            await clearActiveAccountId();
-            await clearBiometricPin();
-            setBiometricEnabled(false);
-            setWalletSession(null);
-            setWalletAddr('');
-            setWalletBalance('0');
-            setWalletCreated(false);
-            setBackendReady(false);
-            setIsUnlocked(false);
-            setIsDuressMode(false);
-            setShowSettings(false);
-            setUnlockedPrivateKey(null);
-            setUnlockedMnemonic(null);
-            setPinStage(null);
-            setPendingWalletForPin(null);
-            setPendingPinDigits('');
-            setPinError(null);
-            setAccounts([]);
-            setActiveAccountId(null);
-            setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
-          },
-        },
-      ]
-    );
-  }, [accounts]);
-
   // Bascule vers un autre compte déjà connu de cet appareil : on charge sa
   // session (adresse + keystore chiffré) mais on ne déchiffre RIEN — comme au
   // lancement de l'app, il faut retaper le PIN de CE compte pour le
@@ -2812,32 +2775,77 @@ function AppContent({ themeMode, changeTheme }) {
     await saveAccountsList(next);
   }, [accounts]);
 
-  // Suppression d'un compte : jamais celui actif (il faut d'abord basculer
-  // ailleurs — évite de supprimer une clé actuellement déchiffrée en
-  // mémoire), jamais le dernier restant (sinon l'appareil se retrouve sans
-  // wallet du tout sans passer par le vrai flux de "Déconnexion").
+  // Suppression d'un compte, à la Trust Wallet : n'importe quel compte de la
+  // liste se supprime directement, y compris celui actif — pas de détour
+  // obligatoire par "bascule d'abord". S'il reste un autre compte, on
+  // bascule dessus (PIN à retaper, comme switchAccount, jamais de clé
+  // déchiffrée conservée en mémoire pour un compte qui vient d'être
+  // supprimé). Si c'était le dernier compte, ça efface l'appareil entier —
+  // Trust Wallet n'a pas de bouton "tout effacer" séparé, seulement la
+  // suppression individuelle qui peut aller jusqu'à zéro compte.
   const deleteAccount = useCallback((id) => {
-    if (accounts.length <= 1) return;
-    if (id === activeAccountId) {
-      showAlert('Compte actif', "Bascule d'abord vers un autre compte avant de supprimer celui-ci.");
-      return;
-    }
     const target = accounts.find(a => a.id === id);
+    const isLast = accounts.length <= 1;
     showAlert(
-      'Supprimer ce compte ?',
-      `${target?.label || 'Ce compte'} sera retiré de cet appareil. Sans sa phrase de récupération notée ailleurs, il sera perdu définitivement.`,
+      isLast ? '⚠️ Supprimer ce compte' : 'Supprimer ce compte ?',
+      isLast
+        ? "C'est ton dernier compte sur cet appareil : le supprimer efface le wallet entièrement. Sans ta phrase de récupération notée ailleurs, tu ne pourras PAS le récupérer."
+        : `${target?.label || 'Ce compte'} sera retiré de cet appareil. Sans sa phrase de récupération notée ailleurs, il sera perdu définitivement.`,
       [
         { text: 'Annuler', style: 'cancel' },
         {
           text: 'Supprimer', style: 'destructive', onPress: async () => {
+            if (isLast) {
+              await clearWalletSession();
+              await clearAccountsList();
+              await clearActiveAccountId();
+              await clearBiometricPin();
+              setBiometricEnabled(false);
+              setWalletSession(null);
+              setWalletAddr('');
+              setWalletBalance('0');
+              setWalletCreated(false);
+              setBackendReady(false);
+              setIsUnlocked(false);
+              setIsDuressMode(false);
+              setShowSettings(false);
+              setUnlockedPrivateKey(null);
+              setUnlockedMnemonic(null);
+              setPinStage(null);
+              setPendingWalletForPin(null);
+              setPendingPinDigits('');
+              setPinError(null);
+              setAccounts([]);
+              setActiveAccountId(null);
+              setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
+              return;
+            }
             const next = accounts.filter(a => a.id !== id);
             setAccounts(next);
             await saveAccountsList(next);
+            if (id === activeAccountId) {
+              const fallback = next[0];
+              const session = { address: fallback.address, encryptedKeystore: fallback.encryptedKeystore, network: fallback.network || network, createdAt: fallback.createdAt };
+              await saveActiveAccountId(fallback.id);
+              await saveWalletSession(session);
+              setActiveAccountId(fallback.id);
+              setWalletSession(session);
+              setWalletAddr(fallback.address);
+              setWalletBalance('0');
+              setNetwork(session.network);
+              setUnlockedPrivateKey(null);
+              setUnlockedMnemonic(null);
+              setIsUnlocked(false);
+              setIsDuressMode(false);
+              setPinCode('');
+              setPinError(null);
+              setHistoryItems(null);
+            }
           },
         },
       ]
     );
-  }, [accounts, activeAccountId]);
+  }, [accounts, activeAccountId, network]);
 
   // "+ Ajouter un compte" — deux entrées possibles, toutes deux réutilisent
   // le flux PIN existant (createWallet/pendingWalletForPin) : la nouvelle
@@ -5253,7 +5261,7 @@ function AppContent({ themeMode, changeTheme }) {
             )}
 
             <View style={st.land_cta_actions}>
-              <AnimPressable style={st.land_cta_btn_primary} onPress={createWallet}>
+              <AnimPressable style={st.land_cta_btn_primary} onPress={() => createWallet()}>
                 <Text style={st.land_cta_btn_primary_txt}>{t('onboarding_create')}</Text>
               </AnimPressable>
               <AnimPressable style={st.land_cta_btn_ghost} onPress={() => { setImportMode(true); setImportError(null); }}>
@@ -7255,15 +7263,13 @@ function AppContent({ themeMode, changeTheme }) {
                     <TouchableOpacity
                       onPress={() => { setAccountRenameFor(acc.id); setAccountRenameInput(acc.label); }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{ marginRight: accounts.length > 1 && acc.id !== activeAccountId ? 16 : 0 }}
+                      style={{ marginRight: 16 }}
                     >
                       <Text style={{ fontSize: 16 }}>✏️</Text>
                     </TouchableOpacity>
-                    {accounts.length > 1 && acc.id !== activeAccountId && (
-                      <TouchableOpacity onPress={() => deleteAccount(acc.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity onPress={() => deleteAccount(acc.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+                    </TouchableOpacity>
                   </AnimPressable>
                   {accountRenameFor === acc.id && (
                     <View style={[st.alert_form, { marginTop: -4, marginBottom: 10 }]}>
@@ -7559,13 +7565,6 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={st.settings_row_sub}>
                     {duressPinConfigured ? 'Activé — appuie pour désactiver' : "Affiche un wallet vide si on te force à l'ouvrir"}
                   </Text>
-                </View>
-              </AnimPressable>
-              <AnimPressable style={st.settings_row} onPress={handleLogout}>
-                <Text style={{ fontSize: 22 }}>🚪</Text>
-                <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={[st.settings_row_title, { color: T.red }]}>{t('settings_logout')}</Text>
-                  <Text style={st.settings_row_sub}>{t('settings_logout_sub')}</Text>
                 </View>
               </AnimPressable>
             </>
