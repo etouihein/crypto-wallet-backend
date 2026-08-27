@@ -8086,7 +8086,7 @@ function AppContent({ themeMode, changeTheme }) {
             {favoriteMarketCoins.map((coin, i) => {
               const sym = coin.symbol?.toUpperCase() || '';
               return (
-                <FadeInView key={coin.id} deps={[coin.id]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
+                <FadeInView key={coin.id} deps={[coin.id]} style={[st.token_row, isWideWeb && st.token_row_wide]}>
                   <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} scaleTo={0.98} onPress={() => setSelectedMarketCoin(coin)}>
                     <CoinLogo logo={coin.image} icon="🪙" size={44} />
                     <View style={{ flex: 1, marginLeft: 12 }}>
@@ -8098,7 +8098,7 @@ function AppContent({ themeMode, changeTheme }) {
                     </View>
                   </AnimPressable>
                   <TouchableOpacity
-                    style={st.market_card_fav}
+                    style={st.token_row_fav}
                     onPress={() => toggleFavorite(sym)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
@@ -8124,7 +8124,7 @@ function AppContent({ themeMode, changeTheme }) {
           const val = (t.balance || 0) * (t.price || 0);
           const isFav = favorites.includes(sym);
           return (
-            <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide, { position: 'relative' }]}>
+            <FadeInView key={sym} deps={[sym]} style={[st.token_row, isWideWeb && st.token_row_wide]}>
               <AnimPressable
                 style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
                 scaleTo={0.98}
@@ -8151,7 +8151,7 @@ function AppContent({ themeMode, changeTheme }) {
                 </View>
               </AnimPressable>
               <TouchableOpacity
-                style={st.market_card_fav}
+                style={st.token_row_fav}
                 onPress={() => toggleFavorite(sym)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
@@ -8918,6 +8918,12 @@ function buildSt(T) {
     marginHorizontal: 14, marginBottom: 10, backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.border,
     shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
   },
+  // Étoile favori sur une LIGNE (Accueil "Mes tokens"/"Favoris") : simple
+  // enfant du flex-row `token_row`, PAS en position absolue comme
+  // `market_card_fav` (pensé pour les cartes du Marché, sans colonne de
+  // valeur alignée à droite) — en absolu ici, l'étoile se superposait
+  // exactement au montant en $ affiché tout à droite de la ligne.
+  token_row_fav: { padding: 6, marginLeft: 2 },
   token_grid:     { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 6 },
   skeleton_block: { backgroundColor: T.card2 },
   token_row_wide: { width: '32%', marginHorizontal: '0.66%' },
