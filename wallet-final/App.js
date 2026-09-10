@@ -5157,368 +5157,148 @@ function AppContent({ themeMode, changeTheme }) {
   //  ACCUEIL PUBLIC (pas encore de wallet sur cet appareil)
   // ════════════════════════════════════════════════════════
   if (!walletCreated) {
-    const supportedCount = Object.keys(WALLET_TOKENS).length;
-    const heroEyebrow = (
-      <View style={st.land_eyebrow}>
-        <View style={st.land_eyebrow_dot} />
-        <Text style={st.land_eyebrow_txt}>WALLET NOUVELLE GÉNÉRATION</Text>
-      </View>
-    );
-    const heroTitle = (
-      <Text style={[st.land_title, isWideWeb && st.land_title_wide]}>
-        Ta crypto,{'\n'}
-        <Text style={st.land_title_grad}>en orbite totale.</Text>
-      </Text>
-    );
-    const heroSubtitle = (
-      <Text style={[st.land_subtitle, isWideWeb && st.land_subtitle_wide]}>
-        NexiaWallet réunit tes actifs dans une interface pensée pour la vitesse : reçois,
-        envoie et échange en quelques secondes, avec tes clés sous ton seul contrôle.
-      </Text>
-    );
+    // Palette claire et épurée, indépendante du thème (l'accueil est public,
+    // vu avant tout choix de thème). Accent vert = positif, pas le violet
+    // "startup IA". Volontairement minimal : marque, phrase, bouton, 3 repères.
+    const L = {
+      bg: '#FFFFFF',
+      text: '#0B1215',
+      soft: '#5B6672',
+      accent: '#10B981',
+      chip: '#F2F5F7',
+      border: '#E4E9EC',
+    };
+    const impInput = { borderWidth: 1, borderColor: L.border, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 12, fontSize: 14, color: L.text, backgroundColor: '#fff', minHeight: 46 };
+    const primaryBtn = { backgroundColor: L.accent, borderRadius: 16, paddingVertical: 17, alignItems: 'center', width: '100%' };
     return (
-      <SafeAreaView style={[st.land_screen, isWideWeb && st.land_screen_wide]}>
-        <StatusBar barStyle="light-content" />
-        <StarField />
-        <ScrollView style={st.land_scroll_flex} contentContainerStyle={st.land_scroll} showsVerticalScrollIndicator={false}>
+      <SafeAreaView style={[st.land_screen, { backgroundColor: L.bg }, isWideWeb && st.land_screen_wide]}>
+        <StatusBar barStyle="dark-content" />
+        <ScrollView style={st.land_scroll_flex} contentContainerStyle={{ paddingBottom: 40, alignItems: 'center' }} showsVerticalScrollIndicator={false}>
+          <View style={{ width: '100%', maxWidth: 420, paddingHorizontal: 24, paddingTop: 30, alignItems: 'center' }}>
 
-          {/* ── HERO ── */}
-          <FadeInView style={[st.land_hero, isWideWeb && st.land_hero_wide]} deps={[]}>
-            {isWideWeb ? (
-              <View style={st.land_hero_row}>
-                <View style={st.land_hero_col_text}>
-                  {heroEyebrow}
-                  {heroTitle}
-                  {heroSubtitle}
-                </View>
-                <View style={st.land_hero_col_visual}>
-                  <OrbitHero />
-                </View>
+            {/* Marque */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 44 }}>
+              <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: L.accent, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Text style={{ fontSize: 17 }}>🛡️</Text>
               </View>
-            ) : (
-              <>
-                {heroEyebrow}
-                <OrbitHero />
-                {heroTitle}
-                {heroSubtitle}
-              </>
-            )}
-          </FadeInView>
-
-          <PriceMarquee tokens={tokens} />
-
-          {/* ── FONCTIONNALITÉS ── */}
-          <View style={st.land_section}>
-            <Text style={st.land_section_eyebrow}>FONCTIONNALITÉS</Text>
-            <Text style={st.land_section_title}>Tout ton univers crypto,{'\n'}un seul wallet.</Text>
-            <View style={[st.land_features_grid, isWideWeb && st.land_features_grid_wide]}>
-              <FeatureCard
-                icon="⚡"
-                title="Échanges instantanés"
-                desc="Swap ETH, BNB, USDT et USDC directement dans l'app, au meilleur taux, sans quitter ton wallet."
-                style={isWideWeb && st.land_feature_card_wide}
-              />
-              <FeatureCard
-                icon="🛡️"
-                title="Tes clés, tes cryptos"
-                desc="Wallet non-custodial : NexiaWallet ne détient et ne contrôle jamais tes fonds. Ta phrase de récupération est la seule clé de ton wallet."
-                style={isWideWeb && st.land_feature_card_wide}
-              />
-              <FeatureCard
-                icon="📈"
-                title="Suivi en temps réel"
-                desc="Visualise ton portefeuille en direct : graphiques, prix à jour et historique complet de tes transactions."
-                style={isWideWeb && st.land_feature_card_wide}
-              />
+              <Text style={{ fontSize: 17, fontWeight: '800', color: L.text }}>NexiaWallet</Text>
             </View>
-          </View>
 
-          {/* ── SÉCURITÉ ── */}
-          <View style={st.land_section}>
-            <Text style={st.land_section_eyebrow}>SÉCURITÉ</Text>
-            <Text style={st.land_section_title}>Un coffre-fort{'\n'}à toute épreuve.</Text>
-            {(() => {
-              const checklist = (
-                <View style={[st.land_checklist, !isWideWeb && st.land_narrow_wide, isWideWeb && { flex: 1 }]}>
-                  {[
-                    ['Aucune clé transmise', "Ta clé privée et ta phrase de récupération ne quittent jamais cet appareil."],
-                    ['Code PIN à chaque ouverture', 'Chaque déverrouillage et chaque transaction sensible demande ta validation.'],
-                    ['Phrase de récupération', "Restaure ton wallet n'importe où grâce à tes mots secrets — à noter hors ligne."],
-                    ['Aucune donnée collectée', 'Pas de tracking, pas de compte obligatoire, pas de compromis.'],
-                  ].map(([title, desc]) => (
-                    <View key={title} style={st.land_check_row}>
-                      <View style={st.land_check_bullet}><Text style={{ color: T.cyan, fontSize: 12, fontWeight: 'bold' }}>✓</Text></View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={st.land_check_title}>{title}</Text>
-                        <Text style={st.land_check_desc}>{desc}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              );
-              return isWideWeb ? (
-                <View style={st.land_security_split}>
-                  {checklist}
-                  <View style={st.land_security_visual}><SecurityOrb size={240} /></View>
-                </View>
-              ) : (
-                <>
-                  <View style={{ alignItems: 'center', marginBottom: 24 }}><SecurityOrb size={160} /></View>
-                  {checklist}
-                </>
-              );
-            })()}
-          </View>
+            {/* Accroche */}
+            <Text style={{ fontSize: 30, lineHeight: 38, fontWeight: '800', color: L.text, textAlign: 'center' }}>
+              Tes cryptos,{'\n'}<Text style={{ color: L.accent }}>simplement.</Text>
+            </Text>
+            <Text style={{ fontSize: 15, lineHeight: 22, color: L.soft, textAlign: 'center', marginTop: 14, maxWidth: 300 }}>
+              Achète, envoie et échange. Tes clés restent sur ton téléphone.
+            </Text>
 
-          {/* ── STATS ── */}
-          <View style={st.land_stats_wrap}>
-            <CountStat value={supportedCount} label="Cryptos suivies" style={isWideWeb && st.land_stat_wide} />
-            <CountStat value={8} label="Réseaux (EVM, Solana, Bitcoin)" style={isWideWeb && st.land_stat_wide} />
-            <CountStat value={100} suffix="%" label="Non-custodial" style={isWideWeb && st.land_stat_wide} />
-            <CountStat value={0} label="Donnée revendue" style={isWideWeb && st.land_stat_wide} />
-          </View>
-
-          {/* ── COMPARATIF ── */}
-          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
-            <Text style={st.land_section_eyebrow}>LA DIFFÉRENCE</Text>
-            <Text style={st.land_section_title}>Pas un exchange{'\n'}comme les autres.</Text>
-            <View style={st.compare_table}>
-              <View style={st.compare_row}>
-                <View style={{ flex: 1.4 }} />
-                <Text style={[st.compare_head, { flex: 1 }]}>NexiaWallet</Text>
-                <Text style={[st.compare_head, { flex: 1, color: T.text3 }]}>Exchange classique</Text>
-              </View>
-              {[
-                ['Qui détient tes clés ?', 'Toi, uniquement', "La plateforme"],
-                ['Compte / KYC obligatoire', 'Non', 'Souvent oui'],
-                ['Risque si la plateforme est piratée', 'Aucun — rien à voler ici', 'Tes fonds peuvent être perdus'],
-                ['Accès à tes fonds', '24/7, sans autorisation', 'Peut être gelé ou limité'],
-              ].map(([label, us, them]) => (
-                <View key={label} style={st.compare_row}>
-                  <Text style={[st.compare_label, { flex: 1.4 }]}>{label}</Text>
-                  <Text style={[st.compare_cell, st.compare_cell_us, { flex: 1 }]}>✓ {us}</Text>
-                  <Text style={[st.compare_cell, { flex: 1, color: T.text3 }]}>{them}</Text>
-                </View>
-              ))}
+            {/* Boutons — tout en haut */}
+            <View style={{ width: '100%', marginTop: 30 }}>
+              <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>Créer mon wallet</Text>
+              </AnimPressable>
+              <AnimPressable style={{ paddingVertical: 14, alignItems: 'center', width: '100%', marginTop: 6 }} onPress={() => { setImportMode(true); setImportError(null); }}>
+                <Text style={{ color: L.text, fontSize: 14, fontWeight: '700' }}>J'ai déjà un wallet</Text>
+              </AnimPressable>
             </View>
-          </View>
-
-          {/* ── DÉMARRAGE ── */}
-          <View style={st.land_section}>
-            <Text style={st.land_section_eyebrow}>DÉMARRAGE</Text>
-            <Text style={st.land_section_title}>Prête en 3 étapes.</Text>
-            <View style={isWideWeb && st.land_steps_row_wide}>
-              {[
-                ['01', 'Crée ton wallet', "Génère ton wallet en moins d'une minute. Note ta phrase de récupération et garde-la en lieu sûr."],
-                ['02', 'Ajoute tes cryptos', 'Reçois des fonds via ton adresse ou importe un wallet existant avec tes mots secrets.'],
-                ['03', 'Envoie, échange', 'Transfère et swap tes actifs en quelques secondes, où que tu sois.'],
-              ].map(([num, title, desc]) => (
-                <View key={num} style={[st.land_step, isWideWeb && st.land_step_wide]}>
-                  <Text style={st.land_step_num}>{num}</Text>
-                  <Text style={st.land_step_title}>{title}</Text>
-                  <Text style={st.land_step_desc}>{desc}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* ── SIMULATEUR ── */}
-          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
-            <Text style={st.land_section_eyebrow}>PROJECTION</Text>
-            <Text style={st.land_section_title}>Et si ça{'\n'}décollait ?</Text>
-            {(() => {
-              const coin = marketCoins.find(c => c.symbol?.toUpperCase() === simCoin);
-              const price = coin?.current_price;
-              const amt = parseFloat(simAmount) || 0;
-              const qty = price ? amt / price : 0;
-              return (
-                <View style={st.sim_card}>
-                  <View style={{ flexDirection: 'row', marginBottom: 14 }}>
-                    {['BTC', 'ETH'].map(sym => (
-                      <TouchableOpacity
-                        key={sym}
-                        style={[st.chain_tab_sm, simCoin === sym && st.chain_tab_sm_on, { marginRight: 8 }]}
-                        onPress={() => setSimCoin(sym)}
-                      >
-                        <Text style={[st.chain_tab_sm_txt, simCoin === sym && st.chain_tab_sm_txt_on]}>{sym}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <Text style={st.form_label}>Si j'avais investi</Text>
-                  <TextInput
-                    style={st.form_input}
-                    value={simAmount}
-                    onChangeText={setSimAmount}
-                    keyboardType="numeric"
-                    placeholder="100"
-                    placeholderTextColor={T.text3}
-                  />
-                  {price ? (
-                    <>
-                      {[2, 5, 10].map(mult => (
-                        <View key={mult} style={st.sim_row}>
-                          <Text style={st.sim_row_lbl}>Si {simCoin} fait x{mult}</Text>
-                          <Text style={st.sim_row_val}>≈ {(amt * mult).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} $</Text>
-                        </View>
-                      ))}
-                      <Text style={{ color: T.text3, fontSize: 10, marginTop: 10, textAlign: 'center' }}>
-                        ≈ {qty.toFixed(6)} {simCoin} au prix actuel ({fmt(price)}). Simulation illustrative, ne constitue pas un conseil d'investissement.
-                      </Text>
-                    </>
-                  ) : (
-                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center', marginTop: 10 }}>Chargement des prix…</Text>
-                  )}
-                </View>
-              );
-            })()}
-          </View>
-
-          {/* ── FAQ ── */}
-          <View style={[st.land_section, isWideWeb && st.land_narrow_wide]}>
-            <Text style={st.land_section_eyebrow}>QUESTIONS FRÉQUENTES</Text>
-            <Text style={st.land_section_title}>On répond{'\n'}avant que tu demandes.</Text>
-            <View style={{ marginTop: 8 }}>
-              {LANDING_FAQ.map((item, i) => {
-                const isOpen = openFaq === i;
-                return (
-                  <TouchableOpacity key={i} style={st.faq_item} onPress={() => setOpenFaq(isOpen ? null : i)} activeOpacity={0.8}>
-                    <View style={st.faq_q_row}>
-                      <Text style={st.faq_q_txt}>{item.q}</Text>
-                      <Text style={st.faq_chevron}>{isOpen ? '−' : '+'}</Text>
-                    </View>
-                    {isOpen && <Text style={st.faq_a_txt}>{item.a}</Text>}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* ── CTA ── */}
-          <View style={[st.land_cta, isWideWeb && st.land_narrow_wide]}>
-            <Text style={st.land_section_eyebrow}>REJOINS NEXIA</Text>
-            <Text style={st.land_section_title}>Passe à la{'\n'}vitesse lumière.</Text>
 
             {backendError ? <Text style={st.auth_error}>{backendError}</Text> : null}
 
-            <View style={st.land_network_switch}>
-              <TouchableOpacity style={[st.network_chip, network === 'ethereum' && st.network_chip_on]} onPress={() => setNetwork('ethereum')}>
-                <Text style={[st.network_chip_txt, network === 'ethereum' && { color: T.text }]}>Ethereum</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.network_chip, network === 'bsc' && st.network_chip_on]} onPress={() => setNetwork('bsc')}>
-                <Text style={[st.network_chip_txt, network === 'bsc' && { color: T.text }]}>BNB Smart Chain</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.network_chip, network === 'polygon' && st.network_chip_on]} onPress={() => setNetwork('polygon')}>
-                <Text style={[st.network_chip_txt, network === 'polygon' && { color: T.text }]}>Polygon</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.network_chip, network === 'arbitrum' && st.network_chip_on]} onPress={() => setNetwork('arbitrum')}>
-                <Text style={[st.network_chip_txt, network === 'arbitrum' && { color: T.text }]}>Arbitrum</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.network_chip, network === 'optimism' && st.network_chip_on]} onPress={() => setNetwork('optimism')}>
-                <Text style={[st.network_chip_txt, network === 'optimism' && { color: T.text }]}>Optimism</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.network_chip, network === 'base' && st.network_chip_on]} onPress={() => setNetwork('base')}>
-                <Text style={[st.network_chip_txt, network === 'base' && { color: T.text }]}>Base</Text>
-              </TouchableOpacity>
+            {/* 3 repères */}
+            <View style={{ flexDirection: 'row', marginTop: 24, width: '100%' }}>
+              {[['🔒', 'Non-custodial'], ['⚡', 'Instantané'], ['🌍', '8 réseaux']].map(([ic, lb], i) => (
+                <View key={lb} style={{ flex: 1, backgroundColor: L.chip, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginLeft: i ? 8 : 0 }}>
+                  <Text style={{ fontSize: 18 }}>{ic}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: L.text, marginTop: 6 }}>{lb}</Text>
+                </View>
+              ))}
             </View>
 
-            {Platform.OS === 'web' && (
-              <View style={[st.warning_box, { marginTop: 14, width: '100%' }]}>
-                <Text style={st.warning_txt}>
-                  ⚠️ Sur navigateur web, le stockage n'est pas protégé par le matériel comme sur mobile.
-                  Pratique pour découvrir — préfère l'app native pour de vrais fonds.
-                </Text>
-              </View>
-            )}
-
-            <View style={st.land_cta_actions}>
-              <AnimPressable style={st.land_cta_btn_primary} onPress={() => createWallet()}>
-                <Text style={st.land_cta_btn_primary_txt}>{t('onboarding_create')}</Text>
-              </AnimPressable>
-              <AnimPressable style={st.land_cta_btn_ghost} onPress={() => { setImportMode(true); setImportError(null); }}>
-                <Text style={st.land_cta_btn_ghost_txt}>{t('onboarding_import')}</Text>
-              </AnimPressable>
-            </View>
-
+            {/* Parrainage (discret) */}
             {!referredByCode && (
               referralInputMode ? (
-                <View style={[st.import_card, { marginTop: 12 }]}>
+                <View style={{ width: '100%', marginTop: 18, backgroundColor: L.chip, borderRadius: 14, padding: 14 }}>
                   <TextInput
-                    style={st.import_input}
+                    style={impInput}
                     value={referralInputValue}
                     onChangeText={setReferralInputValue}
-                    placeholder="Code de parrainage (ex: A1B2C3D4)"
-                    placeholderTextColor={T.text3}
+                    placeholder="Code de parrainage"
+                    placeholderTextColor={L.soft}
                     autoCapitalize="characters"
                   />
-                  <AnimPressable style={st.import_confirm_btn} onPress={() => applyReferralCode(referralInputValue)}>
-                    <Text style={st.green_btn_txt}>Valider le code</Text>
+                  <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 10 }} onPress={() => applyReferralCode(referralInputValue)}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Valider</Text>
                   </AnimPressable>
                   <TouchableOpacity onPress={() => { setReferralInputMode(false); setReferralInputValue(''); }} style={{ marginTop: 10 }}>
-                    <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                    <Text style={{ color: L.soft, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity onPress={() => setReferralInputMode(true)} style={{ marginTop: 12 }}>
-                  <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>J'ai un code de parrainage</Text>
+                <TouchableOpacity onPress={() => setReferralInputMode(true)} style={{ marginTop: 18 }}>
+                  <Text style={{ color: L.soft, fontSize: 12 }}>J'ai un code de parrainage</Text>
                 </TouchableOpacity>
               )
             )}
 
+            {/* Import */}
             {importMode && (
-              <View style={st.import_card}>
-                <View style={st.import_switch}>
-                  <TouchableOpacity style={[st.import_type_btn, importType === 'mnemonic' && st.import_type_btn_on]} onPress={() => setImportType('mnemonic')}>
-                    <Text style={[st.import_type_txt, importType === 'mnemonic' && { color: T.text }]}>{'Mnémotechnique'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[st.import_type_btn, importType === 'privateKey' && st.import_type_btn_on]} onPress={() => setImportType('privateKey')}>
-                    <Text style={[st.import_type_txt, importType === 'privateKey' && { color: T.text }]}>{'Clé privée'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[st.import_type_btn, importType === 'keystore' && st.import_type_btn_on]} onPress={() => setImportType('keystore')}>
-                    <Text style={[st.import_type_txt, importType === 'keystore' && { color: T.text }]}>{'Keystore'}</Text>
-                  </TouchableOpacity>
+              <View style={{ width: '100%', marginTop: 16, backgroundColor: L.chip, borderRadius: 16, padding: 16 }}>
+                <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: 10, padding: 3, marginBottom: 12 }}>
+                  {[['mnemonic', 'Mots'], ['privateKey', 'Clé privée'], ['keystore', 'Keystore']].map(([tp, lb]) => (
+                    <TouchableOpacity key={tp} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: importType === tp ? L.accent : 'transparent' }} onPress={() => setImportType(tp)}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: importType === tp ? '#fff' : L.soft }}>{lb}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
                 <TextInput
-                  style={st.import_input}
+                  style={[impInput, (importType === 'mnemonic' || importType === 'keystore') && { minHeight: 84, textAlignVertical: 'top' }]}
                   value={importValue}
                   onChangeText={setImportValue}
                   placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : importType === 'keystore' ? 'Colle le JSON du keystore chiffré...' : '0x... clé privée'}
-                  placeholderTextColor={T.text3}
+                  placeholderTextColor={L.soft}
                   multiline={importType === 'mnemonic' || importType === 'keystore'}
                   autoCapitalize="none"
                 />
                 {importType === 'keystore' && (
                   <TextInput
-                    style={[st.import_input, { marginTop: 10 }]}
+                    style={[impInput, { marginTop: 10 }]}
                     value={importKeystorePassword}
                     onChangeText={setImportKeystorePassword}
                     placeholder="Mot de passe du keystore"
-                    placeholderTextColor={T.text3}
+                    placeholderTextColor={L.soft}
                     secureTextEntry
                     autoCapitalize="none"
                   />
                 )}
                 {importError ? <Text style={st.import_error}>{importError}</Text> : null}
-                <AnimPressable style={st.import_confirm_btn} onPress={importWallet}>
-                  <Text style={st.green_btn_txt}>Importer maintenant</Text>
+                <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 12 }} onPress={importWallet}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Importer</Text>
                 </AnimPressable>
               </View>
             )}
-          </View>
 
-          <View style={st.land_footer_wrap}>
-            <View style={[st.warning_box, { width: '100%' }]}>
-              <Text style={st.warning_txt}>
-                🛡️ NexiaWallet ne te demandera JAMAIS ta phrase de récupération par email, chat ou support. Si on te la demande, c'est une arnaque.
+            {/* Anti-phishing */}
+            <View style={{ width: '100%', marginTop: 28, backgroundColor: '#FFF7ED', borderRadius: 12, padding: 12 }}>
+              <Text style={{ color: '#9A6B2E', fontSize: 11.5, lineHeight: 17 }}>
+                🛡️ NexiaWallet ne te demandera jamais ta phrase de récupération. Si on te la demande, c'est une arnaque.
               </Text>
             </View>
-            <View style={st.land_footer_links}>
+            {Platform.OS === 'web' && (
+              <Text style={{ color: L.soft, fontSize: 11, lineHeight: 16, marginTop: 12, textAlign: 'center' }}>
+                Sur navigateur : pratique pour découvrir. Pour de vrais fonds, préfère l'app mobile.
+              </Text>
+            )}
+
+            {/* Footer */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 26 }}>
               {Object.entries(LEGAL_DOCS).map(([key, doc]) => (
-                <TouchableOpacity key={key} onPress={() => setLegalDoc(key)}>
-                  <Text style={st.land_footer_link}>{doc.title}</Text>
+                <TouchableOpacity key={key} onPress={() => setLegalDoc(key)} style={{ marginHorizontal: 7, marginVertical: 3 }}>
+                  <Text style={{ color: L.soft, fontSize: 11 }}>{doc.title}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={st.land_footer}>NEXIA WALLET · Tes clés, tes cryptos.</Text>
+            <Text style={{ color: L.soft, fontSize: 11, marginTop: 12, letterSpacing: 0.4 }}>NEXIA WALLET · Tes clés, tes cryptos</Text>
+
           </View>
         </ScrollView>
         {renderMnemonicBackup()}
