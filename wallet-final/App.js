@@ -78,9 +78,12 @@ const DARK_THEME = {
   card2:   '#151b26',
   border:  '#232b3a',
   borderSoft: '#1a2130',
-  gold:    '#cdb37e',
-  goldBg:  'rgba(205, 179, 126, 0.12)',
-  goldLine:'rgba(205, 179, 126, 0.35)',
+  // Accent principal (boutons, onglet actif, coches, favoris…) = vert
+  // NexiaWallet, aligné sur la landing publique. Nom "gold" conservé pour ne
+  // pas toucher aux ~200 références dans les styles.
+  gold:    '#10B981',
+  goldBg:  'rgba(16, 185, 129, 0.14)',
+  goldLine:'rgba(16, 185, 129, 0.38)',
   up:      '#7fb69a',
   upBg:    'rgba(127, 182, 154, 0.12)',
   down:    '#c98a8a',
@@ -122,9 +125,10 @@ const LIGHT_THEME = {
   card2:   '#f0f1f4',
   border:  '#e7e8ec',
   borderSoft: '#eff0f3',
-  gold:    '#9c7b3f',
-  goldBg:  'rgba(156, 123, 63, 0.10)',
-  goldLine:'rgba(156, 123, 63, 0.35)',
+  // Accent principal = vert NexiaWallet, aligné sur la landing (voir DARK_THEME).
+  gold:    '#10B981',
+  goldBg:  'rgba(16, 185, 129, 0.12)',
+  goldLine:'rgba(16, 185, 129, 0.38)',
   up:      '#4d8f6e',
   upBg:    'rgba(77, 143, 110, 0.12)',
   down:    '#b5605f',
@@ -5195,9 +5199,9 @@ function AppContent({ themeMode, changeTheme }) {
             {/* Boutons — tout en haut */}
             <View style={{ width: '100%', marginTop: 30 }}>
               <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>Créer mon wallet</Text>
+                <Text style={{ color: '#062219', fontSize: 16, fontWeight: '800' }}>Créer mon wallet</Text>
               </AnimPressable>
-              <AnimPressable style={{ paddingVertical: 14, alignItems: 'center', width: '100%', marginTop: 6 }} onPress={() => { setImportMode(true); setImportError(null); }}>
+              <AnimPressable style={{ paddingVertical: 15, alignItems: 'center', width: '100%', marginTop: 10, borderRadius: 16, borderWidth: 1.5, borderColor: L.border }} onPress={() => { setImportMode(true); setImportError(null); }}>
                 <Text style={{ color: L.text, fontSize: 14, fontWeight: '700' }}>J'ai déjà un wallet</Text>
               </AnimPressable>
             </View>
@@ -7791,7 +7795,6 @@ function AppContent({ themeMode, changeTheme }) {
           >
             <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)} 📋` : 'Adresse en attente...'}</Text>
           </TouchableOpacity>
-          <Text style={[st.home_addr, { fontSize: 12, color: T.text3, marginTop: 4 }]}>Solde {activeNetwork.label}: {parseFloat(walletBalance || '0').toFixed(6)} {nativeSymbol}</Text>
         </View>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Paramètres">
           <Ionicons name="settings-outline" size={20} color={T.text2} />
@@ -7801,7 +7804,7 @@ function AppContent({ themeMode, changeTheme }) {
       <View style={{ position: 'relative', marginHorizontal: 14 }}>
         <BalanceGlow />
         <LinearGradient
-          colors={['rgba(205,179,126,0.55)', 'rgba(139,92,246,0.30)', 'rgba(39,56,92,0.35)']}
+          colors={['rgba(16,185,129,0.50)', 'rgba(16,185,129,0.18)', 'rgba(16,185,129,0.05)']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={st.balance_border_wrap}
@@ -7871,12 +7874,13 @@ function AppContent({ themeMode, changeTheme }) {
       )}
 
       {favoritesLoaded && !favorites.length && (
-        <TouchableOpacity style={st.favorites_hint} onPress={() => setTab('markets')} activeOpacity={0.8}>
-          <Ionicons name="star" size={26} color={T.gold} style={st.favorites_hint_icon} />
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={st.favorites_hint_title}>{t('home_no_favorites_title')}</Text>
-            <Text style={st.favorites_hint_desc}>{t('home_no_favorites_sub')}</Text>
-          </View>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginHorizontal: 16, marginTop: 4, marginBottom: 2, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: T.goldBg }}
+          onPress={() => setTab('markets')}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="star" size={13} color={T.gold} />
+          <Text style={{ color: T.gold, fontSize: 12, fontWeight: '600', marginLeft: 6 }}>Ajouter des favoris depuis le Marché</Text>
         </TouchableOpacity>
       )}
 
