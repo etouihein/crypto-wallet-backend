@@ -123,6 +123,54 @@ async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp, amount
   return `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
 }
 
+// Coinbase Offramp (VENTE) — meme produit CDP, meme cle API, meme endpoint de
+// session token que l'achat ci-dessus ; seule l'URL finale change
+// (pay.coinbase.com/v3/sell/input). AUCUNE verification business / KYB /
+// preuve d'incorporation requise cote partenaire (au contraire de MoonPay et
+// Ramp qui ont refuse le compte auto-entrepreneur de Pablo) — Onramp comme
+// Offramp sont actifs par defaut en "trial mode" sur tout projet CDP.
+// L'utilisateur final, lui, doit avoir un compte Coinbase + KYC pour
+// encaisser en fiat (SEPA en zone euro), il n'y a pas de "guest checkout"
+// pour la vente comme il y en a un pour l'achat. Verifie en reel le
+// 2026-09-10 : /onramp/v1/token -> 200, l'URL /v3/sell/input se charge avec
+// initErrors:{} depuis une IP FR, EUR, sans restriction de pays.
+async function buildCoinbaseOfframpUrl({ walletAddress, network, clientIp, amountCrypto, tokenSymbol, redirectURL }) {
+  const chain = COINBASE_ONRAMP_NETWORKS[normalizeNetwork(network)];
+  if (!chain) return null;
+  const jwt = await generateJwt({
+    apiKeyId: COINBASE_CDP_API_KEY_ID,
+    apiKeySecret: COINBASE_CDP_API_KEY_SECRET,
+    requestMethod: 'POST',
+    requestHost: 'api.developer.coinbase.com',
+    requestPath: '/onramp/v1/token',
+    expiresIn: 120,
+  });
+  const response = await fetch('https://api.developer.coinbase.com/onramp/v1/token', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      addresses: [{ address: walletAddress, blockchains: [chain] }],
+      assets: tokenSymbol ? [tokenSymbol.toUpperCase()] : undefined,
+      clientIp,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Coinbase Offramp session token error: ${response.status} ${await response.text()}`);
+  }
+  const data = await response.json();
+  const params = new URLSearchParams({ sessionToken: data.token, fiatCurrency: 'EUR' });
+  // redirectUrl est OBLIGATOIRE pour l'Offramp (sans lui la page renvoie
+  // initErrors:{missingParams:["redirectUrl"]}) — c'est la ou Coinbase renvoie
+  // l'utilisateur une fois la vente confirmee. partnerUserRef sert au
+  // rapprochement cote webhook.
+  if (redirectURL) params.set('redirectUrl', redirectURL);
+  params.set('partnerUserRef', `nexiawallet-${Date.now()}`);
+  if (amountCrypto > 0) params.set('presetCryptoAmount', String(amountCrypto));
+  if (tokenSymbol) params.set('defaultAsset', tokenSymbol.toUpperCase());
+  params.set('defaultNetwork', chain);
+  return `https://pay.coinbase.com/v3/sell/input?${params.toString()}`;
+}
+
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const solanaConnection = new SolanaConnection(SOLANA_RPC_URL, 'confirmed');
 
@@ -980,24 +1028,17 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
   }
 });
 
-// Vente de crypto (off-ramp) via le widget MoonPay — l'utilisateur envoie
-// lui-même les fonds depuis son wallet vers l'adresse de dépôt que le widget
-// affiche (aucun accès à sa clé privée requis côté backend, cohérent avec
-// l'architecture non-custodiale : voir NOTES.md / lib/wallet.js côté client).
+// Vente de crypto (off-ramp) — l'utilisateur envoie lui-même les fonds depuis
+// son wallet vers l'adresse de dépôt affichée par le widget (aucun accès à sa
+// clé privée requis côté backend, cohérent avec l'architecture non-custodiale).
+// Fournisseur : Coinbase Offramp si PAYMENT_PROVIDER=coinbase (aucune KYB
+// partenaire requise), sinon repli sur MoonPay (clés sandbox uniquement tant
+// que la vérification business MoonPay n'est pas validée).
 router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) => {
   try {
     const { amountCrypto, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
     if (!amountCrypto || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
-    }
-    // Vendre reste TOUJOURS via MoonPay (Coinbase Onramp ne fait que l'achat),
-    // donc gate uniquement sur la présence de sa propre clé -- pas sur
-    // PAYMENT_PROVIDER (qui ne concerne que l'achat, voir plus haut). Trouvé
-    // cassé en audit (2026-08-28) : ce garde-fou bloquait TOUTE vente en 503
-    // depuis le passage de PAYMENT_PROVIDER à 'coinbase' le 2026-08-21, alors
-    // que MOONPAY_API_KEY/SECRET_KEY sont restées configurées et valides.
-    if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
-      return res.status(503).json({ success: false, error: 'MoonPay non configuré (clé API/secrète manquante dans .env).' });
     }
     const normalizedSellNetwork = normalizeNetwork(network);
     const walletAddressValid = normalizedSellNetwork === 'solana'
@@ -1011,10 +1052,6 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
     const amount = parseFloat(amountCrypto);
     if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Montant invalide.' });
-    }
-    const currencyCode = MOONPAY_CURRENCY_CODES[normalizedSellNetwork]?.[tokenSymbol.toUpperCase()];
-    if (!currencyCode) {
-      return res.status(400).json({ success: false, error: `Vente de ${tokenSymbol} non supportée sur ce wallet.` });
     }
 
     // Même garde-fou que create-checkout-session — voir le commentaire
@@ -1032,6 +1069,38 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
       return FRONTEND_URL;
     })();
 
+    if (PAYMENT_PROVIDER === 'coinbase') {
+      if (!COINBASE_CDP_API_KEY_ID || !COINBASE_CDP_API_KEY_SECRET) {
+        return res.status(503).json({ success: false, error: 'Coinbase Offramp non configuré (clé CDP manquante dans .env).' });
+      }
+      let url;
+      try {
+        url = await buildCoinbaseOfframpUrl({
+          walletAddress,
+          network,
+          clientIp: req.ip,
+          amountCrypto: amount,
+          tokenSymbol,
+          redirectURL: frontendBase,
+        });
+      } catch (err) {
+        console.error('Coinbase Offramp error:', err);
+        return res.status(502).json({ success: false, error: 'Impossible de générer la session Coinbase Offramp.' });
+      }
+      if (!url) {
+        return res.status(400).json({ success: false, error: `Vente sur le réseau "${network}" non supportée par Coinbase pour l'instant — choisis Ethereum, Base, Polygon, Arbitrum, Optimism ou Solana.` });
+      }
+      return res.json({ success: true, provider: 'coinbase', url });
+    }
+
+    // Repli MoonPay (clés sandbox uniquement pour l'instant).
+    if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
+      return res.status(503).json({ success: false, error: 'MoonPay non configuré (clé API/secrète manquante dans .env).' });
+    }
+    const currencyCode = MOONPAY_CURRENCY_CODES[normalizedSellNetwork]?.[tokenSymbol.toUpperCase()];
+    if (!currencyCode) {
+      return res.status(400).json({ success: false, error: `Vente de ${tokenSymbol} non supportée sur ce wallet.` });
+    }
     const url = buildMoonPaySellUrl({
       currencyCode,
       refundWalletAddress: walletAddress,
