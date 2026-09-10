@@ -354,13 +354,13 @@ const SWAPPABLE_TOKENS = {
   bsc: ['BNB', 'USDT', 'USDC'],
 };
 
-// Vente de crypto (off-ramp) — DÉSACTIVÉE en prod tant que la vérification
-// business MoonPay n'est pas validée. Actuellement seule une clé MoonPay
-// sandbox (pk_test_) est disponible : le widget "Vendre" s'ouvrirait en mode
-// test, l'utilisateur croirait pouvoir vendre pour de vrai. Repasser à `true`
-// LE JOUR où MOONPAY_ENV=production + clés pk_live_/sk_live_ sont en place sur
-// Railway (KYB MoonPay approuvée). Le chemin /v2/sell backend est déjà prêt.
-const SELL_ENABLED = false;
+// Vente de crypto (off-ramp) — active via Coinbase Offramp (backend
+// /payments/create-sell-session quand PAYMENT_PROVIDER=coinbase). Aucune
+// vérification business partenaire requise, contrairement à MoonPay dont la
+// KYB a été refusée. L'utilisateur a besoin d'un compte Coinbase + KYC pour
+// encaisser en fiat (SEPA). Réseaux : ethereum/base/polygon/arbitrum/
+// optimism/solana (BTC/BSC non supportés par cette voie pour l'instant).
+const SELL_ENABLED = true;
 
 const TF_CONFIG = {
   '5M':  { bucketMs: 30_000,        numCandles: 12, live: true  },
@@ -8601,7 +8601,8 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={st.form_label}>Token</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
-              {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
+              {/* BTC/BSC exclus : la voie Coinbase Offramp ne les couvre pas encore. */}
+              {[...(network === 'bsc' ? [] : (BUYABLE_TOKENS[network] || [])), ...BUYABLE_TOKENS.solana].map((sym) => {
                 const tk = tokens[sym];
                 if (!tk) return null;
                 return (
@@ -8629,12 +8630,12 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={st.send_info_box}>
               <Text style={st.send_info_line}>≈ {fmt((parseFloat(sellAmount) || 0) * (tokens[sellToken]?.price || 0))}</Text>
               <Text style={st.send_info_line}>Solde disponible : {sellableBalance.toFixed(6)} {sellToken}</Text>
-              <Text style={st.send_info_line}>Tu enverras toi-même les fonds à l'adresse de dépôt affichée par MoonPay.</Text>
+              <Text style={st.send_info_line}>Tu enverras toi-même les fonds à l'adresse de dépôt affichée par Coinbase. Un compte Coinbase (+ vérification d'identité) est nécessaire pour recevoir les euros par virement SEPA.</Text>
             </View>
 
             <AnimPressable style={[st.green_btn, { opacity: sellLoading ? 0.7 : 1, marginTop: 24 }]}
               onPress={handleSellNow} disabled={sellLoading}>
-              {sellLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Vendre via MoonPay</Text>}
+              {sellLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Vendre via Coinbase</Text>}
             </AnimPressable>
             <View style={{ height: 40 }} />
           </ScrollView>
