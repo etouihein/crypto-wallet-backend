@@ -4367,17 +4367,18 @@ function AppContent({ themeMode, changeTheme }) {
   // "Marché" retiré : redondant depuis que c'est un onglet principal. Le
   // raccourci "Répéter" n'apparaît que si un dernier envoi existe sur ce
   // même réseau (adresse/montant/token n'ont de sens que dans ce contexte).
+  // `icon` = nom d'icône Ionicons (jeu homogène, plus de mélange emoji/glyphe).
   const QUICK_ACTIONS_BASE = [
-    { id: 'send',    icon: '↑',  label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
-    { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
-    ...(SELL_ENABLED ? [{ id: 'sell', icon: '💰', label: 'Vendre', bg: T.card2, onPress: () => setShowSell(true) }] : []),
-    { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
-    { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
-    { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
+    { id: 'send',    icon: 'arrow-up',   label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
+    { id: 'buy',     icon: 'card',       label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
+    ...(SELL_ENABLED ? [{ id: 'sell', icon: 'cash', label: 'Vendre', bg: T.card2, onPress: () => setShowSell(true) }] : []),
+    { id: 'receive', icon: 'arrow-down', label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
+    { id: 'history', icon: 'time',       label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
+    { id: 'nft',     icon: 'image',      label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
-    ...(lastSend && lastSend.network === network ? [{ id: 'repeat', icon: '🔁', label: 'Répéter', bg: T.card2, onPress: repeatLastSend }] : []),
+    ...(lastSend && lastSend.network === network ? [{ id: 'repeat', icon: 'reload', label: 'Répéter', bg: T.card2, onPress: repeatLastSend }] : []),
   ];
 
   // Enregistre un point d'historique de valeur totale au plus toutes les
@@ -6178,6 +6179,16 @@ function AppContent({ themeMode, changeTheme }) {
 
         {historyLoading && !items.length ? (
           <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.gold} /></View>
+        ) : !items.length ? (
+          <View style={{ alignItems: 'center', marginTop: 48, paddingHorizontal: 24 }}>
+            <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: T.goldBg, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="stats-chart" size={28} color={T.gold} />
+            </View>
+            <Text style={{ color: T.text, fontSize: 16, fontWeight: '700', marginTop: 16, textAlign: 'center' }}>Pas encore de stats</Text>
+            <Text style={{ color: T.text3, fontSize: 13, lineHeight: 19, marginTop: 8, textAlign: 'center' }}>
+              Tes stats (transactions envoyées, reçues, frais payés) apparaîtront ici après ta première opération.
+            </Text>
+          </View>
         ) : (
           <>
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
@@ -7631,7 +7642,7 @@ function AppContent({ themeMode, changeTheme }) {
             const isHidden = hiddenQuickActions.includes(a.id);
             return (
               <AnimPressable key={a.id} style={st.settings_row} onPress={() => toggleQuickAction(a.id)}>
-                <Text style={{ fontSize: 22 }}>{a.icon}</Text>
+                <Ionicons name={a.icon} size={20} color={T.text2} />
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>{a.label}</Text>
                   <Text style={st.settings_row_sub}>{isHidden ? 'Masquée' : 'Visible sur l\'accueil'}</Text>
@@ -7851,7 +7862,7 @@ function AppContent({ themeMode, changeTheme }) {
         {visibleQuickActions.map(a => (
           <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress} accessibilityRole="button" accessibilityLabel={a.label}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
-              <Text style={[st.quick_icon_txt, { color: a.bg === T.gold ? '#000' : T.text }]}>{a.icon}</Text>
+              <Ionicons name={a.icon} size={21} color={a.bg === T.gold ? '#000' : T.text} />
             </View>
             <Text style={st.quick_lbl}>{a.label}</Text>
           </AnimPressable>
