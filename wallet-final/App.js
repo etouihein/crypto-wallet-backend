@@ -354,6 +354,14 @@ const SWAPPABLE_TOKENS = {
   bsc: ['BNB', 'USDT', 'USDC'],
 };
 
+// Vente de crypto (off-ramp) — DÉSACTIVÉE en prod tant que la vérification
+// business MoonPay n'est pas validée. Actuellement seule une clé MoonPay
+// sandbox (pk_test_) est disponible : le widget "Vendre" s'ouvrirait en mode
+// test, l'utilisateur croirait pouvoir vendre pour de vrai. Repasser à `true`
+// LE JOUR où MOONPAY_ENV=production + clés pk_live_/sk_live_ sont en place sur
+// Railway (KYB MoonPay approuvée). Le chemin /v2/sell backend est déjà prêt.
+const SELL_ENABLED = false;
+
 const TF_CONFIG = {
   '5M':  { bucketMs: 30_000,        numCandles: 12, live: true  },
   '15M': { bucketMs: 90_000,        numCandles: 12, live: true  },
@@ -4348,7 +4356,7 @@ function AppContent({ themeMode, changeTheme }) {
   const QUICK_ACTIONS_BASE = [
     { id: 'send',    icon: '↑',  label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
     { id: 'buy',     icon: '💳', label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
-    { id: 'sell',    icon: '💰', label: 'Vendre',            bg: T.card2, onPress: () => setShowSell(true) },
+    ...(SELL_ENABLED ? [{ id: 'sell', icon: '💰', label: 'Vendre', bg: T.card2, onPress: () => setShowSell(true) }] : []),
     { id: 'receive', icon: '+',  label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: '🕐', label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
     { id: 'nft',     icon: '🖼️', label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
@@ -8581,7 +8589,7 @@ function AppContent({ themeMode, changeTheme }) {
       ? parseFloat(walletBalance || '0')
       : (tokens[sellToken]?.balance || 0);
     return (
-      <Modal visible={showSell} animationType="slide" transparent>
+      <Modal visible={SELL_ENABLED && showSell} animationType="slide" transparent>
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
             <TouchableOpacity onPress={() => setShowSell(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
