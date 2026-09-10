@@ -74,6 +74,20 @@ const MOONPAY_CURRENCY_CODES = {
 const COINBASE_CDP_API_KEY_ID = (process.env.COINBASE_CDP_API_KEY_ID || '').trim();
 const COINBASE_CDP_API_KEY_SECRET = (process.env.COINBASE_CDP_API_KEY_SECRET || '').trim();
 
+// ── MONÉTISATION ──────────────────────────────────────────────────
+// Adresse qui reçoit les commissions (frais de swap 0x, etc.). Ce n'est
+// qu'une adresse publique de réception — aucun secret — donc codée en dur
+// comme repli, surchargeable par FEE_RECIPIENT_ADDRESS (Railway). Compte
+// "Revenus" de NexiaWallet, contrôlé par Pablo. Vérifiée EIP-55.
+const FEE_RECIPIENT_ADDRESS = (() => {
+  const raw = (process.env.FEE_RECIPIENT_ADDRESS || '0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC').trim();
+  try { return ethers.utils.getAddress(raw); } catch { return null; }
+})();
+// Commission prélevée sur chaque swap, en points de base (75 = 0,75 %).
+// Repère marché : MetaMask ~87,5 pb, Rabby ~25 pb. 0x prélève en plus sa
+// propre part côté protocole, sans réduire la nôtre.
+const SWAP_FEE_BPS = Math.min(Math.max(parseInt(process.env.SWAP_FEE_BPS || '75', 10) || 0, 0), 300);
+
 // Reseaux dont l'identifiant "blockchains" officiel est confirme dans la doc
 // CDP (docs.cdp.coinbase.com/onramp/additional-resources/layer-2-networks).
 // BSC et Bitcoin sont volontairement exclus tant que leur identifiant exact
@@ -697,7 +711,17 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     }
 
     const chainId = getNetworkConfig(network).chainId;
-    const qs = new URLSearchParams({ chainId, sellToken, buyToken, sellAmount, taker }).toString();
+    const quoteParams = { chainId, sellToken, buyToken, sellAmount, taker };
+    // Commission NexiaWallet : 0x prélève swapFeeBps sur le buyToken et
+    // l'envoie directement on-chain à swapFeeRecipient à chaque swap réglé
+    // (aucune custody de notre côté). N'est ajouté que si l'adresse de
+    // réception est valide et le taux > 0. Divulgué à l'utilisateur côté app.
+    if (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) {
+      quoteParams.swapFeeRecipient = FEE_RECIPIENT_ADDRESS;
+      quoteParams.swapFeeBps = String(SWAP_FEE_BPS);
+      quoteParams.swapFeeToken = buyToken;
+    }
+    const qs = new URLSearchParams(quoteParams).toString();
     const response = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${qs}`, {
       headers: { '0x-api-key': apiKey, '0x-version': 'v2' },
     });
@@ -705,7 +729,7 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     if (!response.ok) {
       return res.status(400).json({ success: false, error: data?.reason || data?.validationErrors?.[0]?.reason || data?.message || 'Devis de swap impossible.' });
     }
-    res.json({ success: true, quote: data });
+    res.json({ success: true, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
   } catch (error) {
     console.error('Wallet route error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });

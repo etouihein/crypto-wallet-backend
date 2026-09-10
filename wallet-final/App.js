@@ -362,6 +362,13 @@ const SWAPPABLE_TOKENS = {
 // optimism/solana (BTC/BSC non supportés par cette voie pour l'instant).
 const SELL_ENABLED = true;
 
+// Commission NexiaWallet prélevée sur chaque swap, en points de base
+// (75 = 0,75 %). DOIT rester alignée sur SWAP_FEE_BPS du backend
+// (crypto-wallet/src/routes/wallet.js) : le backend la transmet réellement à
+// 0x, cette valeur ne sert ici qu'à l'estimation "Tu reçois" et à
+// l'affichage de transparence.
+const SWAP_FEE_BPS = 75;
+
 const TF_CONFIG = {
   '5M':  { bucketMs: 30_000,        numCandles: 12, live: true  },
   '15M': { bucketMs: 90_000,        numCandles: 12, live: true  },
@@ -4099,7 +4106,9 @@ function AppContent({ themeMode, changeTheme }) {
     if (!swapAmt || isNaN(Number(swapAmt))) { setSwapRes('0'); return; }
     const fp = tokens[swapFrom]?.price || 1;
     const tp = tokens[swapTo]?.price   || 1;
-    const result = (parseFloat(swapAmt) * fp) / tp;
+    // Estimation indicative : ratio de prix moins la commission NexiaWallet
+    // (le devis 0x réel au moment de confirmer reste la valeur qui fait foi).
+    const result = ((parseFloat(swapAmt) * fp) / tp) * (1 - SWAP_FEE_BPS / 10000);
     setSwapRes(isFinite(result) ? result.toFixed(8) : '0');
   }, [swapAmt, swapFrom, swapTo, tokens]);
 
@@ -8501,6 +8510,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         <Text style={{ color: T.text3, fontSize: 11, marginTop: 4, textAlign: 'center' }}>
           Swap réel via agrégateur DEX (0x) — la meilleure route est cherchée automatiquement.
+          {'\n'}Frais NexiaWallet de {(SWAP_FEE_BPS / 100).toFixed(2)} % inclus dans le taux affiché.
         </Text>
 
         <AnimPressable style={[st.green_btn, { marginTop: 16 }, swapLoading && { opacity: 0.6 }]}
