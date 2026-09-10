@@ -200,6 +200,37 @@ const CURRENCIES = {
 //  données personnelles).
 // ═══════════════════════════════════════════════════════════
 const LEGAL_DOCS = {
+  about: {
+    title: 'À propos de NexiaWallet',
+    updated: '11 septembre 2026',
+    body: `Qui est derrière NexiaWallet ?
+NexiaWallet est développé par une personne indépendante, Pablo, entrepreneur individuel enregistré en France (SIREN 108 689 357). Ce n'est pas une société avec une équipe et des investisseurs : c'est un projet solo, construit petit à petit, avec un objectif simple — un portefeuille crypto vraiment accessible, en français.
+
+Pourquoi ce wallet ?
+La plupart des wallets sérieux sont en anglais et pensés pour des gens déjà à l'aise avec la crypto. NexiaWallet essaie l'inverse : une interface épurée, en français, pour quelqu'un qui débute et qui a surtout peur de se faire avoir.
+
+« Non-custodial », ça veut dire quoi ?
+Custodial : une plateforme (un exchange par exemple) détient tes cryptos pour toi. Si elle est piratée, fait faillite ou gèle ton compte, tes fonds sont en danger.
+Non-custodial : toi seul détiens tes cryptos. Concrètement, quand tu crées un wallet ici :
+• Une phrase de récupération (12 mots) est générée sur ton appareil. C'est LA clé de ton wallet.
+• Cette phrase et ta clé privée ne quittent jamais ton téléphone : elles ne passent par aucun serveur NexiaWallet et ne sont enregistrées nulle part ailleurs.
+• Chaque transaction est signée sur ton appareil ; seule la transaction déjà signée (une donnée publique) est envoyée au réseau.
+La contrepartie : si tu perds ta phrase de récupération, personne — ni moi, ni personne — ne peut te redonner l'accès. Note-la sur papier, hors ligne, et ne la partage JAMAIS. Si on te la demande, même au nom du « support », c'est une arnaque.
+
+Ce que NexiaWallet ne fait pas
+• Ne détient jamais tes fonds ni tes clés.
+• Ne demande jamais d'email, de nom ou de compte pour créer un wallet.
+• Ne vend aucune donnée, n'utilise aucun tracker publicitaire.
+• Ne donne aucun conseil en investissement. Ce que tu achètes, gardes ou vends reste ta décision et ta responsabilité.
+
+Comment le projet se finance
+Une petite commission est prélevée sur les opérations optionnelles : 0,75 % sur un échange (swap), 0,25 % sur un pont cross-chain, et une commission sur les achats/ventes par carte via nos partenaires. Aucun abonnement ; envoyer, recevoir et garder ses cryptos est gratuit.
+
+État du projet
+NexiaWallet est jeune et évolue vite. Version web disponible aujourd'hui, application mobile en préparation. Les retours sont les bienvenus — c'est ce qui fait avancer l'app.
+
+Contact : contact@nexiawallet.com`,
+  },
   cgu: {
     title: "Conditions Générales d'Utilisation",
     updated: '5 juillet 2026',
