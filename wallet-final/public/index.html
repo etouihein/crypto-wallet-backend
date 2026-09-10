@@ -5,18 +5,24 @@
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <title>%WEB_TITLE%</title>
+    <meta name="theme-color" content="#10B981" />
 
-    <!-- Open Graph / partage sur réseaux sociaux -->
+    <!-- Open Graph / partage sur réseaux sociaux (URLs absolues obligatoires
+         pour que la vignette s'affiche dans WhatsApp / Discord / iMessage) -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="NexiaWallet — Tes clés, tes cryptos" />
-    <meta property="og:description" content="Portefeuille crypto non-custodial : génère ou importe un wallet Ethereum et BNB Smart Chain, envoie, reçois et échange en toute sécurité, sans jamais confier tes clés privées." />
-    <meta property="og:image" content="/icon.png" />
+    <meta property="og:site_name" content="NexiaWallet" />
+    <meta property="og:url" content="https://nexiawallet.com" />
+    <meta property="og:title" content="NexiaWallet — Tes cryptos, simplement." />
+    <meta property="og:description" content="Portefeuille crypto non-custodial : achète, envoie et échange sur 8 réseaux (Ethereum, Bitcoin, Solana…). Tes clés restent sur ton téléphone." />
+    <meta property="og:image" content="https://nexiawallet.com/icon.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
 
     <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="NexiaWallet — Tes clés, tes cryptos" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="NexiaWallet — Tes cryptos, simplement." />
     <meta name="twitter:description" content="Portefeuille crypto non-custodial : tes clés privées ne quittent jamais ton appareil." />
-    <meta name="twitter:image" content="/icon.png" />
+    <meta name="twitter:image" content="https://nexiawallet.com/icon.png" />
 
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
@@ -45,6 +51,44 @@
         flex: 1;
       }
     </style>
+
+    <!-- Écran de chargement affiché INSTANTANÉMENT (HTML/CSS purs, aucune
+         dépendance JS/police). Le bundle Expo web pèse ~1,8 Mo : sans ça, un
+         visiteur mobile voit une page blanche pendant plusieurs secondes et
+         croit que le lien est cassé. React remplace le contenu de #root au
+         montage, donc ce bloc disparaît tout seul. -->
+    <style>
+      #nx-splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        transition: opacity .35s ease;
+      }
+      #nx-splash .nx-mark {
+        width: 64px; height: 64px; border-radius: 18px;
+        background: #10B981;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 34px;
+        box-shadow: 0 12px 30px rgba(16,185,129,.28);
+      }
+      #nx-splash .nx-name {
+        margin-top: 18px; font-size: 20px; font-weight: 800; color: #0B1215; letter-spacing: .2px;
+      }
+      #nx-splash .nx-sub { margin-top: 6px; font-size: 13px; color: #5B6672; }
+      #nx-splash .nx-bar {
+        margin-top: 22px; width: 132px; height: 4px; border-radius: 4px;
+        background: #EAF2EF; overflow: hidden;
+      }
+      #nx-splash .nx-bar::after {
+        content: ""; display: block; width: 40%; height: 100%; border-radius: 4px;
+        background: #10B981; animation: nx-slide 1.1s infinite ease-in-out;
+      }
+      @keyframes nx-slide {
+        0%   { transform: translateX(-100%); }
+        100% { transform: translateX(330%); }
+      }
+    </style>
   </head>
 
   <body>
@@ -53,6 +97,13 @@
       You need to enable JavaScript to run this app.
     </noscript>
     <!-- The root element for your Expo app. -->
-    <div id="root"></div>
+    <div id="root">
+      <div id="nx-splash">
+        <div class="nx-mark">🛡️</div>
+        <div class="nx-name">NexiaWallet</div>
+        <div class="nx-sub">Chargement…</div>
+        <div class="nx-bar"></div>
+      </div>
+    </div>
   </body>
 </html>

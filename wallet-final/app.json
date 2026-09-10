@@ -32,11 +32,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "backgroundColor": "#070A1A",
+      "backgroundColor": "#FFFFFF",
       "name": "NexiaWallet",
       "lang": "fr",
-      "themeColor": "#070A1A",
-      "description": "NexiaWallet — portefeuille crypto non-custodial. Tes clés, tes cryptos : génère ou importe un wallet Ethereum et BNB Smart Chain, envoie, reçois et échange en toute sécurité, sans jamais confier tes clés privées."
+      "themeColor": "#10B981",
+      "description": "NexiaWallet — portefeuille crypto non-custodial. Achète, envoie et échange sur 8 réseaux (Ethereum, Bitcoin, Solana…). Tes clés restent sur ton téléphone, jamais sur un serveur."
     },
     "extra": {
       "eas": {
