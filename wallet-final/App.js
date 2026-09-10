@@ -1994,6 +1994,7 @@ function AppContent({ themeMode, changeTheme }) {
   // Natif uniquement : react-native-webview n'a pas d'implémentation web.
   const [showDappBrowser, setShowDappBrowser]     = useState(false);
   const [dappUrlInput, setDappUrlInput]           = useState('');
+  const [dappCat, setDappCat]                     = useState('all'); // filtre catégorie de l'onglet Découvrir
   const [dappCurrentUrl, setDappCurrentUrl]       = useState(null); // URL initiale chargée par la WebView (source={{uri}}) — ne pas mettre à jour sur navigation interne, ça rechargerait la page
   const [dappDisplayUrl, setDappDisplayUrl]       = useState(null); // URL réellement affichée à l'instant, pour l'en-tête — voir onNavigationStateChange
   const [dappConnectedOrigins, setDappConnectedOrigins] = useState([]); // origines autorisées à voir l'adresse (session app en cours)
@@ -8154,82 +8155,103 @@ function AppContent({ themeMode, changeTheme }) {
   //  produit à effet de levier (perpétuels) ni pari (prédictions) : hors de
   //  portée réglementaire/technique pour ce wallet non-custodial.
   // ════════════════════════════════════════════════════════
-  const FEATURED_DAPPS = [
-    { name: 'Uniswap',     url: 'https://app.uniswap.org',   color: '#FF007A', letter: 'U' },
-    { name: 'Aave',        url: 'https://app.aave.com',      color: '#B6509E', letter: 'A' },
-    { name: 'Lido',        url: 'https://stake.lido.fi',     color: '#00A3FF', letter: 'L' },
-    { name: 'PancakeSwap', url: 'https://pancakeswap.finance', color: '#D1884F', letter: 'P' },
-    { name: '1inch',       url: 'https://app.1inch.io',      color: '#94A6C3', letter: '1' },
-    { name: 'OpenSea',     url: 'https://opensea.io',        color: '#2081E2', letter: 'O' },
+  const DISCOVER_DAPPS = [
+    { name: 'Uniswap',     cat: 'dex',     url: 'https://app.uniswap.org',    color: '#FF007A', letter: 'U', desc: 'Le plus gros échange décentralisé (DEX).' },
+    { name: 'PancakeSwap', cat: 'dex',     url: 'https://pancakeswap.finance',color: '#D1884F', letter: 'P', desc: 'Le DEX n°1 sur BNB Smart Chain.' },
+    { name: '1inch',       cat: 'dex',     url: 'https://app.1inch.io',       color: '#1B314F', letter: '1', desc: 'Agrégateur : trouve le meilleur taux de swap.' },
+    { name: 'Curve',       cat: 'dex',     url: 'https://curve.fi',           color: '#3465A4', letter: 'C', desc: 'Échange de stablecoins à faible slippage.' },
+    { name: 'Aave',        cat: 'lending', url: 'https://app.aave.com',       color: '#B6509E', letter: 'A', desc: 'Prête tes cryptos et gagne des intérêts.' },
+    { name: 'Lido',        cat: 'yield',   url: 'https://stake.lido.fi',      color: '#00A3FF', letter: 'L', desc: "Staking liquide d'ETH — reçois du stETH." },
+    { name: 'OpenSea',     cat: 'nft',     url: 'https://opensea.io',         color: '#2081E2', letter: 'O', desc: 'La plus grande place de marché NFT.' },
+    { name: 'Blur',        cat: 'nft',     url: 'https://blur.io',            color: '#FF7A00', letter: 'B', desc: 'Marketplace NFT rapide pour traders.' },
+  ];
+  const DISCOVER_CATS = [
+    { id: 'all', label: 'Tout' },
+    { id: 'dex', label: 'DEX' },
+    { id: 'lending', label: 'Prêt' },
+    { id: 'yield', label: 'Rendement' },
+    { id: 'nft', label: 'NFT' },
   ];
 
-  const renderDiscover = () => (
-    <ScrollView
-      style={{ flex: 1 }}
-      showsVerticalScrollIndicator={false}
-      onScroll={handleTabScroll}
-      scrollEventThrottle={16}
-      contentContainerStyle={{ padding: 16 }}
-    >
-      <Text style={st.tab_title}>{t('nav_discover')}</Text>
-
-      <TouchableOpacity
-        style={st.search_wrap}
-        onPress={() => { setDappUrlInput(''); setShowDappBrowser(true); }}
+  const renderDiscover = () => {
+    const list = dappCat === 'all' ? DISCOVER_DAPPS : DISCOVER_DAPPS.filter(d => d.cat === dappCat);
+    return (
+      <ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleTabScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ padding: 16 }}
       >
-        <View pointerEvents="none">
-          <TextInput
-            style={st.search_input}
-            placeholder="🔍 Rechercher ou saisir l'URL d'une dApp"
-            placeholderTextColor={T.text3}
-            editable={false}
-          />
-        </View>
-      </TouchableOpacity>
+        <Text style={st.tab_title}>{t('nav_discover')}</Text>
 
-      <View style={[st.section_hdr, { marginTop: 20 }]}>
-        <SectionTitle>Explorer les dApps</SectionTitle>
-      </View>
-      <View style={st.discover_grid}>
-        {FEATURED_DAPPS.map((d) => (
-          <AnimPressable key={d.name} style={st.discover_tile} scaleTo={0.96} onPress={() => { handleDappBrowserOpen(d.url); setShowDappBrowser(true); }}>
-            <View style={[st.discover_tile_icon, { backgroundColor: d.color }]}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18 }}>{d.letter}</Text>
-            </View>
-            <Text style={st.discover_tile_name} numberOfLines={1}>{d.name}</Text>
+        <TouchableOpacity
+          style={st.search_wrap}
+          onPress={() => { setDappUrlInput(''); setShowDappBrowser(true); }}
+        >
+          <View pointerEvents="none">
+            <TextInput
+              style={st.search_input}
+              placeholder="🔍 Rechercher ou saisir l'URL d'une dApp"
+              placeholderTextColor={T.text3}
+              editable={false}
+            />
+          </View>
+        </TouchableOpacity>
+
+        {/* Raccourcis natifs */}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.borderSoft, paddingVertical: 13 }} scaleTo={0.97} onPress={() => setTab('swap')}>
+            <Ionicons name="swap-horizontal" size={18} color={T.gold} />
+            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginLeft: 8 }}>Swap</Text>
           </AnimPressable>
-        ))}
-      </View>
-
-      <View style={[st.section_hdr, { marginTop: 24 }]}>
-        <SectionTitle>Earn</SectionTitle>
-      </View>
-      <AnimPressable style={st.settings_row} scaleTo={0.98} onPress={() => setShowStaking(true)}>
-        <Text style={{ fontSize: 22 }}>🌊</Text>
-        <View style={{ flex: 1, marginLeft: 14 }}>
-          <Text style={st.settings_row_title}>Staker de l'ETH (Lido)</Text>
-          <Text style={st.settings_row_sub}>Staking liquide non-custodial — reçois du stETH</Text>
+          <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.borderSoft, paddingVertical: 13 }} scaleTo={0.97} onPress={() => setShowBridge(true)}>
+            <Ionicons name="git-network" size={18} color={T.gold} />
+            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginLeft: 8 }}>Pont</Text>
+          </AnimPressable>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={T.text3} />
-      </AnimPressable>
 
-      <View style={[st.section_hdr, { marginTop: 16 }]}>
-        <SectionTitle>Raccourcis</SectionTitle>
-      </View>
-      <View style={{ flexDirection: 'row', gap: 12 }}>
-        <AnimPressable style={[st.settings_row, { flex: 1 }]} scaleTo={0.97} onPress={() => setTab('swap')}>
-          <Ionicons name="swap-horizontal" size={20} color={T.gold} />
-          <Text style={[st.settings_row_title, { marginLeft: 10 }]}>Swap</Text>
-        </AnimPressable>
-        <AnimPressable style={[st.settings_row, { flex: 1 }]} scaleTo={0.97} onPress={() => setShowBridge(true)}>
-          <Ionicons name="git-network" size={20} color={T.gold} />
-          <Text style={[st.settings_row_title, { marginLeft: 10 }]}>Pont</Text>
-        </AnimPressable>
-      </View>
+        {/* Filtres catégorie */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 18, marginBottom: 4 }} contentContainerStyle={{ paddingRight: 8 }}>
+          {DISCOVER_CATS.map(c => {
+            const on = dappCat === c.id;
+            return (
+              <TouchableOpacity key={c.id} onPress={() => setDappCat(c.id)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, marginRight: 8, backgroundColor: on ? T.gold : T.card2, borderWidth: 1, borderColor: on ? T.gold : T.border }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: on ? '#062219' : T.text2 }}>{c.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-      <View style={{ height: 90 }} />
-    </ScrollView>
-  );
+        {/* Liste dApps */}
+        <View style={{ backgroundColor: T.card, borderRadius: 16, borderWidth: 1, borderColor: T.borderSoft, marginTop: 8, overflow: 'hidden' }}>
+          {list.map((d, i) => (
+            <AnimPressable
+              key={d.name}
+              scaleTo={0.99}
+              onPress={() => { handleDappBrowserOpen(d.url); setShowDappBrowser(true); }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 14, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: T.border }}
+            >
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: d.color, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 17 }}>{d.letter}</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 13 }}>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{d.name}</Text>
+                <Text style={{ color: T.text3, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{d.desc}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={T.text3} />
+            </AnimPressable>
+          ))}
+        </View>
+
+        <Text style={{ color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 14 }}>
+          Les dApps s'ouvrent dans le navigateur intégré. Tes clés restent sur ton appareil.
+        </Text>
+
+        <View style={{ height: 90 }} />
+      </ScrollView>
+    );
+  };
 
   // ════════════════════════════════════════════════════════
   //  TAB: SWAP
