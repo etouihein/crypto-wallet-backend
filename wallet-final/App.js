@@ -4592,6 +4592,8 @@ function AppContent({ themeMode, changeTheme }) {
         toNetwork: bridgeToNetwork,
         fromAddress: walletAddr,
         amountWei,
+        apiBase: API_BASE,
+        apiHeaders: API_HEADERS,
       });
       setBridgeQuote(quote);
     } catch (err) {
@@ -6882,6 +6884,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
               Transfère de l'ETH natif entre Ethereum, Arbitrum, Optimism et Base, via l'agrégateur LI.FI. Signature et
               diffusion se font exactement comme un envoi normal — LI.FI ne voit jamais ta clé privée.
+              {'\n'}Frais NexiaWallet de 0,25 % inclus dans la route (voir le détail des frais ci-dessous une fois la route obtenue).
             </Text>
 
             <Text style={st.form_label}>Depuis</Text>

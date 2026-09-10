@@ -88,6 +88,22 @@ const FEE_RECIPIENT_ADDRESS = (() => {
 // propre part côté protocole, sans réduire la nôtre.
 const SWAP_FEE_BPS = Math.min(Math.max(parseInt(process.env.SWAP_FEE_BPS || '75', 10) || 0, 0), 300);
 
+// Pont cross-chain via LI.FI. LIFI_API_KEY est un vrai secret (rate-limit +
+// analytics) — il DOIT rester côté serveur, jamais dans le bundle client :
+// c'est la raison d'être du proxy /bridge/quote (avant, le client appelait
+// li.quest directement, sans clé et sans commission). LIFI_INTEGRATOR est la
+// chaîne enregistrée sur portal.li.fi qui route les frais vers l'adresse de
+// collecte de Pablo (Default EVM = FEE_RECIPIENT_ADDRESS, couvre toutes les
+// chaînes EVM). LIFI_FEE = part intégrateur, float (0.0025 = 0,25 %), doit
+// coller au réglage "Fees" de l'intégration ; LI.FI ajoute 0,25 % de service
+// par-dessus, sans réduire notre part.
+const LIFI_API_KEY = (process.env.LIFI_API_KEY || '').trim();
+const LIFI_INTEGRATOR = (process.env.LIFI_INTEGRATOR || 'nexiawallet').trim();
+const LIFI_FEE = (() => {
+  const n = parseFloat(process.env.LIFI_FEE || '0.0025');
+  return Number.isFinite(n) && n >= 0 && n < 0.1 ? n : 0.0025;
+})();
+
 // Reseaux dont l'identifiant "blockchains" officiel est confirme dans la doc
 // CDP (docs.cdp.coinbase.com/onramp/additional-resources/layer-2-networks).
 // BSC et Bitcoin sont volontairement exclus tant que leur identifiant exact
@@ -733,6 +749,60 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
   } catch (error) {
     console.error('Wallet route error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
+  }
+});
+
+// Proxy du devis de pont LI.FI — sert deux buts : (1) garder LIFI_API_KEY
+// côté serveur, (2) injecter integrator + fee côté serveur pour que la
+// commission NexiaWallet soit toujours appliquée (un client ne peut pas la
+// retirer). Scope volontairement restreint à l'ETH natif entre Ethereum /
+// Arbitrum / Optimism / Base, comme la v1 client (voir wallet-final/lib/
+// bridge.js) : bridger un ERC20 imposerait de revérifier son adresse sur
+// chaque chaîne de destination. La transaction reste signée + diffusée
+// 100 % côté client, LI.FI ne voit jamais la clé privée.
+const BRIDGE_CHAIN_IDS = [1, 42161, 10, 8453];
+const NATIVE_TOKEN_PLACEHOLDER = '0x0000000000000000000000000000000000000000';
+
+router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
+  try {
+    const { fromChain, toChain, fromAddress, fromAmount } = req.query;
+    const fc = parseInt(fromChain, 10);
+    const tc = parseInt(toChain, 10);
+    if (!BRIDGE_CHAIN_IDS.includes(fc) || !BRIDGE_CHAIN_IDS.includes(tc) || fc === tc) {
+      return res.status(400).json({ success: false, error: 'Chaînes de pont invalides.' });
+    }
+    if (!ethers.utils.isAddress(fromAddress || '')) {
+      return res.status(400).json({ success: false, error: 'Adresse invalide.' });
+    }
+    if (typeof fromAmount !== 'string' || !/^[1-9][0-9]*$/.test(fromAmount)) {
+      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    }
+
+    const params = new URLSearchParams({
+      fromChain: String(fc),
+      toChain: String(tc),
+      fromToken: NATIVE_TOKEN_PLACEHOLDER,
+      toToken: NATIVE_TOKEN_PLACEHOLDER,
+      fromAddress,
+      fromAmount,
+      integrator: LIFI_INTEGRATOR,
+    });
+    if (LIFI_FEE > 0) params.set('fee', String(LIFI_FEE));
+
+    const response = await fetch(`https://li.quest/v1/quote?${params.toString()}`, {
+      headers: LIFI_API_KEY ? { 'x-lifi-api-key': LIFI_API_KEY } : {},
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return res.status(response.status === 404 ? 404 : 400).json({
+        success: false,
+        error: data?.message || 'Aucune route de pont disponible pour ce montant.',
+      });
+    }
+    res.json({ success: true, quote: data, feePct: LIFI_FEE * 100 });
+  } catch (error) {
+    console.error('Bridge quote error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur lors du devis de pont.' });
   }
 });
 
