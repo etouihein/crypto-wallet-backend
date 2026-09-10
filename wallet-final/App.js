@@ -1107,7 +1107,12 @@ function CandlestickChart({ candles }) {
   const dtP = hiP - loP;
 
   const fmtP = (v) => {
-    if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+    // Sur une plage étroite (ex. ETH qui oscille de quelques %), "(v/1000).toFixed(1)+k"
+    // affichait "2.5k" deux fois de suite. On n'abrège qu'à partir de 10 000, et
+    // avec assez de précision pour que les 3 graduations restent distinctes.
+    if (v >= 100000) return Math.round(v / 1000) + 'k';
+    if (v >= 10000) return (v / 1000).toFixed(1) + 'k';
+    if (v >= 1000) return Math.round(v).toLocaleString('fr-FR');
     if (v >= 1) return v.toFixed(2);
     if (v >= 0.01) return v.toFixed(4);
     return v.toFixed(6);
@@ -1895,7 +1900,9 @@ function AppContent({ themeMode, changeTheme }) {
   const [duressSetupInput, setDuressSetupInput] = useState('');
   const [duressSetupError, setDuressSetupError] = useState(null);
   const [tab, setTab]                 = useState('home');
-  const [currency, setCurrency]       = useState('USD');
+  // EUR par défaut : l'app est franco-française. (Non persisté pour l'instant —
+  // repart sur EUR à chaque ouverture, ce qui convient au public cible.)
+  const [currency, setCurrency]       = useState('EUR');
 
   const [tokens, setTokens] = useState(() =>
     Object.fromEntries(
@@ -5799,8 +5806,8 @@ function AppContent({ themeMode, changeTheme }) {
         ) : (
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <View style={st.network_badge}>
-              <Text style={{ color: T.orange, fontSize: 12, fontWeight: 'bold' }}>
-                ⛓️ {{ SOL: 'SOLANA', BTC: 'BITCOIN' }[sendToken] || activeNetwork.label.toUpperCase()} • SOLDE RÉEL
+              <Text style={{ color: T.text2, fontSize: 12, fontWeight: 'bold' }}>
+                ⛓️ Réseau {{ SOL: 'Solana', BTC: 'Bitcoin' }[sendToken] || activeNetwork.label}
               </Text>
             </View>
 
@@ -5950,8 +5957,8 @@ function AppContent({ themeMode, changeTheme }) {
 
             <View style={st.send_info_box}>
               <Text style={st.send_info_line}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
-              <Text style={st.send_info_line}>Solde réel: {((sendToken === nativeSymbol) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
-              <Text style={st.send_info_line}>Réseau: {activeNetwork.label} • validation directe</Text>
+              <Text style={st.send_info_line}>Solde : {((sendToken === nativeSymbol) ? parseFloat(walletBalance || '0') : (tokens[sendToken]?.balance || 0)).toFixed(6)} {sendToken}</Text>
+              <Text style={st.send_info_line}>Réseau : {activeNetwork.label}</Text>
             </View>
 
             <AnimPressable style={[st.green_btn, { marginTop: 24 }]} onPress={prepareSend}>
@@ -6049,7 +6056,7 @@ function AppContent({ themeMode, changeTheme }) {
           )}
 
           <View style={st.warning_box}>
-            <Text style={st.warning_txt}>⚠️ Réseau réel principal. Les transactions sont diffusées sur la blockchain.</Text>
+            <Text style={st.warning_txt}>N'envoie à cette adresse que des actifs du réseau affiché ci-dessus. Un envoi depuis un autre réseau peut être perdu.</Text>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -8869,7 +8876,7 @@ function buildSt(T) {
   alert_chip:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: T.goldBg, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, borderWidth: 1, borderColor: T.gold + '44' },
   alert_chip_txt: { color: T.gold, fontSize: 12, fontWeight: '600' },
   alert_form:     { backgroundColor: T.card, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: T.border },
-  alert_add_txt:  { color: T.blue, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: 10 },
+  alert_add_txt:  { color: T.gold, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: 10 },
 
   news_card:  { width: 220, marginRight: 12, backgroundColor: T.card, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 3 },
   news_img:   { width: '100%', height: 100, borderRadius: 10, marginBottom: 8, backgroundColor: T.card2 },
@@ -8923,7 +8930,7 @@ function buildSt(T) {
   max_btn_txt:   { color: T.gold, fontWeight: 'bold', fontSize: 13 },
   quick_pct_btn: { flex: 1, backgroundColor: T.card2, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: T.border, alignItems: 'center' },
   quick_pct_txt: { color: T.text2, fontWeight: '600', fontSize: 12 },
-  amount_mode_toggle: { color: T.cyan, fontSize: 12, fontWeight: '600' },
+  amount_mode_toggle: { color: T.gold, fontSize: 12, fontWeight: '600' },
   tx_tag_chip: { color: T.text3, fontSize: 10, backgroundColor: T.card2, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden' },
   stats_card:    { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.border, padding: 16 },
   stats_card_lbl:{ color: T.text2, fontSize: 12 },
@@ -8983,7 +8990,7 @@ function buildSt(T) {
   history_amount: { fontFamily: T.fontMono, fontSize: 13, fontWeight: '600' },
 
   error_box:       { backgroundColor: T.redBg, borderRadius: 12, padding: 12, marginTop: 16, borderWidth: 1, borderColor: T.red + '44' },
-  network_badge:   { backgroundColor: T.orangeBg, borderRadius: 8, padding: 8, marginBottom: 16, borderWidth: 1, borderColor: T.orange + '44' },
+  network_badge:   { backgroundColor: T.card2, borderRadius: 8, padding: 8, marginBottom: 16, borderWidth: 1, borderColor: T.borderSoft },
 
   settings_section:   { color: T.text2, fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
   settings_row:       { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: T.border },
