@@ -2218,6 +2218,15 @@ function AppContent({ themeMode, changeTheme }) {
   // place — pas de scan caméra web ici (getUserMedia + décodage QR en JS
   // pur serait un chantier à part, hors scope de ce passage).
   const [showQrScanner, setShowQrScanner]       = useState(false);
+  // Depuis Envoyer, le scanner QR s'ouvre PAR-DESSUS l'écran Envoyer (pas de
+  // setShowSend(false) avant) — le fermer révèle donc Envoyer tout seul.
+  // Depuis WalletConnect en revanche, on ferme explicitement WalletConnect
+  // AVANT d'ouvrir le scanner (voir le commentaire sur ce bouton) pour
+  // éviter le bug des Modal imbriqués sur iOS/SDK54 — mais sans ce drapeau,
+  // annuler le scan (bouton retour, sans rien scanner) ne rouvrait jamais
+  // WalletConnect, et laissait l'utilisateur sur l'écran du dessous (Accueil)
+  // au lieu de l'endroit où il était.
+  const [qrScannerFromWalletConnect, setQrScannerFromWalletConnect] = useState(false);
   // `useCameraPermissions` n'existe pas dans le shim web d'expo-camera (crash
   // immédiat au montage) — Platform.OS ne change jamais en cours de vie de
   // l'app, donc cet appel conditionnel reste stable d'un render à l'autre.
@@ -5845,7 +5854,10 @@ function AppContent({ themeMode, changeTheme }) {
     <Modal visible={showQrScanner} animationType="slide">
       <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
         <View style={st.modal_hdr}>
-          <TouchableOpacity onPress={() => setShowQrScanner(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+          <TouchableOpacity
+            onPress={() => { setShowQrScanner(false); if (qrScannerFromWalletConnect) { setShowWalletConnect(true); setQrScannerFromWalletConnect(false); } }}
+            style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+          >
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={st.modal_title}>Scanner un QR code</Text>
@@ -5975,7 +5987,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <Ionicons name="clipboard-outline" size={20} color={T.text2} />
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
+              <TouchableOpacity style={st.addr_action_btn} onPress={() => { setQrScannerFromWalletConnect(false); setShowQrScanner(true); }} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
                 <Ionicons name="qr-code-outline" size={20} color={T.text2} />
               </TouchableOpacity>
             </View>
@@ -6517,7 +6529,7 @@ function AppContent({ themeMode, changeTheme }) {
           </AnimPressable>
           <AnimPressable
             style={st.settings_row}
-            onPress={() => { setShowWalletConnect(false); setShowQrScanner(true); }}
+            onPress={() => { setShowWalletConnect(false); setQrScannerFromWalletConnect(true); setShowQrScanner(true); }}
           >
             <Text style={{ fontSize: 22 }}>📷</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
