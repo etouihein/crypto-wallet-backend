@@ -224,7 +224,7 @@ Ce que NexiaWallet ne fait pas
 • Ne donne aucun conseil en investissement. Ce que tu achètes, gardes ou vends reste ta décision et ta responsabilité.
 
 Comment le projet se finance
-Une petite commission est prélevée sur les opérations optionnelles : 0,75 % sur un échange (swap), 0,25 % sur un pont cross-chain, et une commission sur les achats/ventes par carte via nos partenaires. Aucun abonnement ; envoyer, recevoir et garder ses cryptos est gratuit.
+Une petite commission est prélevée sur les opérations optionnelles : 0,75 % sur un échange (swap) et 0,25 % sur un pont cross-chain. Une commission sur les achats/ventes par carte via un partenaire est à l'étude mais n'est pas encore active. Aucun abonnement ; envoyer, recevoir et garder ses cryptos est gratuit.
 
 État du projet
 NexiaWallet est jeune et évolue vite. Version web disponible aujourd'hui, application mobile en préparation. Les retours sont les bienvenus — c'est ce qui fait avancer l'app.
@@ -233,55 +233,76 @@ Contact : contact@nexiawallet.com`,
   },
   cgu: {
     title: "Conditions Générales d'Utilisation",
-    updated: '5 juillet 2026',
+    updated: '11 septembre 2026',
     body: `1. Objet
-NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille multi-réseaux (Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, Solana, Bitcoin) sans que NexiaWallet ne détienne ou ne contrôle jamais les fonds de l'utilisateur (voir §2 pour le détail du traitement de la clé privée).
+NexiaWallet est une application de portefeuille crypto non-custodial : elle permet de générer, importer et utiliser un portefeuille multi-réseaux (Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Base, Solana, Bitcoin) sans que NexiaWallet ne détienne ou ne contrôle jamais les fonds de l'utilisateur (voir §2 pour le détail du traitement de la clé privée). L'utilisation de l'application vaut acceptation pleine et entière des présentes conditions.
 
 2. Nature non-custodiale
 NexiaWallet ne détient et ne contrôle jamais les fonds de l'utilisateur. La clé privée et la phrase de récupération sont générées, chiffrées et utilisées EXCLUSIVEMENT sur l'appareil de l'utilisateur : elles ne quittent jamais cet appareil, ne transitent jamais par un serveur NexiaWallet et ne sont jamais écrites sur un disque ou une base de données qui nous appartient. Toute transaction est signée localement ; seule la transaction déjà signée (donnée publique dès sa diffusion) est relayée au réseau. En conséquence, NexiaWallet ne peut techniquement ni récupérer ni réinitialiser un accès perdu.
 
-3. Responsabilité de l'utilisateur
+3. Éligibilité et usage autorisé
+L'utilisation de NexiaWallet est réservée aux personnes majeures, juridiquement capables de contracter. L'utilisateur s'engage à ne pas utiliser l'application à des fins illégales (blanchiment, financement d'activités illicites, contournement de sanctions internationales, fraude). En tant qu'outil non-custodial, NexiaWallet n'effectue elle-même aucune vérification d'identité ; les contrôles d'identité (KYC) éventuels sont assurés par les prestataires tiers d'achat/vente mentionnés au §6.
+
+4. Responsabilité de l'utilisateur
 L'utilisateur est seul responsable de la conservation de sa phrase de récupération et de son code PIN. Leur perte entraîne la perte définitive et irréversible de l'accès aux fonds. NexiaWallet ne peut en aucun cas restaurer un accès perdu.
 
-4. Transactions
-Les transactions sur une blockchain publique sont irréversibles. L'utilisateur doit vérifier l'adresse et le montant avant toute confirmation d'envoi. NexiaWallet n'est pas responsable des transactions envoyées à une adresse erronée.
+5. Transactions
+Les transactions sur une blockchain publique sont irréversibles. L'utilisateur doit vérifier l'adresse et le montant avant toute confirmation d'envoi. NexiaWallet n'est pas responsable des transactions envoyées à une adresse erronée, y compris via une interaction avec un contrat intelligent tiers (dApp connectée en WalletConnect ou via le navigateur intégré).
 
-5. Services tiers
-L'achat de crypto par carte bancaire est assuré par un prestataire tiers (Coinbase Onramp), soumis à ses propres conditions et vérifications ; les fonds achetés sont livrés directement à l'adresse du wallet de l'utilisateur, jamais sur un compte détenu par NexiaWallet. Les prix et données de marché proviennent de fournisseurs tiers (CoinGecko, Etherscan) fournis "en l'état", sans garantie d'exactitude en temps réel.
+6. Services et prestataires tiers
+Achat de crypto par carte : Coinbase Onramp. Vente de crypto (mise en euros) : Coinbase Offramp — nécessite un compte Coinbase et sa propre vérification d'identité. Dans les deux cas, les fonds sont livrés ou prélevés directement sur l'adresse du wallet de l'utilisateur, jamais sur un compte détenu par NexiaWallet. Échange entre cryptos (swap) : agrégateur 0x. Transfert entre réseaux (pont) : agrégateur LI.FI. Dans ces deux cas, la signature de la transaction reste 100 % locale sur l'appareil de l'utilisateur. Connexion à une application décentralisée tierce (WalletConnect, navigateur intégré) : l'utilisateur interagit alors directement avec un contrat intelligent tiers dont NexiaWallet ne contrôle ni le code ni le comportement — vérifier la légitimité d'une dApp avant de s'y connecter reste de la responsabilité de l'utilisateur. Données de marché, historique de transactions et visuels NFT : CoinGecko, explorateurs de blocs (Etherscan et équivalents), Alchemy — fournis "en l'état", sans garantie d'exactitude en temps réel.
 
-6. Limitation de responsabilité
-NexiaWallet est fourni "en l'état", sans garantie d'absence d'erreur ou d'interruption. L'utilisation de cryptomonnaies comporte des risques de marché et de sécurité que l'utilisateur accepte en connaissance de cause.
+7. Commissions
+NexiaWallet prélève une commission sur certaines opérations optionnelles, intégrée et affichée dans le taux proposé avant confirmation : 0,75 % sur un échange (swap) et 0,25 % sur un transfert entre réseaux (pont). Générer, importer, envoyer, recevoir et conserver des cryptos reste gratuit, sans abonnement. Le détail à jour de ce financement figure dans la page "À propos de NexiaWallet".
 
-7. Évolution
-Ces conditions peuvent être mises à jour ; la date de dernière mise à jour figure en haut de ce document.`,
+8. Limitation de responsabilité
+NexiaWallet est fourni "en l'état", sans garantie d'absence d'erreur ou d'interruption. L'utilisation de cryptomonnaies comporte des risques de marché et de sécurité que l'utilisateur accepte en connaissance de cause. NexiaWallet ne saurait être tenu responsable des conséquences d'une décision d'investissement, d'une action d'un prestataire tiers, ou d'une interaction avec un contrat intelligent tiers.
+
+9. Résiliation
+L'utilisateur peut cesser d'utiliser NexiaWallet à tout moment en désinstallant l'application ou en supprimant son wallet local — sa phrase de récupération reste alors le seul moyen d'en retrouver l'accès ailleurs, y compris dans un autre wallet non-custodial compatible. NexiaWallet peut faire évoluer, suspendre ou arrêter tout ou partie du service sans que cela n'affecte les fonds de l'utilisateur.
+
+10. Droit applicable
+Les présentes conditions sont soumises au droit français. À défaut de résolution amiable, tout litige relève des tribunaux français compétents.
+
+11. Évolution
+Ces conditions peuvent être mises à jour ; la date de dernière mise à jour figure en haut de ce document. Contact : contact@nexiawallet.com`,
   },
   privacy: {
     title: 'Politique de Confidentialité',
-    updated: '5 juillet 2026',
-    body: `1. Aucune donnée personnelle collectée
+    updated: '11 septembre 2026',
+    body: `1. Aucune donnée personnelle collectée pour créer un wallet
 NexiaWallet ne demande ni email, ni nom, ni numéro de téléphone pour créer un wallet. Aucun compte utilisateur n'existe côté serveur.
 
 2. Ce qui reste uniquement sur l'appareil
-Le code PIN (chiffré), les favoris, le carnet d'adresses récentes et les alertes de prix sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
+Le code PIN (chiffré), les favoris, le carnet d'adresses récentes, les alertes de prix et les préférences d'affichage (devise, langue, thème) sont stockés localement (stockage sécurisé du système ou stockage du navigateur). Rien de tout cela n'est envoyé à un serveur NexiaWallet.
 
 3. Ce qui ne transite JAMAIS par le serveur
 La clé privée et la phrase de récupération sont générées et utilisées exclusivement sur l'appareil (génération, chiffrement et signature des transactions 100% locaux) — elles ne sont ni envoyées ni conservées, même temporairement, par un serveur NexiaWallet. Le serveur reçoit uniquement des données publiques de blockchain nécessaires au fonctionnement : adresse publique (pour consulter un solde ou un historique), transaction déjà signée (pour la relayer au réseau). Ces dernières sont publiques par nature sur une blockchain.
 
-4. Fournisseurs tiers
-Les prix de marché (CoinGecko), l'historique de transactions (Etherscan) et le paiement par carte (Coinbase Onramp) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté.
+4. Fournisseurs tiers utilisés
+Les prix de marché (CoinGecko), l'historique de transactions (Etherscan et équivalents), les visuels NFT (Alchemy), l'achat/la vente par carte (Coinbase Onramp/Offramp), l'échange entre cryptos (0x) et le pont entre réseaux (LI.FI) sont fournis par des services tiers ; consulter leurs propres politiques de confidentialité pour le traitement effectué de leur côté. NexiaWallet ne leur transmet jamais votre clé privée ni votre phrase de récupération.
 
-5. Cookies et tracking
+5. Suivi d'erreurs (Sentry)
+En cas de bug, un rapport technique (message d'erreur, type d'appareil, version de l'application) peut être envoyé à Sentry, l'outil utilisé pour détecter et corriger les problèmes. Aucune donnée sensible du wallet — clé privée, phrase de récupération, code PIN — n'est jamais incluse dans ces rapports.
+
+6. Mesure d'audience
+NexiaWallet peut utiliser Cloudflare Web Analytics pour mesurer la fréquentation du site (pages consultées, provenance approximative du trafic). Cet outil ne dépose aucun cookie et n'identifie individuellement aucun visiteur.
+
+7. Cookies
 Aucun cookie publicitaire ni outil de suivi tiers n'est utilisé sur ce site.
 
-6. Contact
-Pour toute question sur cette politique, contacter l'éditeur via les informations listées dans les Mentions Légales.`,
+8. Vos droits
+Pour les données techniques limitées décrites ci-dessus, vous disposez d'un droit d'accès, de rectification et d'effacement. Pour l'exercer, contactez contact@nexiawallet.com. Vous pouvez aussi introduire une réclamation auprès de la CNIL (cnil.fr).
+
+9. Contact
+Pour toute question sur cette politique, contactez contact@nexiawallet.com ou consultez les informations listées dans les Mentions Légales.`,
   },
   mentions: {
     title: 'Mentions Légales',
-    updated: '5 juillet 2026',
+    updated: '11 septembre 2026',
     body: `Éditeur du site
-NexiaWallet est édité par [NOM PRÉNOM À COMPLÉTER], entrepreneur individuel (micro-entreprise), SIRET [À COMPLÉTER], [ADRESSE À COMPLÉTER].
-Directeur de la publication : [NOM PRÉNOM À COMPLÉTER].
+NexiaWallet est édité par Pablo [NOM DE FAMILLE À CONFIRMER], entrepreneur individuel (micro-entreprise), SIREN 108 689 357, SIRET 108 689 357 00011, activité déclarée : programmation informatique (code APE 62.01Z). Entreprise à statut non-diffusible : l'adresse professionnelle n'est pas publiée ici, mais communiquée sur demande légitime (autorité, procédure judiciaire) via contact@nexiawallet.com.
+Directeur de la publication : Pablo [NOM DE FAMILLE À CONFIRMER].
 
 Hébergement
 Backend applicatif hébergé par Railway (railway.app). Application web hébergée par Cloudflare Pages (pages.dev).
@@ -293,7 +314,7 @@ Propriété intellectuelle
 L'interface, le code et les visuels de NexiaWallet sont la propriété de leur auteur, sauf logos et données de marché appartenant à leurs fournisseurs respectifs (CoinGecko, Coinbase).
 
 Contact
-Pour toute question, un formulaire ou une adresse de contact sera ajouté prochainement.`,
+contact@nexiawallet.com`,
   },
 };
 
@@ -2344,13 +2365,16 @@ function AppContent({ themeMode, changeTheme }) {
 
   const fxRate = CURRENCIES[currency]?.rate || 1;
   const symC   = CURRENCIES[currency]?.symbol || '$';
+  // `emoji`/`desc` servent uniquement à l'affichage compact du sélecteur de
+  // réseau dans Paramètres (voir renderSettings) — une seule source pour
+  // éviter que la liste UI et cette config divergent avec le temps.
   const NETWORK_INFO = {
-    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1,     explorer: 'https://etherscan.io' },
-    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,    explorer: 'https://bscscan.com' },
-    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137,   explorer: 'https://polygonscan.com' },
-    arbitrum: { label: 'Arbitrum One',     network: 'arbitrum', chainId: 42161, explorer: 'https://arbiscan.io' },
-    optimism: { label: 'Optimism',         network: 'optimism', chainId: 10,    explorer: 'https://optimistic.etherscan.io' },
-    base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org' },
+    ethereum: { label: 'Ethereum Mainnet', network: 'ethereum', chainId: 1,     explorer: 'https://etherscan.io',        emoji: '⛓️', desc: 'Le réseau principal, le plus utilisé' },
+    bsc:      { label: 'BNB Smart Chain',  network: 'bsc',      chainId: 56,    explorer: 'https://bscscan.com',         emoji: '🟡', desc: 'Frais de transaction très bas' },
+    polygon:  { label: 'Polygon',          network: 'polygon',  chainId: 137,   explorer: 'https://polygonscan.com',     emoji: '🟪', desc: 'Rapide et frais très bas' },
+    arbitrum: { label: 'Arbitrum One',     network: 'arbitrum', chainId: 42161, explorer: 'https://arbiscan.io',         emoji: '🔵', desc: 'Ethereum en plus rapide et moins cher' },
+    optimism: { label: 'Optimism',         network: 'optimism', chainId: 10,    explorer: 'https://optimistic.etherscan.io', emoji: '🔴', desc: 'Ethereum en plus rapide et moins cher' },
+    base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org',        emoji: '🔷', desc: 'Ethereum en plus rapide et moins cher, par Coinbase' },
   };
   const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
   // Symbole du token natif du réseau actif — recalculé souvent ailleurs
@@ -7191,64 +7215,29 @@ function AppContent({ themeMode, changeTheme }) {
             {Object.entries(CURRENCIES).map(([code, cur]) => (
               <TouchableOpacity
                 key={code}
-                style={[st.currency_chip, currency === code && st.currency_chip_on]}
+                style={[st.chip_pill, currency === code && st.chip_pill_on]}
                 onPress={() => { setCurrency(code); saveCurrency(code); }}
               >
                 <Text style={{ fontSize: 15 }}>{cur.flag}</Text>
-                <Text style={[st.currency_chip_txt, currency === code && st.currency_chip_txt_on]}>{code}</Text>
+                <Text style={[st.chip_pill_txt, currency === code && st.chip_pill_txt_on]}>{code}</Text>
               </TouchableOpacity>
             ))}
           </View>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('ethereum')}>
-            <Text style={{ fontSize: 22 }}>⛓️</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Ethereum Mainnet</Text>
-              <Text style={st.settings_row_sub}>Le réseau principal, le plus utilisé</Text>
-            </View>
-            {network === 'ethereum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('bsc')}>
-            <Text style={{ fontSize: 22 }}>🟡</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>BNB Smart Chain</Text>
-              <Text style={st.settings_row_sub}>Frais de transaction très bas</Text>
-            </View>
-            {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('polygon')}>
-            <Text style={{ fontSize: 22 }}>🟪</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Polygon</Text>
-              <Text style={st.settings_row_sub}>Rapide et frais très bas</Text>
-            </View>
-            {network === 'polygon' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('arbitrum')}>
-            <Text style={{ fontSize: 22 }}>🔵</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Arbitrum One</Text>
-              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher</Text>
-            </View>
-            {network === 'arbitrum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('optimism')}>
-            <Text style={{ fontSize: 22 }}>🔴</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Optimism</Text>
-              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher</Text>
-            </View>
-            {network === 'optimism' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
-          <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('base')}>
-            <Text style={{ fontSize: 22 }}>🔷</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Base</Text>
-              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher, par Coinbase</Text>
-            </View>
-            {network === 'base' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {Object.entries(NETWORK_INFO).map(([id, n]) => (
+              <TouchableOpacity
+                key={id}
+                style={[st.chip_pill, network === id && st.chip_pill_on]}
+                onPress={() => setNetwork(id)}
+              >
+                <Text style={{ fontSize: 15 }}>{n.emoji}</Text>
+                <Text style={[st.chip_pill_txt, network === id && st.chip_pill_txt_on]}>{n.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>{activeNetwork.desc}</Text>
 
           {!!favorites.length && (
             <>
@@ -7546,6 +7535,11 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={st.settings_row_sub}>Uniswap, OpenSea... via un lien ou un QR code</Text>
                 </View>
               </AnimPressable>
+
+              {/* Regroupe les fonctionnalités qui n'ont rien à voir avec
+                  WalletConnect (bridge, DeFi, achat récurrent...) — avant,
+                  elles étaient rangées sous "WalletConnect" par erreur. */}
+              <Text style={[st.settings_section, { marginTop: 24 }]}>⚡ Fonctionnalités avancées</Text>
               <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappDisplayUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
                 <Text style={{ fontSize: 22 }}>🌐</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
@@ -7731,26 +7725,24 @@ function AppContent({ themeMode, changeTheme }) {
           </AnimPressable>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
-          {SUPPORTED_LOCALES.map(code => (
-            <TouchableOpacity key={code} style={[st.settings_row, locale === code && st.settings_row_on]} onPress={() => changeLocale(code)}>
-              <Text style={{ fontSize: 22 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
-              <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>{LOCALE_DISPLAY[code]?.name || code}</Text>
-              </View>
-              {locale === code && <Text style={{ color: T.gold }}>✓</Text>}
-            </TouchableOpacity>
-          ))}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {SUPPORTED_LOCALES.map(code => (
+              <TouchableOpacity key={code} style={[st.chip_pill, locale === code && st.chip_pill_on]} onPress={() => changeLocale(code)}>
+                <Text style={{ fontSize: 15 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
+                <Text style={[st.chip_pill_txt, locale === code && st.chip_pill_txt_on]}>{LOCALE_DISPLAY[code]?.name || code}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🎨 {t('settings_theme')}</Text>
-          {[['dark', '🌙', t('settings_theme_dark')], ['light', '☀️', t('settings_theme_light')]].map(([mode, icon, label]) => (
-            <TouchableOpacity key={mode} style={[st.settings_row, themeMode === mode && st.settings_row_on]} onPress={() => changeTheme(mode)}>
-              <Text style={{ fontSize: 22 }}>{icon}</Text>
-              <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>{label}</Text>
-              </View>
-              {themeMode === mode && <Text style={{ color: T.gold }}>✓</Text>}
-            </TouchableOpacity>
-          ))}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+            {[['dark', '🌙', t('settings_theme_dark')], ['light', '☀️', t('settings_theme_light')]].map(([mode, icon, label]) => (
+              <TouchableOpacity key={mode} style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, themeMode === mode && st.chip_pill_on]} onPress={() => changeTheme(mode)}>
+                <Text style={{ fontSize: 15 }}>{icon}</Text>
+                <Text style={[st.chip_pill_txt, themeMode === mode && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <View style={[st.warning_box, { marginTop: 24 }]}>
             <Text style={st.warning_txt}>
@@ -8898,10 +8890,10 @@ function buildSt(T) {
   chain_tab_sm_txt:  { color: T.text2, fontSize: 12, fontWeight: '600' },
   chain_tab_sm_txt_on: { color: T.gold },
 
-  currency_chip:       { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: T.card, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9, borderWidth: 1, borderColor: T.border },
-  currency_chip_on:    { backgroundColor: T.goldBg, borderColor: T.gold },
-  currency_chip_txt:   { color: T.text2, fontSize: 13, fontWeight: '700' },
-  currency_chip_txt_on:{ color: T.gold },
+  chip_pill:       { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: T.card, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9, borderWidth: 1, borderColor: T.border },
+  chip_pill_on:    { backgroundColor: T.goldBg, borderColor: T.gold },
+  chip_pill_txt:   { color: T.text2, fontSize: 13, fontWeight: '700' },
+  chip_pill_txt_on:{ color: T.gold },
   load_more_btn: { alignItems: 'center', paddingVertical: 14, marginTop: 4, borderRadius: 12, borderWidth: 1, borderColor: T.border },
   load_more_txt: { color: T.text2, fontSize: 13, fontWeight: '600' },
   alert_section:  { marginHorizontal: 16, marginBottom: 16 },
