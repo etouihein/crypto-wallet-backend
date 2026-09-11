@@ -3395,18 +3395,31 @@ function AppContent({ themeMode, changeTheme }) {
   // méthodes purement lecture (pas de signature, pas de nouvelle
   // autorisation) sont résolues tout de suite ; le reste passe par une
   // confirmation explicite (renderDappBridgeRequest).
+  //
+  // SÉCURITÉ (faille corrigée le 2026-09-11, trouvée par audit) : `msg.origin`
+  // vient du CORPS du message que la page envoie elle-même via
+  // `window.ReactNativeWebView.postMessage` — un pont global que N'IMPORTE
+  // QUELLE page chargée peut appeler directement, sans passer par le script
+  // injecté (`dappBrowserProvider.js`) qui, lui, y met honnêtement
+  // `window.location.origin`. Une page malveillante peut donc forger
+  // `origin: "https://vraie-dapp-deja-connectee.com"` dans son propre appel et
+  // se faire passer pour un site déjà autorisé (fuite silencieuse de
+  // l'adresse via eth_accounts) ou pour un site de confiance dans la modale de
+  // confirmation d'une signature/transaction (phishing). On calcule donc
+  // l'origine de confiance nous-mêmes, côté natif, à partir de l'URL RÉELLE
+  // suivie par la WebView (`dappDisplayUrl`, mis à jour par
+  // `onNavigationStateChange` — un événement natif qu'une page ne peut pas
+  // falsifier), et on ignore complètement `msg.origin`.
+  const dappTrustedOrigin = useCallback(() => {
+    try { return new URL(dappDisplayUrl || dappCurrentUrl || '').origin; } catch { return ''; }
+  }, [dappDisplayUrl, dappCurrentUrl]);
+
   const handleDappMessage = useCallback((event) => {
     let msg;
     try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
     if (!msg || msg.source !== 'nexiawallet-provider') return;
     const { id, method, params } = msg;
-    // L'origine vient du message lui-même (window.location.origin lu par le
-    // script injecté au moment de l'envoi, voir lib/dappBrowserProvider.js) —
-    // PAS d'un état React ("URL ouverte au départ"), qui ne suit pas les
-    // navigations internes (lien, redirection) dans la même WebView et
-    // permettrait sinon à une page différente de celle réellement affichée
-    // d'hériter d'une autorisation/adresse accordée à une autre origine.
-    const origin = typeof msg.origin === 'string' ? msg.origin : '';
+    const origin = dappTrustedOrigin();
 
     if (method === 'eth_chainId') {
       return dappBridgeRespond(id, null, '0x' + localWallet.getNetworkConfig(network).chainId.toString(16));
@@ -3421,7 +3434,7 @@ function AppContent({ themeMode, changeTheme }) {
     // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
     setDappBridgeError(null);
     setDappBridgeRequest({ id, method, params, origin });
-  }, [dappConnectedOrigins, walletAddr, network, dappBridgeRespond]);
+  }, [dappConnectedOrigins, walletAddr, network, dappBridgeRespond, dappTrustedOrigin]);
 
   const handleDappBridgeApprove = useCallback(async () => {
     if (!dappBridgeRequest) return;
