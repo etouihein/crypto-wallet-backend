@@ -323,6 +323,27 @@ vérifications, toutes vertes. Objectif assumé : attraper une régression
 évidente en ~30s, pas remplacer une revue de code ni couvrir chaque écran
 — base à compléter au fil des sessions plutôt que repartir de zéro.
 
+## 6sexies. Nouvelles fonctionnalités (commits `bbe17a8`, `2f715eb`)
+
+Sur demande explicite d'ajouter du neuf plutôt que de continuer l'audit :
+
+- **Répartition du portefeuille (onglet Stats)** : corrige un vrai manque
+  noté lors de l'audit UX du 10/09 — l'onglet Stats était vide/inutile
+  pour un nouvel utilisateur tant qu'aucune transaction n'était
+  enregistrée. Nouvelle section basée sur les SOLDES actuels (pas
+  l'historique) — barre segmentée colorée par token + légende
+  nom/valeur/%, donc utile dès la première crypto détenue. Vérifié avec
+  Playwright en simulant un vrai solde ETH via interception RPC (pipeline
+  réel de bout en bout, pas un mock de composant) : rendu correct, la
+  section "Pas encore de stats" (transactions) cohabite bien avec la
+  nouvelle section (soldes) puisque ce sont deux sources de données
+  différentes.
+- **Export CSV du relevé de portefeuille** : même principe que l'export
+  CSV de l'historique déjà existant — photo du portefeuille à l'instant T
+  (token, solde, prix, valeur, devise), utile pour un suivi personnel ou
+  une déclaration fiscale. Vérifié : le CSV copié dans le presse-papier
+  contient les bonnes valeurs avec la conversion de devise correcte.
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
