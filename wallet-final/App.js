@@ -6361,6 +6361,16 @@ function AppContent({ themeMode, changeTheme }) {
       ? new Date(walletSession.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
       : null;
 
+    // Répartition du portefeuille — NOUVEAU : contrairement aux stats
+    // ci-dessous (comptage de transactions, vide tant qu'aucune n'a eu
+    // lieu), ceci se base sur les soldes actuels et est donc utile dès la
+    // première crypto détenue, même sans historique de transaction.
+    const holdingsForAllocation = Object.entries(tokens)
+      .map(([sym, tk]) => ({ sym, name: tk.name, color: tk.color || T.gold, value: (tk.balance || 0) * (tk.price || 0) }))
+      .filter(h => h.value >= 0.01)
+      .sort((a, b) => b.value - a.value);
+    const allocationTotal = holdingsForAllocation.reduce((s, h) => s + h.value, 0);
+
     return (
       <ScrollView
         style={{ flex: 1, padding: 16 }}
@@ -6380,6 +6390,27 @@ function AppContent({ themeMode, changeTheme }) {
           <View style={st.stats_card}>
             <Text style={st.stats_card_lbl}>Wallet créé le</Text>
             <Text style={st.stats_card_val}>{memberSince}</Text>
+          </View>
+        )}
+
+        {!!holdingsForAllocation.length && (
+          <View style={[st.stats_card, { marginTop: 12 }]}>
+            <Text style={st.stats_card_lbl}>Répartition du portefeuille</Text>
+            <View style={{ flexDirection: 'row', height: 10, borderRadius: 6, overflow: 'hidden', marginTop: 12, marginBottom: 14, backgroundColor: T.card2 }}>
+              {holdingsForAllocation.map(h => (
+                <View key={h.sym} style={{ flex: h.value, backgroundColor: h.color }} />
+              ))}
+            </View>
+            {holdingsForAllocation.map(h => (
+              <View key={h.sym} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: h.color, marginRight: 10 }} />
+                <Text style={{ color: T.text, fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>{h.name}</Text>
+                <Text style={{ color: T.text2, fontSize: 12, marginRight: 10 }}>{fmt(h.value)}</Text>
+                <Text style={{ color: T.text3, fontSize: 12, width: 42, textAlign: 'right' }}>
+                  {allocationTotal > 0 ? ((h.value / allocationTotal) * 100).toFixed(1) : '0.0'}%
+                </Text>
+              </View>
+            ))}
           </View>
         )}
 
