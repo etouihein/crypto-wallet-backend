@@ -2701,6 +2701,29 @@ function AppContent({ themeMode, changeTheme }) {
     await copyToClipboard([header, ...rows].join('\n'), `${items.length} transaction(s) copiées en CSV`);
   }, [copyToClipboard, txTags]);
 
+  // Photo du portefeuille à l'instant T (solde + valeur par token) — même
+  // principe que l'export CSV de l'historique ci-dessus, utile pour un
+  // suivi personnel ou une déclaration fiscale (la valorisation des cryptos
+  // détenues est demandée par l'administration française, contrairement à
+  // l'historique complet des mouvements que seul un vrai indexeur fiscal
+  // dédié peut produire correctement — ce CSV n'a pas cette prétention).
+  const exportPortfolioCsv = useCallback(async (holdings) => {
+    if (!holdings.length) return;
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = ['Date du relevé', 'Token', 'Symbole', 'Solde', 'Prix unitaire', 'Valeur', 'Devise'].map(esc).join(',');
+    const now = new Date().toISOString();
+    const rows = holdings.map(h => [
+      now,
+      h.name,
+      h.sym,
+      (tokens[h.sym]?.balance || 0),
+      (tokens[h.sym]?.price || 0) * fxRate,
+      h.value * fxRate,
+      currency,
+    ].map(esc).join(','));
+    await copyToClipboard([header, ...rows].join('\n'), `Relevé de ${holdings.length} crypto(s) copié en CSV`);
+  }, [copyToClipboard, tokens, fxRate, currency]);
+
   // Migration entre appareils : favoris, carnet d'adresses, alertes de prix
   // et étiquettes -- rien de sensible (aucune clé, aucune donnée privée),
   // copié en JSON via le presse-papier plutôt qu'un vrai fichier (même choix
@@ -6411,6 +6434,14 @@ function AppContent({ themeMode, changeTheme }) {
                 </Text>
               </View>
             ))}
+            <TouchableOpacity
+              onPress={() => exportPortfolioCsv(holdingsForAllocation)}
+              style={{ alignSelf: 'flex-end', marginTop: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel="Exporter le relevé du portefeuille en CSV"
+            >
+              <Text style={{ color: T.cyan, fontSize: 12, fontWeight: '600' }}>⇩ Exporter en CSV</Text>
+            </TouchableOpacity>
           </View>
         )}
 
