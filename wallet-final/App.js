@@ -759,6 +759,22 @@ const saveHideZeroBalances = async (enabled) => {
   try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
 };
 
+// Devise d'affichage (EUR par défaut — voir CURRENCIES). Persistée dès que
+// l'utilisateur en choisit une autre dans Paramètres, sinon l'app repartait
+// sur EUR à chaque ouverture même pour un utilisateur ayant choisi USD/GBP/etc.
+const CURRENCY_KEY = 'wallet-pro-currency-v1';
+
+const loadCurrency = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(CURRENCY_KEY);
+    return raw && CURRENCIES[raw] ? raw : 'EUR';
+  } catch { return 'EUR'; }
+};
+
+const saveCurrency = async (code) => {
+  try { await AsyncStorage.setItem(CURRENCY_KEY, code); } catch { /* rien à faire */ }
+};
+
 // Parrainage : code de qui a invité cet appareil, capté une seule fois (à la
 // toute première installation) depuis le lien ?ref=XXXXXXXX partagé — voir
 // shareReferralLink. Purement informatif tant qu'aucun système de récompense
@@ -1900,8 +1916,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [duressSetupInput, setDuressSetupInput] = useState('');
   const [duressSetupError, setDuressSetupError] = useState(null);
   const [tab, setTab]                 = useState('home');
-  // EUR par défaut : l'app est franco-française. (Non persisté pour l'instant —
-  // repart sur EUR à chaque ouverture, ce qui convient au public cible.)
+  // EUR par défaut : l'app est franco-française. Persisté (voir loadCurrency/
+  // saveCurrency) dès que l'utilisateur choisit une autre devise.
   const [currency, setCurrency]       = useState('EUR');
 
   const [tokens, setTokens] = useState(() =>
@@ -3739,6 +3755,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadVibrationEnabled().then(setVibrationEnabled);
     loadHideZeroBalances().then(setHideZeroBalances);
     loadLocale().then(setLocale);
+    loadCurrency().then(setCurrency);
     loadBalancePeriod().then(setBalancePeriod);
     loadLastSend().then(setLastSend);
     loadTokenUsage().then(setTokenUsage);
@@ -5469,14 +5486,14 @@ function AppContent({ themeMode, changeTheme }) {
             </View>
             <View style={st.detail_actions}>
               {[
-                { icon: '↑', label: 'Envoyer',  onPress: () => { setSelectedToken(null); setSendToken(selectedToken); setShowSend(true); } },
-                { icon: '↓', label: 'Recevoir', onPress: () => { setSelectedToken(null); setShowReceive(true); } },
-                { icon: '⇄', label: 'Swap',     onPress: () => { setSelectedToken(null); setSwapFrom(selectedToken); setTab('swap'); } },
-                ...(selectedToken === 'SOL' ? [{ icon: '🌱', label: 'Staker', onPress: () => { setSelectedToken(null); openStaking(); } }] : []),
+                { icon: 'arrow-up',         label: 'Envoyer',  onPress: () => { setSelectedToken(null); setSendToken(selectedToken); setShowSend(true); } },
+                { icon: 'arrow-down',       label: 'Recevoir', onPress: () => { setSelectedToken(null); setShowReceive(true); } },
+                { icon: 'swap-horizontal',  label: 'Swap',     onPress: () => { setSelectedToken(null); setSwapFrom(selectedToken); setTab('swap'); } },
+                ...(selectedToken === 'SOL' ? [{ icon: 'leaf-outline', label: 'Staker', onPress: () => { setSelectedToken(null); openStaking(); } }] : []),
               ].map(a => (
                 <AnimPressable key={a.label} style={st.detail_action_btn} onPress={a.onPress}>
                   <View style={st.detail_action_icon}>
-                    <Text style={{ color: T.gold, fontSize: 20 }}>{a.icon}</Text>
+                    <Ionicons name={a.icon} size={20} color={T.gold} />
                   </View>
                   <Text style={st.detail_action_lbl}>{a.label}</Text>
                 </AnimPressable>
@@ -5598,9 +5615,12 @@ function AppContent({ themeMode, changeTheme }) {
       <View style={st.alert_section}>
         {existing.map(a => (
           <View key={a.id} style={st.alert_chip}>
-            <Text style={st.alert_chip_txt}>
-              🔔 Prix {a.direction === 'above' ? '≥' : '≤'} {fmt(a.targetPrice, a.targetPrice < 1 ? 4 : 2)}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="notifications-outline" size={13} color={T.gold} />
+              <Text style={st.alert_chip_txt}>
+                Prix {a.direction === 'above' ? '≥' : '≤'} {fmt(a.targetPrice, a.targetPrice < 1 ? 4 : 2)}
+              </Text>
+            </View>
             <TouchableOpacity onPress={() => removePriceAlert(a.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Text style={{ color: T.red, fontSize: 13 }}>✕</Text>
             </TouchableOpacity>
@@ -5657,8 +5677,12 @@ function AppContent({ themeMode, changeTheme }) {
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity onPress={() => { setAlertFormFor(symbol); setAlertTargetInput(''); setAlertDirection('above'); }}>
-            <Text style={st.alert_add_txt}>🔔 Créer une alerte de prix</Text>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 }}
+            onPress={() => { setAlertFormFor(symbol); setAlertTargetInput(''); setAlertDirection('above'); }}
+          >
+            <Ionicons name="notifications-outline" size={14} color={T.gold} />
+            <Text style={[st.alert_add_txt, { paddingVertical: 0 }]}>Créer une alerte de prix</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -5827,11 +5851,11 @@ function AppContent({ themeMode, changeTheme }) {
                 placeholder={{ SOL: 'Adresse Solana (base58)', BTC: 'Adresse Bitcoin (bc1...)' }[sendToken] || '0x123...abc ou nom.eth'} placeholderTextColor={T.text3} autoCapitalize="none" />
               {Platform.OS === 'web' && (
                 <TouchableOpacity style={st.addr_action_btn} onPress={pasteAddressFromClipboard} accessibilityRole="button" accessibilityLabel="Coller l'adresse depuis le presse-papier">
-                  <Text style={{ fontSize: 18 }}>📋</Text>
+                  <Ionicons name="clipboard-outline" size={20} color={T.text2} />
                 </TouchableOpacity>
               )}
               <TouchableOpacity style={st.addr_action_btn} onPress={() => setShowQrScanner(true)} accessibilityRole="button" accessibilityLabel="Scanner un QR code">
-                <Text style={{ fontSize: 18 }}>📷</Text>
+                <Ionicons name="qr-code-outline" size={20} color={T.text2} />
               </TouchableOpacity>
             </View>
             {ensResolving && <Text style={[st.settings_row_sub, { marginTop: 6 }]}>Résolution ENS…</Text>}
@@ -6016,10 +6040,10 @@ function AppContent({ themeMode, changeTheme }) {
             </TouchableOpacity>
           </View>
           <View style={st.network_badge}>
-            <Text style={{ color: T.blue, fontSize: 11 }}>
-              {isSolana ? 'Réseau Solana • adresse distincte de ton adresse EVM'
-                : isBitcoin ? 'Réseau Bitcoin • adresse distincte de ton adresse EVM'
-                : 'EVM Compatible • Ethereum, Polygon, BNB…'}
+            <Text style={{ color: T.text2, fontSize: 11 }}>
+              {isSolana ? 'Réseau Solana — une adresse différente de tes autres réseaux (Ethereum, Polygon, BNB…)'
+                : isBitcoin ? 'Réseau Bitcoin — une adresse différente de tes autres réseaux (Ethereum, Polygon, BNB…)'
+                : 'Valable pour Ethereum, Polygon, BNB Chain, Arbitrum, Optimism et Base'}
             </Text>
           </View>
           <View style={st.qr_wrap}><QRCodeMock address={qrValue} /></View>
@@ -6027,8 +6051,9 @@ function AppContent({ themeMode, changeTheme }) {
           <View style={st.receive_addr_box}>
             <Text style={st.receive_addr} selectable>{displayAddr}</Text>
           </View>
-          <AnimPressable style={st.green_btn} onPress={() => copyToClipboard(displayAddr, 'Adresse copiée')}>
-            <Text style={st.green_btn_txt}>📋 Copier</Text>
+          <AnimPressable style={[st.green_btn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }]} onPress={() => copyToClipboard(displayAddr, 'Adresse copiée')}>
+            <Ionicons name="copy-outline" size={16} color="#000" />
+            <Text style={st.green_btn_txt}>Copier</Text>
           </AnimPressable>
 
           {isEvm && (
@@ -7162,23 +7187,25 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={st.settings_section}>💱 {t('settings_currency')}</Text>
-          {Object.entries(CURRENCIES).map(([code, cur]) => (
-            <TouchableOpacity key={code} style={[st.settings_row, currency === code && st.settings_row_on]} onPress={() => setCurrency(code)}>
-              <Text style={{ fontSize: 22 }}>{cur.flag}</Text>
-              <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>{code}</Text>
-                <Text style={st.settings_row_sub}>{cur.name}</Text>
-              </View>
-              {currency === code && <Text style={{ color: T.gold }}>✓</Text>}
-            </TouchableOpacity>
-          ))}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {Object.entries(CURRENCIES).map(([code, cur]) => (
+              <TouchableOpacity
+                key={code}
+                style={[st.currency_chip, currency === code && st.currency_chip_on]}
+                onPress={() => { setCurrency(code); saveCurrency(code); }}
+              >
+                <Text style={{ fontSize: 15 }}>{cur.flag}</Text>
+                <Text style={[st.currency_chip_txt, currency === code && st.currency_chip_txt_on]}>{code}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
           <TouchableOpacity style={st.settings_row} onPress={() => setNetwork('ethereum')}>
             <Text style={{ fontSize: 22 }}>⛓️</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Ethereum Mainnet</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 1 • Réseau réel</Text>
+              <Text style={st.settings_row_sub}>Le réseau principal, le plus utilisé</Text>
             </View>
             {network === 'ethereum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -7186,7 +7213,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>🟡</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>BNB Smart Chain</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 56 • Mainnet</Text>
+              <Text style={st.settings_row_sub}>Frais de transaction très bas</Text>
             </View>
             {network === 'bsc' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -7194,7 +7221,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>🟪</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Polygon</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 137 • Mainnet</Text>
+              <Text style={st.settings_row_sub}>Rapide et frais très bas</Text>
             </View>
             {network === 'polygon' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -7202,7 +7229,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>🔵</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Arbitrum One</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 42161 • Mainnet</Text>
+              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher</Text>
             </View>
             {network === 'arbitrum' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -7210,7 +7237,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>🔴</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Optimism</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 10 • Mainnet</Text>
+              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher</Text>
             </View>
             {network === 'optimism' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -7218,7 +7245,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>🔷</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Base</Text>
-              <Text style={st.settings_row_sub}>Chain ID: 8453 • Mainnet</Text>
+              <Text style={st.settings_row_sub}>Ethereum en plus rapide et moins cher, par Coinbase</Text>
             </View>
             {network === 'base' && <View style={[st.status_dot, { backgroundColor: T.gold }]} />}
           </TouchableOpacity>
@@ -8870,6 +8897,11 @@ function buildSt(T) {
   chain_tab_sm_on:   { backgroundColor: T.goldBg, borderColor: T.gold },
   chain_tab_sm_txt:  { color: T.text2, fontSize: 12, fontWeight: '600' },
   chain_tab_sm_txt_on: { color: T.gold },
+
+  currency_chip:       { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: T.card, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9, borderWidth: 1, borderColor: T.border },
+  currency_chip_on:    { backgroundColor: T.goldBg, borderColor: T.gold },
+  currency_chip_txt:   { color: T.text2, fontSize: 13, fontWeight: '700' },
+  currency_chip_txt_on:{ color: T.gold },
   load_more_btn: { alignItems: 'center', paddingVertical: 14, marginTop: 4, borderRadius: 12, borderWidth: 1, borderColor: T.border },
   load_more_txt: { color: T.text2, fontSize: 13, fontWeight: '600' },
   alert_section:  { marginHorizontal: 16, marginBottom: 16 },
