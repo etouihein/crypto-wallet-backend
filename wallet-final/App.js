@@ -301,8 +301,8 @@ Pour toute question sur cette politique, contactez contact@nexiawallet.com ou co
     title: 'Mentions Légales',
     updated: '11 septembre 2026',
     body: `Éditeur du site
-NexiaWallet est édité par Pablo [NOM DE FAMILLE À CONFIRMER], entrepreneur individuel (micro-entreprise), SIREN 108 689 357, SIRET 108 689 357 00011, activité déclarée : programmation informatique (code APE 62.01Z). Entreprise à statut non-diffusible : l'adresse professionnelle n'est pas publiée ici, mais communiquée sur demande légitime (autorité, procédure judiciaire) via contact@nexiawallet.com.
-Directeur de la publication : Pablo [NOM DE FAMILLE À CONFIRMER].
+NexiaWallet est édité par Pablo, entrepreneur individuel (micro-entreprise), SIREN 108 689 357, SIRET 108 689 357 00011, activité déclarée : programmation informatique (code APE 62.01Z). Entreprise à statut non-diffusible : l'adresse professionnelle n'est pas publiée ici, mais communiquée sur demande légitime (autorité, procédure judiciaire) via contact@nexiawallet.com.
+Directeur de la publication : Pablo.
 
 Hébergement
 Backend applicatif hébergé par Railway (railway.app). Application web hébergée par Cloudflare Pages (pages.dev).
