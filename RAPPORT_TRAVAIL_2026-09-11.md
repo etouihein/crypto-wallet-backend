@@ -218,6 +218,36 @@ Par ordre d'impact/risque estimé :
   vérifié (boutons retour, réglages, adresse). Logique de l'onglet Stats
   relue en détail, rien à signaler.
 
+## 6ter. Round du 12 septembre — chasse aux bugs sur les écrans pas encore audités
+
+- **Bug de tri Marché** (commit `0646ec3`) : une crypto exactement à 0,00 %
+  sur 24h tombait tout en bas du tri "Hausse" (traitée comme falsy par `||`
+  au lieu de `??`), comme si c'était la pire performance de la liste. Le tri
+  "Baisse" juste à côté ne faisait pas cette erreur — incohérence corrigée.
+- **Scan QR cassé pour Solana/Bitcoin** (commit `12e5474`) : le même
+  scanner sert à Envoyer quel que soit le token, mais ne reconnaissait
+  qu'une adresse `0x...` — scanner une adresse Solana ou Bitcoin valide
+  échouait toujours ("QR non reconnu"), alors que le scan compte
+  justement plus pour ces formats (base58/bech32, bien plus pénibles à
+  retaper à la main). Corrigé, vérifié avec de vraies adresses publiques
+  connues (dont/y compris préfixées d'un schéma URI).
+- **Navigation retour cassée sur 2 écrans à entrées multiples** (commits
+  `343cac9` et `b148b8a`) — le bug le plus significatif de ce round : le
+  Pont cross-chain et le Navigateur Web3 sont accessibles à la fois depuis
+  Réglages ET depuis des raccourcis de l'onglet Découvrir, mais leur bouton
+  retour rouvrait TOUJOURS Réglages sans condition, même arrivé depuis
+  Découvrir. Résultat concret : ouvrir n'importe quelle dApp (Uniswap,
+  PancakeSwap...) depuis Découvrir puis faire retour éjectait vers Réglages
+  au lieu d'y rester — probablement le parcours le plus emprunté de tout
+  l'onglet Découvrir. Même correctif que celui déjà en place pour les
+  documents légaux (accessibles aussi depuis 2 endroits) : un drapeau
+  `xFromSettings` par écran, posé uniquement quand l'ouverture vient
+  réellement de Réglages.
+- Vérifié sans anomalie en cours de route : navigateur dApp (injection
+  provider, vérification d'origine — pas re-audité en détail ici, déjà fait
+  dans le round sécurité), galerie NFT, positions DeFi, onglet Découvrir
+  (hors le bug de navigation ci-dessus).
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
