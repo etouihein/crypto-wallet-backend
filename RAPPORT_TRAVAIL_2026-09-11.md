@@ -199,6 +199,25 @@ Par ordre d'impact/risque estimé :
    que le trafic reste faible.
 6. Contenu App Store / Play Store (texte uniquement, prêt à l'avance).
 
+## 6bis. Round supplémentaire — complétude/qualité (commit `d4de3ee`)
+
+- **Vrai oubli trouvé** : "Adresses en observation" (watch-only) ne proposait
+  que 3 réseaux (Ethereum/BSC/Polygon) sur les 6 réseaux EVM supportés par le
+  reste de l'app — Arbitrum/Optimism/Base oubliés lors de leur ajout. Vérifié
+  que les fonctions de lecture (`getNativeBalance`/`getErc20Balance`) sont
+  déjà génériques sur tous les réseaux, donc aucune limitation technique :
+  juste une liste codée en dur jamais mise à jour. Corrigé (les 6 réseaux
+  sont maintenant proposés, via la même source unique `NETWORK_INFO` que le
+  sélecteur de réseau des Réglages, pour ne plus jamais désynchroniser les
+  deux listes).
+- Dernier emoji presse-papier restant (adresse du wallet en haut de
+  l'accueil) remplacé par une icône, sur le même modèle que le nettoyage
+  fait plus tôt dans la session.
+- **Vérifié propre en passant** : couverture des labels d'accessibilité
+  (`accessibilityLabel`) sur les boutons icône-seule — déjà bonne partout où
+  vérifié (boutons retour, réglages, adresse). Logique de l'onglet Stats
+  relue en détail, rien à signaler.
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
