@@ -4549,7 +4549,12 @@ function AppContent({ themeMode, changeTheme }) {
     }
     const sorted = [...list];
     if (marketSort === 'gainers') {
-      sorted.sort((a, b) => (b.price_change_percentage_24h || -Infinity) - (a.price_change_percentage_24h || -Infinity));
+      // `??` (pas `||`) : une crypto exactement à 0,00 % sur 24h est une
+      // valeur légitime, pas une absence de donnée — `||` la traiterait
+      // comme falsy et l'enverrait tout en bas du tri "Hausse" comme si
+      // c'était la pire performance. Le tri "Baisse" juste en dessous
+      // utilisait déjà `??` correctement ; "Hausse" ne l'avait pas.
+      sorted.sort((a, b) => (b.price_change_percentage_24h ?? -Infinity) - (a.price_change_percentage_24h ?? -Infinity));
     } else if (marketSort === 'losers') {
       sorted.sort((a, b) => (a.price_change_percentage_24h ?? Infinity) - (b.price_change_percentage_24h ?? Infinity));
     } else if (marketSort === 'alpha') {
