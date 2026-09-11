@@ -4029,13 +4029,28 @@ function AppContent({ themeMode, changeTheme }) {
       return;
     }
     // Gère une adresse brute 0x... ou un URI "ethereum:0x...".
-    const match = trimmed.match(/0x[a-fA-F0-9]{40}/);
-    if (match) {
-      setSendAddress(match[0]);
+    const evmMatch = trimmed.match(/0x[a-fA-F0-9]{40}/);
+    if (evmMatch) {
+      setSendAddress(evmMatch[0]);
       setShowQrScanner(false);
-    } else {
-      showToast('QR non reconnu', 'error');
+      return;
     }
+    // Ce même scanner sert aussi à l'envoi Solana/Bitcoin (le champ adresse
+    // sur Envoyer est unique quel que soit sendToken) — sans ceci, scanner
+    // une adresse Solana ou Bitcoin valide échouait toujours avec "QR non
+    // reconnu", alors que le scan compte justement plus pour ces formats
+    // (base58/bech32), bien plus pénibles à retaper à la main qu'un 0x...
+    // Certains générateurs de QR préfixent d'un schéma URI ("bitcoin:bc1...",
+    // "solana:...") suivi d'éventuels paramètres ("?amount=...") — on isole
+    // la partie adresse avant de la valider avec les mêmes fonctions que
+    // prepareSend, sans présumer quel token est sélectionné.
+    const withoutScheme = trimmed.replace(/^[a-z]+:/i, '').split('?')[0].trim();
+    if (localWallet.isValidSolanaAddress(withoutScheme) || localWallet.isValidBitcoinAddress(withoutScheme)) {
+      setSendAddress(withoutScheme);
+      setShowQrScanner(false);
+      return;
+    }
+    showToast('QR non reconnu', 'error');
   }, [showToast, handleWcConnect]);
 
   const pasteAddressFromClipboard = useCallback(async () => {
