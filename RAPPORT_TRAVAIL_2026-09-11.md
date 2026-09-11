@@ -308,6 +308,21 @@ superficielle partout.
   chantier** : Réglages, puis Envoyer/Recevoir/Acheter (les écrans les
   plus fréquents après l'accueil), dans cet ordre.
 
+## 6quinquies. Tests automatisés committés (commit `dc2caa7`)
+
+Toute la session, chaque correction a été vérifiée avec un script
+Playwright jetable réécrit à la main. Cette méthode est maintenant
+committée dans `wallet-final/e2e/` (`npm run test:e2e`) au lieu d'être
+retapée à chaque session — build le web, sert `dist/` comme en prod,
+importe la mnémonique de test publique du compte #0 Hardhat/Anvil et
+vérifie qu'elle dérive bien la bonne adresse (preuve cryptographique, pas
+juste "la page s'affiche"), navigue les 5 onglets, vérifie Réglages et
+qu'un changement de langue change réellement le texte affiché, compte les
+erreurs console. Exécuté réellement de bout en bout avant ce commit : 12
+vérifications, toutes vertes. Objectif assumé : attraper une régression
+évidente en ~30s, pas remplacer une revue de code ni couvrir chaque écran
+— base à compléter au fil des sessions plutôt que repartir de zéro.
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
