@@ -8527,6 +8527,13 @@ function AppContent({ themeMode, changeTheme }) {
             <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={(v) => setBuyAmount(normalizeDecimalInput(v))}
               placeholder="10" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
           </View>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, marginBottom: 4 }}>
+            {[10, 25, 50, 100].map(v => (
+              <TouchableOpacity key={v} style={st.quick_pct_btn} onPress={() => setBuyAmount(String(v))}>
+                <Text style={st.quick_pct_txt}>{v} €</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <Text style={st.buy_amount_convert}>
             ≈ {(() => {
               const price = tokens[buyToken]?.price || 0;
@@ -8928,8 +8935,8 @@ function buildSt(T) {
   about_box:      { marginHorizontal: 16, backgroundColor: T.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
   about_title:    { color: T.text, fontSize: 15, fontWeight: 'bold', marginBottom: 8 },
   about_text:     { color: T.text2, fontSize: 13, lineHeight: 19 },
-  about_tag:      { backgroundColor: T.blueBg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 },
-  about_tag_txt:  { color: T.blue, fontSize: 10, fontWeight: '600' },
+  about_tag:      { backgroundColor: T.goldBg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 },
+  about_tag_txt:  { color: T.gold, fontSize: 10, fontWeight: '600' },
   about_link_btn: { alignSelf: 'center', marginTop: 4, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: T.card2, borderWidth: 1, borderColor: T.border },
   about_link_txt: { color: T.text, fontSize: 13, fontWeight: '600' },
 
