@@ -2023,6 +2023,13 @@ function AppContent({ themeMode, changeTheme }) {
   // rouvrir) — sert uniquement à décider si le bouton retour doit rouvrir
   // Paramètres.
   const [legalDocFromSettings, setLegalDocFromSettings] = useState(false);
+  // Même principe que legalDocFromSettings ci-dessus, pour le même bug :
+  // le Pont cross-chain est accessible depuis Paramètres ET depuis le
+  // raccourci de l'onglet Découvrir (qui n'a pas de Settings ouvert à
+  // rouvrir) — sans ce drapeau, le bouton retour du Pont rouvrait toujours
+  // Paramètres, même en arrivant depuis Découvrir (bug réel trouvé en
+  // auditant les deux points d'entrée).
+  const [bridgeFromSettings, setBridgeFromSettings] = useState(false);
   const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
@@ -6851,7 +6858,7 @@ function AppContent({ themeMode, changeTheme }) {
       <Modal visible={showBridge} animationType="slide" transparent>
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <View style={st.modal_hdr}>
-            <TouchableOpacity onPress={() => { setShowBridge(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <TouchableOpacity onPress={() => { setShowBridge(false); if (bridgeFromSettings) { setShowSettings(true); setBridgeFromSettings(false); } }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
               <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
             </TouchableOpacity>
             <Text style={st.modal_title}>Pont cross-chain</Text>
@@ -7660,7 +7667,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={st.settings_row_sub}>Rappel pour investir régulièrement (DCA)</Text>
                 </View>
               </AnimPressable>
-              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setBridgeQuote(null); setBridgeError(null); setShowBridge(true); }}>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setBridgeQuote(null); setBridgeError(null); setBridgeFromSettings(true); setShowBridge(true); }}>
                 <Text style={{ fontSize: 22 }}>🌉</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Pont cross-chain</Text>
@@ -8374,7 +8381,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Ionicons name="swap-horizontal" size={18} color={T.gold} />
             <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginLeft: 8 }}>Swap</Text>
           </AnimPressable>
-          <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.borderSoft, paddingVertical: 13 }} scaleTo={0.97} onPress={() => setShowBridge(true)}>
+          <AnimPressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.borderSoft, paddingVertical: 13 }} scaleTo={0.97} onPress={() => { setBridgeFromSettings(false); setShowBridge(true); }}>
             <Ionicons name="git-network" size={18} color={T.gold} />
             <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginLeft: 8 }}>Pont</Text>
           </AnimPressable>
