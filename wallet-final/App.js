@@ -2030,6 +2030,12 @@ function AppContent({ themeMode, changeTheme }) {
   // Paramètres, même en arrivant depuis Découvrir (bug réel trouvé en
   // auditant les deux points d'entrée).
   const [bridgeFromSettings, setBridgeFromSettings] = useState(false);
+  // Même bug, même correctif : le navigateur Web3 a encore PLUS de points
+  // d'entrée que le Pont (Réglages, ET la barre de recherche de Découvrir,
+  // ET chaque dApp de la liste Découvrir) — sans ce drapeau c'est le
+  // parcours le plus fréquent de l'onglet Découvrir qui atterrissait dans
+  // Réglages au lieu d'y revenir.
+  const [dappBrowserFromSettings, setDappBrowserFromSettings] = useState(false);
   const [openFaq, setOpenFaq]             = useState(null); // index de la question dépliée sur la landing, ou null
   const [sendToken, setSendToken]         = useState('ETH');
   const [sendAddress, setSendAddress]     = useState('');
@@ -6649,7 +6655,7 @@ function AppContent({ themeMode, changeTheme }) {
         {Platform.OS === 'web' ? (
           <>
             <View style={st.modal_hdr}>
-              <TouchableOpacity onPress={() => { setShowDappBrowser(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <TouchableOpacity onPress={() => { setShowDappBrowser(false); if (dappBrowserFromSettings) { setShowSettings(true); setDappBrowserFromSettings(false); } }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
                 <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
               </TouchableOpacity>
               <Text style={st.modal_title}>Navigateur Web3</Text>
@@ -6668,7 +6674,7 @@ function AppContent({ themeMode, changeTheme }) {
                 onPress={() => {
                   if (dappCurrentUrl) { setDappCurrentUrl(null); setDappDisplayUrl(null); return; }
                   setShowDappBrowser(false);
-                  setShowSettings(true);
+                  if (dappBrowserFromSettings) { setShowSettings(true); setDappBrowserFromSettings(false); }
                 }}
                 style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
               >
@@ -7646,7 +7652,7 @@ function AppContent({ themeMode, changeTheme }) {
                   WalletConnect (bridge, DeFi, achat récurrent...) — avant,
                   elles étaient rangées sous "WalletConnect" par erreur. */}
               <Text style={[st.settings_section, { marginTop: 24 }]}>⚡ Fonctionnalités avancées</Text>
-              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappDisplayUrl(null); setDappUrlInput(''); setShowDappBrowser(true); }}>
+              <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setDappCurrentUrl(null); setDappDisplayUrl(null); setDappUrlInput(''); setDappBrowserFromSettings(true); setShowDappBrowser(true); }}>
                 <Text style={{ fontSize: 22 }}>🌐</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={st.settings_row_title}>Navigateur Web3</Text>
@@ -8363,7 +8369,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         <TouchableOpacity
           style={st.search_wrap}
-          onPress={() => { setDappUrlInput(''); setShowDappBrowser(true); }}
+          onPress={() => { setDappUrlInput(''); setDappBrowserFromSettings(false); setShowDappBrowser(true); }}
         >
           <View pointerEvents="none">
             <TextInput
@@ -8405,7 +8411,7 @@ function AppContent({ themeMode, changeTheme }) {
             <AnimPressable
               key={d.name}
               scaleTo={0.99}
-              onPress={() => { handleDappBrowserOpen(d.url); setShowDappBrowser(true); }}
+              onPress={() => { handleDappBrowserOpen(d.url); setDappBrowserFromSettings(false); setShowDappBrowser(true); }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 14, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: T.border }}
             >
               <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: d.color, alignItems: 'center', justifyContent: 'center' }}>
