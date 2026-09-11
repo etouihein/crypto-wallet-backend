@@ -9,6 +9,22 @@ const rateLimit    = require('express-rate-limit');
 
 const walletRoutes = require('./src/routes/wallet');
 
+// Filet de sécurité process-level : sans ça, une seule exception non
+// rattrapée (une promesse rejetée sans .catch quelque part, par exemple)
+// fait planter tout le serveur pour TOUS les utilisateurs en même temps,
+// jusqu'au redémarrage automatique de Railway. On loggue toujours juste le
+// message (jamais l'objet entier, qui pourrait contenir des en-têtes de
+// requête ou un corps de requête sensible) et on ne quitte le process que
+// sur uncaughtException (l'état de l'app peut être corrompu à ce stade —
+// convention Node standard) : Railway relance le process automatiquement.
+process.on('unhandledRejection', (reason) => {
+  console.error('Promesse rejetée non gérée :', reason instanceof Error ? reason.message : String(reason));
+});
+process.on('uncaughtException', (err) => {
+  console.error('Exception non rattrapée — arrêt pour redémarrage propre :', err.message);
+  process.exit(1);
+});
+
 const app = express();
 
 const PORT = process.env.PORT || 3000;
@@ -114,6 +130,22 @@ app.use((err, req, res, next) => {
     return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
   }
   next(err);
+});
+
+// Route inconnue → 404 JSON propre (au lieu du HTML par défaut d'Express).
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Route inconnue.' });
+});
+
+// Filet de sécurité final : toute erreur qui arrive jusqu'ici (pas déjà
+// traitée par un try/catch de route ou le handler CORS ci-dessus) reçoit une
+// réponse JSON générique — jamais le message d'erreur brut ni une stack
+// trace, qui pourraient révéler des détails d'implémentation à un attaquant.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('Erreur non gérée sur une route :', err?.message);
+  if (res.headersSent) return;
+  res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
 });
 
 // Démarrage du serveur
