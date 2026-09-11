@@ -248,6 +248,66 @@ Par ordre d'impact/risque estimé :
   dans le round sécurité), galerie NFT, positions DeFi, onglet Découvrir
   (hors le bug de navigation ci-dessus).
 
+## 6quater. Perf + traductions (commits `5ea2959`, `0428c01`)
+
+**Perf du bundle web** — analyse d'abord, action ensuite :
+- Vérifié que les ~12 familles de polices d'icônes qu'`@expo/vector-icons`
+  inclut par défaut (FontAwesome, MaterialCommunityIcons 1,3 Mo...)
+  apparaissent dans les assets exportés mais ne sont **jamais réellement
+  téléchargées** par un vrai visiteur (vérifié avec Playwright sur le vrai
+  site : un seul `.ttf`, Ionicons, est demandé) — donc pas un vrai problème
+  de perf pour l'utilisateur, juste du poids de déploiement.
+- Vérifié directement dans le bundle que la librairie `moment.js`
+  (mentionnée comme suspecte dans une note antérieure) n'est en réalité pas
+  présente — les occurrences du mot sont des faux positifs (mot français,
+  wordlists BIP39 d'ethers).
+- **Vrai problème trouvé et corrigé** : le bundle JS (~1,56 Mo brotli, nom
+  de fichier déjà hashé par le contenu) et les polices avaient un cache
+  navigateur de seulement 4h (défaut générique de Cloudflare Pages) au lieu
+  d'un cache long + immuable. Un visiteur qui revient sur le site après
+  plus de 4h retéléchargeait tout le bundle au lieu de le servir depuis le
+  cache — pénalisant precisément le scénario "quelqu'un revient consulter
+  son wallet régulièrement" central à la phase d'acquisition Discord/
+  Telegram. Corrigé via `wallet-final/public/_headers` (cache 1 an sur
+  `/_expo/static/*` et `/assets/*`, `index.html` volontairement inchangé
+  pour que les nouveaux déploiements restent vus en 1-3 min). Vérifié en
+  direct sur nexiawallet.com après déploiement.
+- **Code-splitting réel de l'App.js de 9200 lignes délibérément pas tenté** :
+  déjà écarté dans une session antérieure comme trop risqué à faire vite
+  avant un partage public, et cette évaluation tient toujours — aucun
+  routeur (expo-router) dans ce projet, tout est un seul composant avec un
+  état partagé ; découper proprement demanderait une vraie restructuration
+  architecturale, pas une petite passe. Recommandation : chantier à part,
+  avec du temps dédié et idéalement des tests sur appareil réel.
+
+**Traductions** — audit fait d'abord (voir plus haut dans ce rapport),
+scope choisi ensuite : sur 9200 lignes, une couverture i18n à 100% de
+l'app entière est un chantier de plusieurs sessions, pas quelque chose de
+raisonnable à tenter d'un coup sans risquer soit de casser du JSX, soit de
+livrer des traductions bâclées sur un vrai produit financier. Décision :
+livrer un premier incrément réel et complet plutôt qu'une couverture
+superficielle partout.
+- **Fait et vérifié** : l'écran d'Accueil — celui vu à CHAQUE ouverture de
+  l'app — est maintenant intégralement traduit (statique ET dynamique :
+  callouts "plus gros mouvement du jour"/diversification avec variables,
+  légende du graphique avec date formatée dans la bonne locale via Intl,
+  pas figée en `fr-FR`). 18 nouvelles clés × 5 langues, traductions
+  adaptées (pas du mot-à-mot). Vérifié avec Playwright en français,
+  anglais et espagnol : le texte affiché change réellement, zéro trace de
+  français résiduel après changement de langue, zéro erreur console.
+- **Pas encore fait, explicitement** : Envoyer, Recevoir, Acheter, Vendre,
+  Swap, Pont, Marché, Stats, Découvrir, tous les écrans avancés
+  (WalletConnect, navigateur dApp, DeFi, NFT, comptes multiples...), tous
+  les messages d'erreur/alertes, et les documents légaux/FAQ (ceux-là
+  restent français par choix assumé de longue date — voir le commentaire
+  d'en-tête de `lib/i18n.js` : gros blocs de texte qui méritent une vraie
+  relecture humaine, pas juste une traduction automatique). Un utilisateur
+  qui choisit une autre langue verra donc l'accueil et la navigation
+  traduits, mais retombera en français dès qu'il ouvre une action
+  (Envoyer, Swap...). **Prochaine étape naturelle si on continue ce
+  chantier** : Réglages, puis Envoyer/Recevoir/Acheter (les écrans les
+  plus fréquents après l'accueil), dans cet ordre.
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
