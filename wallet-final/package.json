@@ -51,7 +51,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export -p web",
-    "serve:web": "node server.js"
+    "serve:web": "node server.js",
+    "test:e2e": "node e2e/run.js"
   },
   "private": true,
   "devDependencies": {
