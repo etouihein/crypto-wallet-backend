@@ -344,6 +344,18 @@ Sur demande explicite d'ajouter du neuf plutôt que de continuer l'audit :
   une déclaration fiscale. Vérifié : le CSV copié dans le presse-papier
   contient les bonnes valeurs avec la conversion de devise correcte.
 
+## 6septies. Foire aux questions (commit `79ff0bd`)
+
+Trouvé en cherchant d'autres fonctionnalités possibles : `LANDING_FAQ` (5
+questions déjà bien écrites) et l'état `openFaq` existaient dans le fichier
+mais n'étaient plus référencés nulle part depuis la refonte de l'accueil du
+10/09 — contenu mort plutôt qu'une fonctionnalité manquante à zéro.
+Reconnecté dans un vrai écran (Réglages → Info → "Foire aux questions"),
+utile pour l'acquisition en cours (un nouveau venu de Discord/Telegram se
+répond seul). Ajouté 2 questions manquantes (vente via Coinbase Offramp,
+commissions). Vérifié avec Playwright : accordéon fonctionnel, retour
+correct, zéro erreur console.
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
