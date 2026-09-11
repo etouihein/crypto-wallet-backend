@@ -7545,14 +7545,19 @@ function AppContent({ themeMode, changeTheme }) {
                     maxLength={24}
                   />
                   <Text style={[st.form_label, { marginBottom: 8 }]}>Réseau</Text>
-                  <View style={{ flexDirection: 'row', marginBottom: 10 }}>
-                    {['ethereum', 'bsc', 'polygon'].map((net, idx) => (
+                  {/* Les 6 réseaux EVM (avant : seuls ethereum/bsc/polygon
+                      étaient proposés ici, oubliés lors de l'ajout des L2
+                      Arbitrum/Optimism/Base ailleurs dans l'app — lecture
+                      seule via getNativeBalance/getErc20Balance, déjà
+                      génériques sur tous les réseaux de NETWORK_INFO). */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                    {Object.keys(NETWORK_INFO).map((net) => (
                       <TouchableOpacity
                         key={net}
-                        style={[st.import_type_btn, watchNetworkInput === net && st.import_type_btn_on, { flex: 1, marginRight: idx < 2 ? 8 : 0 }]}
+                        style={[st.chip_pill, watchNetworkInput === net && st.chip_pill_on]}
                         onPress={() => setWatchNetworkInput(net)}
                       >
-                        <Text style={[st.import_type_txt, watchNetworkInput === net && { color: T.text }]}>{NETWORK_INFO[net].label.split(' ')[0]}</Text>
+                        <Text style={[st.chip_pill_txt, watchNetworkInput === net && st.chip_pill_txt_on]}>{NETWORK_INFO[net].label.split(' ')[0]}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -7935,8 +7940,10 @@ function AppContent({ themeMode, changeTheme }) {
             disabled={!walletAddr}
             accessibilityRole="button"
             accessibilityLabel="Copier l'adresse du wallet"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
           >
-            <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)} 📋` : 'Adresse en attente...'}</Text>
+            <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : 'Adresse en attente...'}</Text>
+            {!!walletAddr && <Ionicons name="copy-outline" size={13} color={T.text2} />}
           </TouchableOpacity>
         </View>
         <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Paramètres">
