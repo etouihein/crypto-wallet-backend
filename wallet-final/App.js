@@ -52,7 +52,7 @@ import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
-import { translate as i18nTranslate, SUPPORTED_LOCALES } from './lib/i18n';
+import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG } from './lib/i18n';
 import { ethers } from 'ethers';
 import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -4549,14 +4549,14 @@ function AppContent({ themeMode, changeTheme }) {
   const QUICK_ACTIONS_BASE = [
     { id: 'send',    icon: 'arrow-up',   label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
     { id: 'buy',     icon: 'card',       label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
-    ...(SELL_ENABLED ? [{ id: 'sell', icon: 'cash', label: 'Vendre', bg: T.card2, onPress: () => setShowSell(true) }] : []),
+    ...(SELL_ENABLED ? [{ id: 'sell', icon: 'cash', label: t('action_sell'), bg: T.card2, onPress: () => setShowSell(true) }] : []),
     { id: 'receive', icon: 'arrow-down', label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
     { id: 'history', icon: 'time',       label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
     { id: 'nft',     icon: 'image',      label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
   ];
   const visibleQuickActions = [
     ...QUICK_ACTIONS_BASE.filter(a => !hiddenQuickActions.includes(a.id)),
-    ...(lastSend && lastSend.network === network ? [{ id: 'repeat', icon: 'reload', label: 'Répéter', bg: T.card2, onPress: repeatLastSend }] : []),
+    ...(lastSend && lastSend.network === network ? [{ id: 'repeat', icon: 'reload', label: t('action_repeat'), bg: T.card2, onPress: repeatLastSend }] : []),
   ];
 
   // Enregistre un point d'historique de valeur totale au plus toutes les
@@ -7973,25 +7973,25 @@ function AppContent({ themeMode, changeTheme }) {
       {(isOffline || portfolioIsCached) && (
         <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 16 }]}>
           <Text style={st.warning_txt}>
-            📡 Hors ligne — derniers soldes connus affichés{isOffline ? ', pas forcément à jour.' : '.'}
+            {isOffline ? t('home_offline_stale') : t('home_offline_cached')}
           </Text>
         </View>
       )}
       <View style={st.home_hdr}>
         <View>
-          <Text style={st.home_account}>Mon Wallet</Text>
+          <Text style={st.home_account}>{t('home_wallet_label')}</Text>
           <TouchableOpacity
-            onPress={() => walletAddr && copyToClipboard(walletAddr, 'Adresse copiée')}
+            onPress={() => walletAddr && copyToClipboard(walletAddr, t('toast_address_copied'))}
             disabled={!walletAddr}
             accessibilityRole="button"
-            accessibilityLabel="Copier l'adresse du wallet"
+            accessibilityLabel={t('a11y_copy_wallet_address')}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
           >
-            <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : 'Adresse en attente...'}</Text>
+            <Text style={st.home_addr}>{walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : t('home_address_pending')}</Text>
             {!!walletAddr && <Ionicons name="copy-outline" size={13} color={T.text2} />}
           </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Paramètres">
+        <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel={t('settings_title')}>
           <Ionicons name="settings-outline" size={20} color={T.text2} />
         </TouchableOpacity>
       </View>
@@ -8036,7 +8036,7 @@ function AppContent({ themeMode, changeTheme }) {
         <View style={st.sparkline_wrap}>
           <PortfolioSparkline points={portfolioHistory} />
           <Text style={st.sparkline_caption}>
-            Évolution depuis le {new Date(portfolioHistory[0].t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+            {t('home_since_date', { date: new Date(portfolioHistory[0].t).toLocaleDateString(INTL_LOCALE_TAG[locale] || 'fr-FR', { day: 'numeric', month: 'short' }) })}
           </Text>
         </View>
       )}
@@ -8055,7 +8055,12 @@ function AppContent({ themeMode, changeTheme }) {
       {!!dailyMover && (
         <View style={st.mover_card}>
           <Text style={st.mover_txt}>
-            {dailyMover.change >= 0 ? '🚀' : '📉'} {dailyMover.sym} est ton token qui bouge le plus aujourd'hui ({dailyMover.change >= 0 ? '+' : ''}{dailyMover.change.toFixed(2)}%).
+            {t('home_daily_mover', {
+              emoji: dailyMover.change >= 0 ? '🚀' : '📉',
+              sym: dailyMover.sym,
+              sign: dailyMover.change >= 0 ? '+' : '',
+              change: dailyMover.change.toFixed(2),
+            })}
           </Text>
         </View>
       )}
@@ -8063,7 +8068,7 @@ function AppContent({ themeMode, changeTheme }) {
       {!!diversification && diversification.topPct >= 70 && (
         <View style={st.diversif_card}>
           <Text style={st.diversif_txt}>
-            ⚖️ {diversification.topPct.toFixed(0)}% de ton portefeuille est en {diversification.topSymbol}. Diversifier réduit le risque si cette crypto chute.
+            {t('home_diversification', { pct: diversification.topPct.toFixed(0), symbol: diversification.topSymbol })}
           </Text>
         </View>
       )}
@@ -8075,14 +8080,14 @@ function AppContent({ themeMode, changeTheme }) {
           activeOpacity={0.8}
         >
           <Ionicons name="star" size={13} color={T.gold} />
-          <Text style={{ color: T.gold, fontSize: 12, fontWeight: '600', marginLeft: 6 }}>Ajouter des favoris depuis le Marché</Text>
+          <Text style={{ color: T.gold, fontSize: 12, fontWeight: '600', marginLeft: 6 }}>{t('home_add_favorites_cta')}</Text>
         </TouchableOpacity>
       )}
 
       {!!favoriteMarketCoins.length && (
         <>
           <View style={st.section_hdr}>
-            <SectionTitle>Favoris</SectionTitle>
+            <SectionTitle>{t('common_favorites')}</SectionTitle>
           </View>
           <View style={isWideWeb && st.token_grid}>
             {favoriteMarketCoins.map((coin, i) => {
@@ -8118,7 +8123,11 @@ function AppContent({ themeMode, changeTheme }) {
       </View>
 
       <View style={isWideWeb && st.token_grid}>
-        {Object.values(tokens).every(t => !t.price) ? (
+        {/* `readOnlyLabel` hissé ici, avant le .map ci-dessous : ce .map
+            déstructure sa propre valeur locale nommée `t` ([sym, t]), qui
+            masquerait la fonction de traduction t() si on l'appelait à
+            l'intérieur. */}
+        {(() => { const readOnlyLabel = t('common_read_only'); return Object.values(tokens).every(t => !t.price) ? (
           Object.keys(tokens).map(sym => (
             <TokenRowSkeleton key={sym} style={[isWideWeb && st.token_row_wide]} />
           ))
@@ -8139,7 +8148,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={st.token_name}>{t.name}</Text>
                     {t.readOnly && (
-                      <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>Lecture seule</Text></View>
+                      <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>{readOnlyLabel}</Text></View>
                     )}
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -8161,13 +8170,13 @@ function AppContent({ themeMode, changeTheme }) {
               </TouchableOpacity>
             </FadeInView>
           );
-        })}
+        }); })()}
       </View>
 
       {customTokens.filter(t => t.network === network).length > 0 && (
         <>
           <View style={st.section_hdr}>
-            <SectionTitle>Tokens personnalisés</SectionTitle>
+            <SectionTitle>{t('home_custom_tokens')}</SectionTitle>
           </View>
           <View style={isWideWeb && st.token_grid}>
             {customTokens.filter(t => t.network === network).map(t => (
@@ -8190,8 +8199,8 @@ function AppContent({ themeMode, changeTheme }) {
       {!!newsItems.length && (
         <View style={{ marginTop: 20 }}>
           <View style={st.section_hdr}>
-            <SectionTitle>Actu crypto en direct</SectionTitle>
-            <Text style={st.section_sub}>MAJ / 5 min</Text>
+            <SectionTitle>{t('home_news_title')}</SectionTitle>
+            <Text style={st.section_sub}>{t('home_news_updated')}</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
             {newsItems.slice(0, 10).map((item, i) => (

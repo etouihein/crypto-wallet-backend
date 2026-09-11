@@ -84,6 +84,24 @@ const fr = {
 
   onboarding_create: 'Créer mon wallet',
   onboarding_import: "J'ai déjà un wallet",
+
+  home_wallet_label: 'Mon Wallet',
+  toast_address_copied: 'Adresse copiée',
+  a11y_copy_wallet_address: "Copier l'adresse du wallet",
+  home_address_pending: 'Adresse en attente...',
+  home_offline_stale: '📡 Hors ligne — derniers soldes connus affichés, pas forcément à jour.',
+  home_offline_cached: '📡 Hors ligne — derniers soldes connus affichés.',
+  home_since_date: 'Évolution depuis le {{date}}',
+  action_sell: 'Vendre',
+  action_repeat: 'Répéter',
+  home_daily_mover: "{{emoji}} {{sym}} est ton token qui bouge le plus aujourd'hui ({{sign}}{{change}}%).",
+  home_diversification: '⚖️ {{pct}}% de ton portefeuille est en {{symbol}}. Diversifier réduit le risque si cette crypto chute.',
+  home_add_favorites_cta: 'Ajouter des favoris depuis le Marché',
+  common_favorites: 'Favoris',
+  home_custom_tokens: 'Tokens personnalisés',
+  common_read_only: 'Lecture seule',
+  home_news_title: 'Actu crypto en direct',
+  home_news_updated: 'MAJ / 5 min',
 };
 
 const en = {
@@ -155,6 +173,24 @@ const en = {
 
   onboarding_create: 'Create a wallet',
   onboarding_import: 'I already have a wallet',
+
+  home_wallet_label: 'My Wallet',
+  toast_address_copied: 'Address copied',
+  a11y_copy_wallet_address: 'Copy wallet address',
+  home_address_pending: 'Address pending...',
+  home_offline_stale: '📡 Offline — showing last known balances, may be outdated.',
+  home_offline_cached: '📡 Offline — showing last known balances.',
+  home_since_date: 'Change since {{date}}',
+  action_sell: 'Sell',
+  action_repeat: 'Repeat',
+  home_daily_mover: '{{emoji}} {{sym}} is your biggest mover today ({{sign}}{{change}}%).',
+  home_diversification: '⚖️ {{pct}}% of your portfolio is in {{symbol}}. Diversifying reduces risk if this crypto drops.',
+  home_add_favorites_cta: 'Add favorites from Market',
+  common_favorites: 'Favorites',
+  home_custom_tokens: 'Custom tokens',
+  common_read_only: 'Read-only',
+  home_news_title: 'Live crypto news',
+  home_news_updated: 'Updated / 5 min',
 };
 
 const es = {
@@ -226,6 +262,24 @@ const es = {
 
   onboarding_create: 'Crear mi wallet',
   onboarding_import: 'Ya tengo un wallet',
+
+  home_wallet_label: 'Mi Wallet',
+  toast_address_copied: 'Dirección copiada',
+  a11y_copy_wallet_address: 'Copiar la dirección del wallet',
+  home_address_pending: 'Dirección pendiente...',
+  home_offline_stale: '📡 Sin conexión — mostrando los últimos saldos conocidos, puede que no estén actualizados.',
+  home_offline_cached: '📡 Sin conexión — mostrando los últimos saldos conocidos.',
+  home_since_date: 'Evolución desde el {{date}}',
+  action_sell: 'Vender',
+  action_repeat: 'Repetir',
+  home_daily_mover: '{{emoji}} {{sym}} es tu token que más se mueve hoy ({{sign}}{{change}}%).',
+  home_diversification: '⚖️ El {{pct}}% de tu cartera está en {{symbol}}. Diversificar reduce el riesgo si esta cripto cae.',
+  home_add_favorites_cta: 'Añade favoritos desde Mercado',
+  common_favorites: 'Favoritos',
+  home_custom_tokens: 'Tokens personalizados',
+  common_read_only: 'Solo lectura',
+  home_news_title: 'Noticias cripto en directo',
+  home_news_updated: 'Act. / 5 min',
 };
 
 const de = {
@@ -297,6 +351,24 @@ const de = {
 
   onboarding_create: 'Wallet erstellen',
   onboarding_import: 'Ich habe bereits ein Wallet',
+
+  home_wallet_label: 'Meine Wallet',
+  toast_address_copied: 'Adresse kopiert',
+  a11y_copy_wallet_address: 'Wallet-Adresse kopieren',
+  home_address_pending: 'Adresse ausstehend...',
+  home_offline_stale: '📡 Offline — letzte bekannte Salden angezeigt, evtl. nicht aktuell.',
+  home_offline_cached: '📡 Offline — letzte bekannte Salden angezeigt.',
+  home_since_date: 'Entwicklung seit {{date}}',
+  action_sell: 'Verkaufen',
+  action_repeat: 'Wiederholen',
+  home_daily_mover: '{{emoji}} {{sym}} ist heute dein Token mit der größten Bewegung ({{sign}}{{change}}%).',
+  home_diversification: '⚖️ {{pct}}% deines Portfolios liegt in {{symbol}}. Diversifizierung senkt das Risiko, falls diese Krypto fällt.',
+  home_add_favorites_cta: 'Favoriten aus dem Markt hinzufügen',
+  common_favorites: 'Favoriten',
+  home_custom_tokens: 'Eigene Tokens',
+  common_read_only: 'Nur Lesezugriff',
+  home_news_title: 'Krypto-News live',
+  home_news_updated: 'Aktualisiert / 5 Min',
 };
 
 const pt = {
@@ -368,9 +440,32 @@ const pt = {
 
   onboarding_create: 'Criar a minha wallet',
   onboarding_import: 'Já tenho uma wallet',
+
+  home_wallet_label: 'A Minha Wallet',
+  toast_address_copied: 'Endereço copiado',
+  a11y_copy_wallet_address: 'Copiar o endereço da wallet',
+  home_address_pending: 'Endereço pendente...',
+  home_offline_stale: '📡 Offline — a mostrar os últimos saldos conhecidos, podem não estar atualizados.',
+  home_offline_cached: '📡 Offline — a mostrar os últimos saldos conhecidos.',
+  home_since_date: 'Evolução desde {{date}}',
+  action_sell: 'Vender',
+  action_repeat: 'Repetir',
+  home_daily_mover: '{{emoji}} {{sym}} é o teu token que mais se mexe hoje ({{sign}}{{change}}%).',
+  home_diversification: '⚖️ {{pct}}% da tua carteira está em {{symbol}}. Diversificar reduz o risco se esta cripto cair.',
+  home_add_favorites_cta: 'Adiciona favoritos a partir do Mercado',
+  common_favorites: 'Favoritos',
+  home_custom_tokens: 'Tokens personalizados',
+  common_read_only: 'Só leitura',
+  home_news_title: 'Notícias cripto em direto',
+  home_news_updated: 'Atualizado / 5 min',
 };
 
 const DICTIONARIES = { fr, en, es, de, pt };
+
+// Intl locale tag utilisé pour les dates formatées dans l'UI (toLocaleDateString) —
+// pour l'instant seulement l'accueil (sparkline, actus) ; le reste de l'app
+// (Stats, documents légaux...) reste en 'fr-FR' pour cette phase.
+const INTL_LOCALE_TAG = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', de: 'de-DE', pt: 'pt-PT' };
 
 function translate(locale, key, vars) {
   const dict = DICTIONARIES[locale] || DICTIONARIES.fr;
@@ -385,4 +480,4 @@ function translate(locale, key, vars) {
 
 const SUPPORTED_LOCALES = ['fr', 'en', 'es', 'de', 'pt'];
 
-module.exports = { translate, SUPPORTED_LOCALES };
+module.exports = { translate, SUPPORTED_LOCALES, INTL_LOCALE_TAG };
