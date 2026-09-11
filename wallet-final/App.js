@@ -191,6 +191,14 @@ const CURRENCIES = {
   AUD: { symbol: 'A$',  name: 'Dollar Australien', flag: '🇦🇺', rate: 1.52   },
 };
 
+// Sur un appareil réglé en français, le clavier "decimal-pad" affiche une
+// virgule (pas un point) comme séparateur décimal — mais parseFloat/Number ne
+// comprennent que le point. Sans ça, "12,5" est lu comme 12 par parseFloat
+// (il s'arrête à la virgule), silencieusement : un montant tronqué envoyé/
+// swappé sans aucune erreur visible. On normalise donc dès la saisie, sur
+// TOUS les champs de montant (swap, envoi, achat/vente, pont, alertes...).
+const normalizeDecimalInput = (v) => v.replace(',', '.');
+
 // ═══════════════════════════════════════════════════════════
 //  DOCUMENTS LÉGAUX — texte affiché tel quel dans Paramètres et le footer de
 //  la landing. Gabarit générique pour un wallet non-custodial ; à faire
@@ -5584,10 +5592,10 @@ function AppContent({ themeMode, changeTheme }) {
                 <TextInput
                   style={[st.form_input, { flex: 1, marginBottom: 0 }]}
                   value={calcAmount}
-                  onChangeText={setCalcAmount}
+                  onChangeText={(v) => setCalcAmount(normalizeDecimalInput(v))}
                   placeholder={`Montant en ${sym}`}
                   placeholderTextColor={T.text3}
-                  keyboardType="numeric"
+                  keyboardType="decimal-pad"
                 />
                 <Text style={st.calc_sym}>{sym}</Text>
               </View>
@@ -5670,8 +5678,8 @@ function AppContent({ themeMode, changeTheme }) {
               <TextInput
                 style={[st.form_input, { flex: 1, marginBottom: 0 }]}
                 value={alertTargetInput}
-                onChangeText={setAlertTargetInput}
-                keyboardType="numeric"
+                onChangeText={(v) => setAlertTargetInput(normalizeDecimalInput(v))}
+                keyboardType="decimal-pad"
                 placeholder={currentPrice ? currentPrice.toString() : '0.00'}
                 placeholderTextColor={T.text3}
               />
@@ -5718,7 +5726,8 @@ function AppContent({ themeMode, changeTheme }) {
   // `sendAmount` (en crypto) reste la seule valeur utilisée par prepareSend/
   // confirmAndSend — le mode "devise" n'est qu'un affichage alternatif de
   // saisie qui reconvertit immédiatement vers la crypto sous-jacente.
-  const setSendCryptoAmount = (cryptoStr) => {
+  const setSendCryptoAmount = (cryptoStrRaw) => {
+    const cryptoStr = normalizeDecimalInput(cryptoStrRaw);
     setSendAmount(cryptoStr);
     if (sendAmountMode === 'fiat') {
       const price = tokens[sendToken]?.price || 0;
@@ -5726,7 +5735,8 @@ function AppContent({ themeMode, changeTheme }) {
       setSendAmountFiatInput(fiatVal ? fiatVal.toFixed(2) : '');
     }
   };
-  const setSendFiatAmount = (fiatStr) => {
+  const setSendFiatAmount = (fiatStrRaw) => {
+    const fiatStr = normalizeDecimalInput(fiatStrRaw);
     setSendAmountFiatInput(fiatStr);
     const price = tokens[sendToken]?.price || 0;
     const fiatNum = parseFloat(fiatStr) || 0;
@@ -5946,10 +5956,10 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={{ flexDirection: 'row' }}>
               {sendAmountMode === 'fiat' ? (
                 <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmountFiatInput} onChangeText={setSendFiatAmount}
-                  placeholder={`0.00 ${symC}`} placeholderTextColor={T.text3} keyboardType="numeric" />
+                  placeholder={`0.00 ${symC}`} placeholderTextColor={T.text3} keyboardType="decimal-pad" />
               ) : (
                 <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendCryptoAmount}
-                  placeholder="0.00" placeholderTextColor={T.text3} keyboardType="numeric" />
+                  placeholder="0.00" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
               )}
               <TouchableOpacity style={st.max_btn} onPress={() => setSendCryptoAmount(String(tokens[sendToken]?.balance || 0))}>
                 <Text style={st.max_btn_txt}>MAX</Text>
@@ -6086,10 +6096,10 @@ function AppContent({ themeMode, changeTheme }) {
               <TextInput
                 style={st.form_input}
                 value={receiveAmount}
-                onChangeText={setReceiveAmount}
+                onChangeText={(v) => setReceiveAmount(normalizeDecimalInput(v))}
                 placeholder={`0.00 ${nativeSymbol}`}
                 placeholderTextColor={T.text3}
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
               />
               {!!paymentUri && (
                 <>
@@ -6797,8 +6807,8 @@ function AppContent({ themeMode, changeTheme }) {
             </ScrollView>
 
             <Text style={st.form_label}>Montant ETH</Text>
-            <TextInput style={st.form_input} value={bridgeAmount} onChangeText={(v) => { setBridgeAmount(v); setBridgeQuote(null); }}
-              placeholder="0.01" placeholderTextColor={T.text3} keyboardType="numeric" />
+            <TextInput style={st.form_input} value={bridgeAmount} onChangeText={(v) => { setBridgeAmount(normalizeDecimalInput(v)); setBridgeQuote(null); }}
+              placeholder="0.01" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
 
             {!bridgeQuote ? (
               <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeQuoteLoading ? 0.7 : 1 }]} onPress={handleGetBridgeQuote} disabled={bridgeQuoteLoading}>
@@ -6948,8 +6958,8 @@ function AppContent({ themeMode, changeTheme }) {
               </ScrollView>
 
               <Text style={st.form_label}>Montant USD</Text>
-              <TextInput style={st.form_input} value={recurringAmount} onChangeText={setRecurringAmount}
-                placeholder="20" placeholderTextColor={T.text3} keyboardType="numeric" />
+              <TextInput style={st.form_input} value={recurringAmount} onChangeText={(v) => setRecurringAmount(normalizeDecimalInput(v))}
+                placeholder="20" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
 
               <Text style={[st.form_label, { marginTop: 16 }]}>Fréquence</Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -8330,6 +8340,11 @@ function AppContent({ themeMode, changeTheme }) {
     const fprice = ft?.price || 1;
     const tprice = tt?.price || 1;
     const rate = tprice > 0 ? fprice / tprice : 0;
+    // Même calcul que handleSwapConfirm (voir plus haut) : le natif du réseau
+    // (ETH/BNB...) vit dans walletBalance, tous les autres tokens dans
+    // tokens[symbole].balance — une seule et même source pour le contrôle
+    // "solde insuffisant" à la confirmation et l'affichage ici.
+    const swapAvailable = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
     return (
       <ScrollView
         style={{ flex: 1, padding: 16 }}
@@ -8338,9 +8353,25 @@ function AppContent({ themeMode, changeTheme }) {
         <Text style={st.tab_title}>⇄ Achat / Vente live</Text>
         <View style={st.swap_card}>
           <Text style={st.swap_lbl}>Tu paies</Text>
-          <TextInput style={st.swap_big_input} value={swapAmt} onChangeText={setSwapAmt}
-            placeholder="0" placeholderTextColor={T.text3} keyboardType="numeric" />
-          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 10 }}>≈ {fmt((parseFloat(swapAmt) || 0) * fprice)}</Text>
+          <TextInput style={st.swap_big_input} value={swapAmt} onChangeText={(v) => setSwapAmt(normalizeDecimalInput(v))}
+            placeholder="0" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
+          <Text style={{ color: T.text2, fontSize: 12, marginBottom: 4 }}>≈ {fmt((parseFloat(swapAmt) || 0) * fprice)}</Text>
+          {!!swapAvailable && (
+            <>
+              <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8 }}>Solde disponible : {swapAvailable.toFixed(6)} {swapFrom}</Text>
+              <View style={{ flexDirection: 'row', marginBottom: 10, gap: 8 }}>
+                {[0.25, 0.5, 0.75, 1].map(pct => (
+                  <TouchableOpacity
+                    key={pct}
+                    style={st.quick_pct_btn}
+                    onPress={() => setSwapAmt((swapAvailable * pct).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''))}
+                  >
+                    <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {(SWAPPABLE_TOKENS[network] || []).map((sym) => {
               const t = tokens[sym];
@@ -8431,8 +8462,8 @@ function AppContent({ themeMode, changeTheme }) {
           <Text style={st.form_label}>Montant (EUR)</Text>
           <View style={st.buy_amount_row}>
             <Text style={st.buy_amount_currency}>€</Text>
-            <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={setBuyAmount}
-              placeholder="10" placeholderTextColor={T.text3} keyboardType="numeric" />
+            <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={(v) => setBuyAmount(normalizeDecimalInput(v))}
+              placeholder="10" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
           </View>
           <Text style={st.buy_amount_convert}>
             ≈ {(() => {
@@ -8502,8 +8533,8 @@ function AppContent({ themeMode, changeTheme }) {
             </ScrollView>
 
             <Text style={st.form_label}>Montant {sellToken}</Text>
-            <TextInput style={st.form_input} value={sellAmount} onChangeText={setSellAmount}
-              placeholder="0.1" placeholderTextColor={T.text3} keyboardType="numeric" />
+            <TextInput style={st.form_input} value={sellAmount} onChangeText={(v) => setSellAmount(normalizeDecimalInput(v))}
+              placeholder="0.1" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
             {!!sellableBalance && (
               <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
                 {[0.25, 0.5, 1].map(pct => (
