@@ -199,6 +199,47 @@ const CURRENCIES = {
 // TOUS les champs de montant (swap, envoi, achat/vente, pont, alertes...).
 const normalizeDecimalInput = (v) => v.replace(',', '.');
 
+// ethers.js (v5) colle parfois le JSON-RPC brut ENTIER dans error.message
+// (utile en debug, mais un vrai utilisateur a fini par voir un pavé JSON
+// illisible dans une alerte "Erreur" — cas réel remonté par Pablo sur un
+// swap qui a échoué faute de marge pour le gas). On reconnaît les cas
+// fréquents pour un message clair, et on réduit tout le reste à un message
+// court plutôt que d'afficher le JSON brut. Utiliser partout où une erreur
+// de transaction (send/swap/bridge/stake/NFT/paiement...) est affichée.
+const humanizeTxError = (err) => {
+  const raw = String((typeof err?.message === 'string' && err.message) || (typeof err === 'string' && err) || '').trim();
+  if (!raw) return null;
+  if (/insufficient funds/i.test(raw)) {
+    return 'Solde insuffisant pour couvrir le montant ET les frais de réseau (gas) — laisse un peu de marge.';
+  }
+  if (/nonce too low|already known|replacement transaction underpriced/i.test(raw)) {
+    return 'Une transaction est déjà en cours sur ce wallet — réessaie dans quelques secondes.';
+  }
+  if (/timeout|network ?error|ECONNABORTED/i.test(raw)) {
+    return 'Le réseau ne répond pas — réessaie dans un instant.';
+  }
+  // Ethers ajoute parfois "[ See: https://... ]" ou "(error={...})" avec le
+  // JSON-RPC complet à la suite d'un message par ailleurs correct — nos
+  // propres `throw new Error(...)` (messages métier) n'ont jamais ça.
+  const looksLikeRawDump = /\[\s*See:|\(error=\{|"jsonrpc"/i.test(raw) || raw.length > 200;
+  if (looksLikeRawDump) {
+    const cleaned = raw.split(/\s*\[\s*See:|\s*\(error=/)[0].trim();
+    return cleaned && cleaned.length < 120 ? cleaned : null;
+  }
+  return raw;
+};
+
+// Réserve de gas conservatrice à laisser de côté quand un bouton "Tout" /
+// "MAX" / "100%" vide le solde du token NATIF d'un réseau (ETH, BNB,
+// MATIC...). Sans ça, mettre 100% du natif dans le montant envoyé/swappé
+// laisse 0 pour payer le gas de la transaction elle-même, qui échoue avec
+// "insufficient funds for intrinsic transaction cost" (bug réel remonté par
+// Pablo sur le bouton "Tout" du Swap). Valeurs volontairement généreuses —
+// mieux vaut laisser un peu de poussière que faire échouer la transaction ;
+// n'affecte que ces boutons de raccourci, jamais le solde réel affiché.
+const NATIVE_GAS_RESERVE = { ethereum: 0.004, bsc: 0.002, polygon: 0.05, arbitrum: 0.001, optimism: 0.001, base: 0.001 };
+const getNativeGasReserve = (net) => NATIVE_GAS_RESERVE[net] ?? 0.003;
+
 // ═══════════════════════════════════════════════════════════
 //  DOCUMENTS LÉGAUX — texte affiché tel quel dans Paramètres et le footer de
 //  la landing. Gabarit générique pour un wallet non-custodial ; à faire
@@ -2687,7 +2728,7 @@ function AppContent({ themeMode, changeTheme }) {
       setExportPassphraseInput('');
       setExportPassphraseConfirm('');
     } catch (err) {
-      setExportPassphraseError(err.message || "Échec de l'export.");
+      setExportPassphraseError(humanizeTxError(err) || "Échec de l'export.");
     } finally {
       setExportPassphraseLoading(false);
     }
@@ -2799,7 +2840,7 @@ function AppContent({ themeMode, changeTheme }) {
       return true;
     } catch (err) {
       console.error('Import local échoué:', err.message);
-      setImportError(err.message || 'Mnémonique ou clé privée invalide.');
+      setImportError(humanizeTxError(err) || 'Mnémonique ou clé privée invalide.');
       return false;
     }
   }, [importType, importValue, importKeystorePassword]);
@@ -3132,7 +3173,7 @@ function AppContent({ themeMode, changeTheme }) {
       setAddAccountValue('');
       setAddAccountKeystorePassword('');
     } catch (err) {
-      setAddAccountError(err.message || 'Import invalide.');
+      setAddAccountError(humanizeTxError(err) || 'Import invalide.');
     }
   }, [addAccountValue, addAccountType, addAccountKeystorePassword, accounts]);
 
@@ -3177,7 +3218,7 @@ function AppContent({ themeMode, changeTheme }) {
       await walletConnect.pairWithUri(uri);
       setWcUri('');
     } catch (err) {
-      setWcError(err.message || 'Connexion WalletConnect impossible.');
+      setWcError(humanizeTxError(err) || 'Connexion WalletConnect impossible.');
     } finally {
       setWcConnecting(false);
     }
@@ -3219,7 +3260,7 @@ function AppContent({ themeMode, changeTheme }) {
       await walletConnect.approveSessionProposal(wcProposal, walletAddr);
       showToast('✓ dApp connectée', 'success');
     } catch (err) {
-      showAlert('Connexion refusée', err.message || 'Cette dApp demande une chaîne non supportée par NexiaWallet.');
+      showAlert('Connexion refusée', humanizeTxError(err) || 'Cette dApp demande une chaîne non supportée par NexiaWallet.');
     } finally {
       setWcProposal(null);
       refreshWcSessions();
@@ -3291,7 +3332,7 @@ function AppContent({ themeMode, changeTheme }) {
       showToast('✓ Autorisation révoquée', 'success');
       refreshApprovals();
     } catch (err) {
-      showAlert('Révocation impossible', err.message || 'Réessaie plus tard.');
+      showAlert('Révocation impossible', humanizeTxError(err) || 'Réessaie plus tard.');
     } finally {
       setRevokingApprovalId(null);
     }
@@ -3316,7 +3357,7 @@ function AppContent({ themeMode, changeTheme }) {
       showToast('✓ Signé', 'success');
       setWcRequest(null);
     } catch (err) {
-      setWcRequestError(err.message || 'Impossible de traiter cette demande.');
+      setWcRequestError(humanizeTxError(err) || 'Impossible de traiter cette demande.');
       try { await walletConnect.rejectSessionRequest(wcRequest.topic, wcRequest.id, err.message); } catch { /* rien à faire */ }
     } finally {
       setWcRequestLoading(false);
@@ -3418,7 +3459,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
       setDappBridgeRequest(null);
     } catch (err) {
-      const message = err.message || 'Requête refusée.';
+      const message = humanizeTxError(err) || 'Requête refusée.';
       setDappBridgeError(message);
       dappBridgeRespond(id, message, null);
     } finally {
@@ -3521,7 +3562,7 @@ function AppContent({ themeMode, changeTheme }) {
       await loadStakeAccounts();
       await refreshSolanaBalance();
     } catch (err) {
-      setStakeError(err.message || 'Impossible de créer le stake.');
+      setStakeError(humanizeTxError(err) || 'Impossible de créer le stake.');
     } finally {
       setStakeLoading(false);
     }
@@ -3542,7 +3583,7 @@ function AppContent({ themeMode, changeTheme }) {
               showToast('✓ Désactivation en cours', 'success');
               await loadStakeAccounts();
             } catch (err) {
-              showAlert('Erreur', err.message || 'Impossible de désactiver ce stake.');
+              showAlert('Erreur', humanizeTxError(err) || 'Impossible de désactiver ce stake.');
             }
           },
         },
@@ -3559,7 +3600,7 @@ function AppContent({ themeMode, changeTheme }) {
       await loadStakeAccounts();
       await refreshSolanaBalance();
     } catch (err) {
-      showAlert('Erreur', err.message || 'Impossible de retirer ce stake.');
+      showAlert('Erreur', humanizeTxError(err) || 'Impossible de retirer ce stake.');
     }
   }, [unlockedMnemonic, loadStakeAccounts, showToast]);
 
@@ -3582,7 +3623,7 @@ function AppContent({ themeMode, changeTheme }) {
       if (!response.data?.success) throw new Error(response.data?.error || 'Impossible de récupérer les NFT.');
       setNfts(response.data.nfts || []);
     } catch (err) {
-      setNftsError(err.response?.data?.error || err.message || 'Impossible de récupérer les NFT.');
+      setNftsError(err.response?.data?.error || humanizeTxError(err) || 'Impossible de récupérer les NFT.');
     } finally {
       setNftsLoading(false);
     }
@@ -3611,7 +3652,7 @@ function AppContent({ themeMode, changeTheme }) {
       setNftSendAddress('');
       setNfts(prev => prev.filter(n => !(n.contract === selectedNft.contract && n.tokenId === selectedNft.tokenId)));
     } catch (err) {
-      setNftSendError(err.message || "Impossible d'envoyer ce NFT.");
+      setNftSendError(humanizeTxError(err) || "Impossible d'envoyer ce NFT.");
     } finally {
       setNftSendLoading(false);
     }
@@ -3830,7 +3871,7 @@ function AppContent({ themeMode, changeTheme }) {
       setShowAddCustomToken(false);
       setCustomTokenAddrInput('');
     } catch (err) {
-      showToast(err.message || 'Impossible de lire ce contrat', 'error');
+      showToast(humanizeTxError(err) || 'Impossible de lire ce contrat', 'error');
     } finally {
       setCustomTokenLoading(false);
     }
@@ -4591,7 +4632,7 @@ function AppContent({ themeMode, changeTheme }) {
         await Linking.openURL(res.data.url);
       }
     } catch (err) {
-      showAlert('Erreur paiement', err.message || 'Impossible de lancer le paiement.');
+      showAlert('Erreur paiement', humanizeTxError(err) || 'Impossible de lancer le paiement.');
     } finally {
       setBuyLoading(false);
     }
@@ -4631,7 +4672,7 @@ function AppContent({ themeMode, changeTheme }) {
         await Linking.openURL(res.data.url);
       }
     } catch (err) {
-      showAlert('Erreur', err.message || 'Impossible de lancer la vente.');
+      showAlert('Erreur', humanizeTxError(err) || 'Impossible de lancer la vente.');
     } finally {
       setSellLoading(false);
     }
@@ -4662,7 +4703,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
       setShowRecurringBuy(false);
     } catch (err) {
-      showAlert('Erreur', err.message || "Impossible d'enregistrer l'achat récurrent.");
+      showAlert('Erreur', humanizeTxError(err) || "Impossible d'enregistrer l'achat récurrent.");
     } finally {
       setRecurringSaving(false);
     }
@@ -4690,7 +4731,7 @@ function AppContent({ themeMode, changeTheme }) {
       });
       setBridgeQuote(quote);
     } catch (err) {
-      setBridgeError(err.response?.data?.message || err.message || 'Impossible de récupérer une route de pont.');
+      setBridgeError(err.response?.data?.message || humanizeTxError(err) || 'Impossible de récupérer une route de pont.');
     } finally {
       setBridgeQuoteLoading(false);
     }
@@ -4717,7 +4758,7 @@ function AppContent({ themeMode, changeTheme }) {
       setBridgeQuote(null);
       setBridgeAmount('');
     } catch (err) {
-      setBridgeError(err.message || 'Impossible de finaliser le pont.');
+      setBridgeError(humanizeTxError(err) || 'Impossible de finaliser le pont.');
     } finally {
       setBridgeExecuting(false);
     }
@@ -4864,7 +4905,7 @@ function AppContent({ themeMode, changeTheme }) {
         setSendFeeEstimate(null);
       } catch (e) {
         playTone('error');
-        showAlert('❌ Erreur', e.message || 'Transaction échouée');
+        showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
       }
       setSendLoading(false);
       return;
@@ -4904,7 +4945,7 @@ function AppContent({ themeMode, changeTheme }) {
         setSendFeeEstimate(null);
       } catch (e) {
         playTone('error');
-        showAlert('❌ Erreur', e.message || 'Transaction échouée');
+        showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
       }
       setSendLoading(false);
       return;
@@ -4962,7 +5003,7 @@ function AppContent({ themeMode, changeTheme }) {
       fetchMarket();
     } catch (e) {
       playTone('error');
-      showAlert('❌ Erreur', e.message || 'Transaction échouée');
+      showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
     }
     setSendLoading(false);
   };
@@ -5077,7 +5118,7 @@ function AppContent({ themeMode, changeTheme }) {
       fetchMarket();
     } catch (e) {
       playTone('error');
-      showAlert('❌ Erreur', e.message || 'Swap échoué');
+      showAlert('❌ Erreur', humanizeTxError(e) || 'Swap échoué');
     }
     setSwapLoading(false);
   };
@@ -5961,7 +6002,17 @@ function AppContent({ themeMode, changeTheme }) {
                 <TextInput style={[st.form_input, { flex: 1 }]} value={sendAmount} onChangeText={setSendCryptoAmount}
                   placeholder="0.00" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
               )}
-              <TouchableOpacity style={st.max_btn} onPress={() => setSendCryptoAmount(String(tokens[sendToken]?.balance || 0))}>
+              <TouchableOpacity
+                style={st.max_btn}
+                onPress={() => {
+                  const bal = tokens[sendToken]?.balance || 0;
+                  // Réserve de gas si on vide le token NATIF (voir
+                  // getNativeGasReserve) : sinon plus rien pour payer la
+                  // transaction elle-même, qui échoue.
+                  const max = sendToken === nativeSymbol ? Math.max(0, bal - getNativeGasReserve(network)) : bal;
+                  setSendCryptoAmount(String(max));
+                }}
+              >
                 <Text style={st.max_btn_txt}>MAX</Text>
               </TouchableOpacity>
             </View>
@@ -8364,7 +8415,18 @@ function AppContent({ themeMode, changeTheme }) {
                   <TouchableOpacity
                     key={pct}
                     style={st.quick_pct_btn}
-                    onPress={() => setSwapAmt((swapAvailable * pct).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''))}
+                    onPress={() => {
+                      // À 100% sur le token NATIF (ETH/BNB...), on swappe
+                      // aussi le token qui paie le gas : mettre le solde
+                      // exact laisse 0 pour la transaction elle-même, qui
+                      // échoue ("insufficient funds for intrinsic transaction
+                      // cost" — bug réel remonté par Pablo). On réserve donc
+                      // une petite marge à 100% pour ce cas précis.
+                      const raw = pct === 1 && swapFrom === nativeSymbol
+                        ? Math.max(0, swapAvailable - getNativeGasReserve(network))
+                        : swapAvailable * pct;
+                      setSwapAmt(raw.toFixed(8).replace(/0+$/, '').replace(/\.$/, ''));
+                    }}
                   >
                     <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
                   </TouchableOpacity>
@@ -8538,7 +8600,20 @@ function AppContent({ themeMode, changeTheme }) {
             {!!sellableBalance && (
               <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
                 {[0.25, 0.5, 1].map(pct => (
-                  <TouchableOpacity key={pct} style={st.quick_pct_btn} onPress={() => setSellAmount(String(sellableBalance * pct))}>
+                  <TouchableOpacity
+                    key={pct}
+                    style={st.quick_pct_btn}
+                    onPress={() => {
+                      // Même réserve de gas qu'ailleurs (Swap/Envoyer) sur
+                      // "Tout" quand le token vendu est le natif du réseau —
+                      // sinon plus rien pour payer la transaction on-chain
+                      // vers l'adresse de dépôt Coinbase.
+                      const amt = pct === 1 && sellToken === nativeSymbol
+                        ? Math.max(0, sellableBalance - getNativeGasReserve(network))
+                        : sellableBalance * pct;
+                      setSellAmount(String(amt));
+                    }}
+                  >
                     <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
                   </TouchableOpacity>
                 ))}
