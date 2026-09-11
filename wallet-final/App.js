@@ -400,6 +400,14 @@ const LANDING_FAQ = [
     q: 'Le swap et l\'achat par carte sont-ils sûrs ?',
     a: "L'achat par carte passe par Coinbase Onramp — la crypto est livrée directement sur l'adresse de ton wallet, jamais sur un compte tiers. Le swap passe par l'agrégateur DEX 0x pour trouver le meilleur prix, mais la signature de la transaction reste 100% locale sur ton appareil, comme un envoi classique.",
   },
+  {
+    q: 'Comment vendre mes cryptos et récupérer des euros ?',
+    a: "Via Coinbase Offramp (bouton \"Vendre\") : tu envoies tes cryptos à l'adresse de dépôt affichée, puis tu retires en euros par virement SEPA. Il faut un compte Coinbase (gratuit) et sa vérification d'identité — NexiaWallet ne demande jamais d'identité de son côté.",
+  },
+  {
+    q: 'Est-ce que NexiaWallet prend une commission ?',
+    a: "Oui, une petite commission sur deux opérations optionnelles : 0,75 % sur un échange (swap) et 0,25 % sur un transfert entre réseaux (pont) — toujours affichée avant de confirmer. Créer un wallet, envoyer, recevoir et garder ses cryptos reste entièrement gratuit.",
+  },
 ];
 
 // URLs images CoinGecko (logos réels)
@@ -2079,6 +2087,11 @@ function AppContent({ themeMode, changeTheme }) {
   const [bridgeError, setBridgeError]       = useState(null);
   // Positions DeFi (voir lib/defiPositions.js) — v1 : Lido stETH uniquement.
   const [showDefiPositions, setShowDefiPositions] = useState(false);
+  const [showFaq, setShowFaq] = useState(false);
+  // Accordéon FAQ : quelle question est dépliée (index), ou aucune. Réutilise
+  // `openFaq`/`LANDING_FAQ` — déjà définis pour l'ancienne landing "vitrine"
+  // (remplacée depuis par un accueil épuré, voir plus haut dans le fichier),
+  // jamais réutilisés depuis nulle part : on leur donne enfin un écran.
   const [defiPositionsList, setDefiPositionsList] = useState([]);
   const [defiPositionsLoading, setDefiPositionsLoading] = useState(false);
   const [walletAddr, setWalletAddr]       = useState('');
@@ -6931,6 +6944,48 @@ function AppContent({ themeMode, changeTheme }) {
     </Modal>
   );
 
+  // ════════════════════════════════════════════════════════
+  //  MODAL: FOIRE AUX QUESTIONS
+  // ════════════════════════════════════════════════════════
+  // Contenu (LANDING_FAQ) déjà écrit pour l'ancienne landing "vitrine",
+  // jamais réutilisé depuis sa suppression lors de la refonte épurée de
+  // l'accueil (2026-09-10) — remis en service ici, dans un vrai écran
+  // accessible depuis Réglages, plutôt que de le laisser mort dans le
+  // fichier. Utile pour l'acquisition d'utilisateurs en cours (Discord/
+  // Telegram) : un nouveau venu qui a une question peut se répondre seul
+  // sans passer par un message à Pablo.
+  const renderFaq = () => (
+    <Modal visible={showFaq} animationType="slide" transparent>
+      <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+        <View style={st.modal_hdr}>
+          <TouchableOpacity onPress={() => { setShowFaq(false); setShowSettings(true); }} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+            <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={st.modal_title}>Foire aux questions</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          {LANDING_FAQ.map((item, i) => {
+            const isOpen = openFaq === i;
+            return (
+              <TouchableOpacity key={i} style={st.faq_item} onPress={() => setOpenFaq(isOpen ? null : i)} activeOpacity={0.8}>
+                <View style={st.faq_q_row}>
+                  <Text style={st.faq_q_txt}>{item.q}</Text>
+                  <Text style={[st.faq_chevron, { color: T.gold }]}>{isOpen ? '−' : '+'}</Text>
+                </View>
+                {isOpen && <Text style={st.faq_a_txt}>{item.a}</Text>}
+              </TouchableOpacity>
+            );
+          })}
+          <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+            D'autres questions ? Écris à contact@nexiawallet.com
+          </Text>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+
   const renderBridge = () => {
     const feeCosts = bridgeQuote?.estimate?.feeCosts || [];
     const toAmount = bridgeQuote?.estimate?.toAmount;
@@ -7944,6 +7999,13 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • EVM + Solana + Bitcoin</Text>
             </View>
           </View>
+          <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowFaq(true); }}>
+            <Text style={{ fontSize: 22 }}>❓</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Foire aux questions</Text>
+              <Text style={st.settings_row_sub}>Phrase de récupération, sécurité, frais...</Text>
+            </View>
+          </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={shareApp}>
             <Text style={{ fontSize: 22 }}>📤</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
@@ -8914,6 +8976,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderDuressSetup()}
       {renderBridge()}
       {renderDefiPositions()}
+      {renderFaq()}
       {renderReferral()}
       {!!selectedToken && renderTokenDetail()}
       {!!selectedMarketCoin && renderMarketCoinDetail()}
