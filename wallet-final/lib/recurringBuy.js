@@ -52,7 +52,7 @@ async function scheduleReminder({ amountUsd, token, frequency }) {
   const id = await Notifications.scheduleNotificationAsync({
     content: {
       title: '💰 Achat récurrent NexiaWallet',
-      body: `C'est le moment de ton achat de ${amountUsd}$ en ${token} — appuie pour valider.`,
+      body: `C'est le moment de ton achat de ${amountUsd}€ en ${token} — appuie pour valider.`,
       data: { type: 'recurring-buy', amountUsd, token },
     },
     trigger: { seconds, repeats: true },

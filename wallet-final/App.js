@@ -441,7 +441,7 @@ const WALLET_TOKENS = {
 };
 
 // Le wallet a une adresse EVM (0x...) et une adresse Solana (dérivée de la
-// même mnémonique) : on ne propose l'achat MoonPay que pour les tokens qui
+// même mnémonique) : on ne propose l'achat que pour les tokens qui
 // peuvent réellement arriver sur l'une des deux.
 const BUYABLE_TOKENS = {
   ethereum: ['ETH', 'USDT', 'USDC'],
@@ -4204,12 +4204,12 @@ function AppContent({ themeMode, changeTheme }) {
     if (!status && !isDemo) return;
 
     if (status) {
-      const label = { completed: '✅ Achat confirmé', pending: '⏳ Achat en cours', failed: '❌ Achat échoué' }[status] || `Statut MoonPay : ${status}`;
+      const label = { completed: '✅ Achat confirmé', pending: '⏳ Achat en cours', failed: '❌ Achat échoué' }[status] || `Statut Coinbase : ${status}`;
       showAlert(label, status === 'failed'
-        ? 'La transaction MoonPay n\'a pas abouti.'
+        ? "La transaction Coinbase n'a pas abouti."
         : 'Ton solde se met à jour dès que la transaction est confirmée sur la blockchain — vérification automatique en cours.');
     } else {
-      showAlert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure MoonPay pour un achat réel.');
+      showAlert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure un fournisseur de paiement pour un achat réel.');
     }
 
     window.history.replaceState({}, '', window.location.pathname);
@@ -4599,7 +4599,7 @@ function AppContent({ themeMode, changeTheme }) {
   // ── ACHAT / PAIEMENT STRIPE ──
   const handleBuyNow = async () => {
     if (!buyAmount || isNaN(Number(buyAmount)) || Number(buyAmount) <= 0) {
-      showAlert('Montant invalide', 'Entre un montant en USD.');
+      showAlert('Montant invalide', 'Entre un montant en EUR.');
       return;
     }
     setBuyLoading(true);
@@ -4638,8 +4638,8 @@ function AppContent({ themeMode, changeTheme }) {
     }
   };
 
-  // ── VENTE (off-ramp MoonPay) ── même principe que l'achat, sens inverse :
-  // le widget MoonPay affiche une adresse de dépôt, l'utilisateur y envoie
+  // ── VENTE (off-ramp Coinbase) ── même principe que l'achat, sens inverse :
+  // le widget Coinbase affiche une adresse de dépôt, l'utilisateur y envoie
   // lui-même ses fonds depuis ce wallet (aucune clé privée transmise au
   // backend — cohérent avec l'architecture non-custodiale du reste de l'app).
   const handleSellNow = async () => {
@@ -4681,7 +4681,7 @@ function AppContent({ themeMode, changeTheme }) {
   const handleSaveRecurringBuy = async () => {
     const amountUsd = Number(recurringAmount);
     if (recurringEnabled && (!amountUsd || isNaN(amountUsd) || amountUsd <= 0)) {
-      showAlert('Montant invalide', 'Entre un montant en USD.');
+      showAlert('Montant invalide', 'Entre un montant en EUR.');
       return;
     }
     setRecurringSaving(true);
@@ -6978,7 +6978,7 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
-            MoonPay ne peut pas prélever ta carte automatiquement en arrière-plan (sécurité/conformité). NexiaWallet te
+            Coinbase ne peut pas prélever ta carte automatiquement en arrière-plan (sécurité/conformité). NexiaWallet te
             programme un rappel qui rouvre l'écran Acheter, déjà pré-rempli — tu valides toi-même le paiement à chaque fois.
           </Text>
 
@@ -7008,7 +7008,7 @@ function AppContent({ themeMode, changeTheme }) {
                 })}
               </ScrollView>
 
-              <Text style={st.form_label}>Montant USD</Text>
+              <Text style={st.form_label}>Montant (EUR)</Text>
               <TextInput style={st.form_input} value={recurringAmount} onChangeText={(v) => setRecurringAmount(normalizeDecimalInput(v))}
                 placeholder="20" placeholderTextColor={T.text3} keyboardType="decimal-pad" />
 
