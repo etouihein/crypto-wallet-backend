@@ -377,3 +377,115 @@ temps. Vérifié avec Playwright contre le vrai RPC Ethereum (pas mocké).
 - Tout ce qui touche à de vrais fonds (test réel du swap/pont avec des frais
   de gas) : Pablo a signalé ne pas avoir d'ETH disponible pour tester pour
   l'instant.
+
+## 8. Session du 13 septembre — 8 fonctionnalités de la liste "proposées, pas construites" (6 commits)
+
+Pablo a listé lui-même les items à traiter (repris de la liste de fonctionnalités
+proposées en fin de section 6) et a dit "j'ai ça" pour valider le lot en bloc.
+Traité un par un, chacun buildé + passé au smoke test e2e réel avant push.
+
+### 8.1 Reste de l'audit UX — 2 items déjà corrigés (vérifié dans le code)
+
+La devise (persistance) et la liste des devises (mise en puces compactes)
+étaient en fait déjà réglées dans une session intermédiaire non documentée
+ici — vérifié dans le code avant de perdre du temps à les refaire. Les 2
+vrais restants ont été corrigés : le jargon "(Chain X)" retiré des messages
+de succès Envoi/Swap, et l'icône WalletConnect "Scanner un QR code" passée
+en Ionicons (dernier point encore incohérent avec le reste de l'app).
+
+### 8.2 Comparaison de performance vs BTC/ETH (onglet Stats)
+
+Compare le % de variation du portefeuille (déjà calculé ailleurs dans le
+fichier, `periodChange`/`allocationTotal`) à celui de Bitcoin et Ethereum
+sur la même période (24h/7j/30j, réutilise le sélecteur déjà existant).
+
+### 8.3 Checklist sécurité gamifiée (Réglages → Sécurité)
+
+Barre de progression + 6 critères réels (pas des booléens inventés) : PIN
+configuré, phrase de récupération notée (nouveau flag persisté), biométrie
+activée, sauvegarde chiffrée exportée (nouveau flag persisté), compte de
+secours créé, adresse en observation ajoutée.
+
+### 8.4 Bouton "Signaler un problème" (Réglages → Info)
+
+Ouvre un mail pré-rempli vers contact@nexiawallet.com avec le contexte
+technique (réseau, adresse publique, plateforme) déjà rempli en bas du
+message, pour éviter les allers-retours "sur quel réseau tu étais ?".
+
+### 8.5 Vue "toutes mes adresses" unifiée
+
+Accessible depuis Recevoir ("Voir toutes mes adresses en un coup d'œil") :
+liste l'adresse EVM (valable Ethereum/Polygon/BNB/Arbitrum/Optimism/Base),
+Solana et Bitcoin avec copie rapide. **Bug réel attrapé par le nouveau test
+e2e avant tout déploiement** : la modale s'ouvrait par-dessus la modale
+Recevoir encore visible — même anti-pattern de Modal imbriquée déjà
+documenté ailleurs dans ce fichier pour iOS/SDK54. Corrigé en fermant
+Recevoir avant d'ouvrir la nouvelle modale.
+
+### 8.6 Mode Débutant/Avancé (Réglages, tout en haut)
+
+Masque WalletConnect/navigateur Web3/autorisations/achat récurrent/pont/
+positions DeFi quand activé. Défaut "Avancé" délibéré — un utilisateur déjà
+en place ne doit jamais perdre l'accès à une fonctionnalité qu'il utilisait
+déjà suite à une mise à jour silencieuse.
+
+### 8.7 Résolution ENS inversée dans l'historique (Activité)
+
+Chaque contrepartie de transaction (adresse `to`/`from`) est maintenant
+résolue en "nom.eth" quand disponible, via `getProvider('ethereum')`
+(toujours mainnet, seul endroit où le registre ENS existe), mise en cache
+par adresse pour ne pas re-cogner le RPC à chaque re-render.
+
+### 8.8 Reçu de transaction partageable (icône sur chaque ligne d'Activité)
+
+Génère un résumé texte (montant, réseau, date, contrepartie — réutilise le
+nom ENS déjà résolu, statut, lien explorateur) partagé via `Share.share`,
+avec le même repli presse-papier que `shareApp`/`shareReferralLink` si
+indisponible (desktop web sans `navigator.share`).
+
+**Bug réel introduit puis attrapé par le build+e2e avant tout push, même
+classe que l'incident du 05/07** : la fonction référençait `activeNetwork`
+dans son tableau de dépendances `useCallback` à un endroit du fichier situé
+AVANT la déclaration `const activeNetwork` → `ReferenceError` qui plantait
+l'app entière dès le premier rendu (page blanche dès la landing). Détecté
+par un rechargement Playwright propre avant de committer, jamais poussé en
+l'état. Déplacé après la déclaration d'`activeNetwork`.
+
+### 8.9 Recherche globale (icône à côté de Réglages sur l'accueil)
+
+Une seule modale, 3 catégories filtrées en direct pendant la frappe : Mes
+tokens (par symbole/nom), Marché (cryptos non détenues, ouvre l'onglet
+Marché pré-filtré), Actions & écrans (Envoyer/Recevoir/Acheter/Vendre/Swap/
+Activité/Marché/Stats/Découvrir/Toutes mes adresses/Réglages/FAQ).
+
+### 8.10 `/code-review` a trouvé un vrai bug avant qu'il ne touche un vrai utilisateur
+
+Les 2 actions de recherche globale vers "Marché" appelaient `setTab('market')`
+(singulier) au lieu de `setTab('markets')` (l'id réel utilisé partout
+ailleurs dans le fichier) → écran vide silencieux. Corrigé aux 2 endroits +
+ajouté un test e2e qui recherche une crypto absente de la liste par défaut
+du wallet (Dogecoin) et vérifie que le tap ouvre bien un onglet Marché non
+vide, pour que cette classe de bug ne repasse plus inaperçue.
+
+### 8.11 `/security-review` du diff complet de la session : aucun finding
+
+Attendu — aucun changement ne touchait la signature, les clés, le
+chiffrement ou le backend ; uniquement de l'affichage lecture-seule
+(adresses publiques déjà connues, résolution ENS, flags AsyncStorage
+locaux, lien `mailto:` avec paramètres encodés).
+
+### 8.12 Tests e2e étoffés : 9 → 25 vérifications automatisées
+
+`npm run test:e2e` couvre maintenant en plus : vue "toutes mes adresses",
+écran Activité, recherche globale (4 vérifications dont le bug 8.10),
+checklist sécurité, mode Débutant/Avancé (masquage + réaffichage), bouton
+"Signaler un problème".
+
+### 8.13 Code-splitting de l'App.js — refusé une 3e fois, cette fois demandé explicitement à Pablo
+
+Plutôt que de trancher seul comme les 2 fois précédentes, la question a été
+posée directement à Pablo (risque sur du code de signature en prod avec de
+vrais fonds, aucun test sur device disponible ici). Réponse : **"Laisser
+tomber pour l'instant"**. Le chargement actuel (~3s) n'est pas un problème
+mesuré — à reprendre seulement si Pablo le redemande ou si un vrai besoin
+de perf apparaît.
