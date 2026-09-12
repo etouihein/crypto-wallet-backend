@@ -489,3 +489,59 @@ vrais fonds, aucun test sur device disponible ici). Réponse : **"Laisser
 tomber pour l'instant"**. Le chargement actuel (~3s) n'est pas un problème
 mesuré — à reprendre seulement si Pablo le redemande ou si un vrai besoin
 de perf apparaît.
+
+### 8.14 Audit complet du parcours utilisateur + petite déco (commit `7e71cb1`)
+
+Pablo a demandé de trouver d'autres choses à optimiser/améliorer/vérifier
+"en allant au bout du parcours", plus un peu de déco (pas trop). Playwright
+a parcouru systématiquement : import wallet, PIN, les 5 onglets, fiche
+token (Solana, graphique + actions), Envoyer/Recevoir (+ toutes les
+adresses)/Acheter/Vendre/Activité/NFT, Marché, Stats (comparaison de perf
+et checklist du jour affichées avec de vraies données), Découvrir, Swap,
+Pont, et l'intégralité de Réglages (WalletConnect, autorisations, achat
+récurrent, positions DeFi, ajout réel d'une adresse en observation, token
+personnalisé, ajout de compte, PIN de détresse, export/import de données,
+CGU, à propos, parrainage, alerte de prix), puis changement de langue vers
+ES/DE/PT (accueil intégralement traduit, zéro crash).
+
+**Résultat : zéro bug réel trouvé dans l'app.** Deux fausses alertes
+écartées en vérifiant le code avant de conclure, au lieu de crier au bug
+trop vite :
+1. L'écran Activité semblait bloqué sur le spinner — en réalité le fetch
+   Etherscan/backend prend simplement quelques secondes, le script de test
+   ne l'attendait pas assez longtemps. Avec un délai plus long, la liste se
+   peuple bien (cette adresse de test publique a un vrai historique
+   on-chain : 23 reçues, 2 envoyées).
+2. "Positions DeFi" (et toute la suite des tests) semblait ne jamais se
+   rouvrir après son bouton retour — en fait mon propre script de test
+   cliquait par erreur sur le mot "positions DeFi" DANS la phrase
+   descriptive du nouveau toggle Mode Débutant/Avancé ("...le pont
+   cross-chain et les positions DeFi.") au lieu du vrai bouton de Réglages,
+   à cause d'un matching Playwright insensible à la casse sur texte non-exact.
+   Une fois le test corrigé (`exact: true`), tout fonctionne normalement.
+
+**Seule amélioration retenue** : icône dans un badge rond ajoutée aux 2
+états vides qui n'en avaient pas encore (Mes NFT, Autorisations de tokens),
+pour matcher le pattern déjà utilisé ailleurs (Stats, Activité) — cohérence
+visuelle minimale, rien de nouveau inventé dans le design, conforme à la
+demande explicite de ne "pas trop" en ajouter.
+
+**Repéré mais volontairement pas touché** : l'onglet "Stats" du bas de
+l'app reste littéralement "Stats" en FR/EN/ES/PT (seul l'allemand a une
+vraie traduction, "Statistik"). Comme le français (langue principale de
+l'app) garde aussi "Stats" tel quel, ça ressemble à un choix délibéré
+(emprunt anglais courant en tech/crypto) plutôt qu'un oubli — pas corrigé
+sans confirmation de Pablo.
+
+**Repéré, confirmé bénin, pas une régression** : en testant contre le vrai
+`nexiawallet.com` (pas juste le build local), une requête `POST` vers
+`pulse.walletconnect.org/batch` (le service d'analytics interne du SDK
+WalletConnect, pas une fonctionnalité de l'app) échoue en `net::ERR_ABORTED`
+à chaque chargement — invisible pour l'utilisateur, ne bloque rien,
+préexistant (WalletConnect n'a pas été touché aujourd'hui). Pas d'action
+nécessaire.
+
+Vérifié en conditions réelles à chaque étape : build web propre + `npm run
+test:e2e` 100% vert (25 vérifications, zéro erreur console) après chaque
+changement, puis rechargement Playwright direct sur `nexiawallet.com` en
+production pour confirmer visuellement que les 2 icônes sont bien en ligne.
