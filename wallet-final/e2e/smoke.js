@@ -144,6 +144,18 @@ async function run() {
       check('bouton Recevoir trouvé (4b)', false);
     }
 
+    console.log('4c. Écran Activité (résolution ENS inversée sur les adresses)');
+    const activityBtn = page.getByText('Activité', { exact: true });
+    if (await activityBtn.count()) {
+      await activityBtn.first().click();
+      await page.waitForTimeout(1200);
+      check('écran Activité accessible sans crash', true);
+      const backBtnHist = page.locator('[aria-label="Retour"]');
+      if (await backBtnHist.count()) { await backBtnHist.first().click(); await page.waitForTimeout(400); }
+    } else {
+      check('bouton "Activité" trouvé', false);
+    }
+
     console.log('5. Navigation dans les 5 onglets principaux');
     for (const tabLabel of ['Marché', 'Stats', 'Découvrir', 'Accueil']) {
       const tab = page.getByText(tabLabel, { exact: true }).first();

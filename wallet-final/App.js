@@ -4783,6 +4783,30 @@ function AppContent({ themeMode, changeTheme }) {
     return historyItems.filter(i => i.symbol === historyFilterSymbol);
   }, [historyItems, historyFilterSymbol]);
 
+  // Résolution ENS inversée (adresse -> "nom.eth") pour l'écran Activité —
+  // purement cosmétique (juste un nom plus lisible qu'un hash), donc toujours
+  // interrogée sur Ethereum mainnet (seule chaîne où le registre ENS existe),
+  // quel que soit le réseau actif de la transaction affichée. Cache par
+  // adresse en minuscules ; `null` en cache = déjà cherché, aucun nom trouvé
+  // (évite de re-cogner le RPC à chaque re-render pour une adresse sans ENS).
+  const [ensNamesCache, setEnsNamesCache] = useState({});
+  useEffect(() => {
+    if (!showHistory || !filteredHistoryItems.length) return;
+    const addrs = [...new Set(
+      filteredHistoryItems.slice(0, historyVisibleCount).map(item => (item.direction === 'out' ? item.to : item.from)?.toLowerCase()).filter(Boolean)
+    )].filter(addr => !(addr in ensNamesCache));
+    if (!addrs.length) return;
+    let cancelled = false;
+    (async () => {
+      const provider = localWallet.getProvider('ethereum');
+      const entries = await Promise.all(addrs.map(async (addr) => {
+        try { return [addr, await provider.lookupAddress(addr)]; } catch { return [addr, null]; }
+      }));
+      if (!cancelled) setEnsNamesCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+    })();
+    return () => { cancelled = true; };
+  }, [showHistory, filteredHistoryItems, historyVisibleCount]);
+
   // Favoris affichés sur l'accueil : uniquement les cryptos du Marché qui ne
   // sont PAS déjà dans "Mes Tokens" (sinon doublon avec la liste du wallet).
   const favoriteMarketCoins = useMemo(() =>
@@ -6543,7 +6567,12 @@ function AppContent({ themeMode, changeTheme }) {
                     </Text>
                     <Text style={st.history_sub}>
                       {new Date(item.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      {' • '}{(isOut ? item.to : item.from)?.slice(0, 6)}…{(isOut ? item.to : item.from)?.slice(-4)}
+                      {' • '}
+                      {(() => {
+                        const counterparty = isOut ? item.to : item.from;
+                        const ensName = counterparty && ensNamesCache[counterparty.toLowerCase()];
+                        return ensName || `${counterparty?.slice(0, 6)}…${counterparty?.slice(-4)}`;
+                      })()}
                     </Text>
                     <TouchableOpacity
                       onPress={(e) => { e.stopPropagation?.(); cycleTxTag(item.hash); }}
