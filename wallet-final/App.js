@@ -240,6 +240,11 @@ const humanizeTxError = (err) => {
 const NATIVE_GAS_RESERVE = { ethereum: 0.004, bsc: 0.002, polygon: 0.05, arbitrum: 0.001, optimism: 0.001, base: 0.001 };
 const getNativeGasReserve = (net) => NATIVE_GAS_RESERVE[net] ?? 0.003;
 
+// Affichage de l'indicateur de gas en direct (voir addGasSample) — 'low'/
+// 'high'/'normal' viennent de la comparaison à l'historique du réseau,
+// jamais d'un seuil absolu.
+const GAS_LEVEL_LABEL = { low: 'Faible', normal: 'Normal', high: 'Élevé' };
+
 // ═══════════════════════════════════════════════════════════
 //  DOCUMENTS LÉGAUX — texte affiché tel quel dans Paramètres et le footer de
 //  la landing. Gabarit générique pour un wallet non-custodial ; à faire
@@ -835,6 +840,50 @@ const loadHideZeroBalances = async () => {
 
 const saveHideZeroBalances = async (enabled) => {
   try { await AsyncStorage.setItem(HIDE_ZERO_BALANCES_KEY, String(enabled)); } catch { /* rien à faire */ }
+};
+
+// Indicateur de gas en direct (avant même d'ouvrir Envoyer/Swap) — "c'est un
+// bon ou un mauvais moment pour transacter ?". Un seuil fixe en Gwei ("< 20 =
+// faible") serait faux à coup sûr : vérifié en direct sur les 6 réseaux au
+// moment d'écrire ceci, Ethereum mainnet tournait à ~0,05 Gwei et Polygon à
+// ~260 Gwei — l'échelle "normale" dépend du réseau ET dérive dans le temps
+// (marché du gas, mises à jour protocolaires). On compare donc chaque
+// nouvelle mesure à l'HISTORIQUE RÉCEMMENT OBSERVÉ sur CE réseau, sur CET
+// appareil, plutôt qu'à un seuil absolu deviné — auto-calibré, ne peut pas
+// devenir faux avec le temps. `GAS_HISTORY_SIZE` mesures par réseau suffisent
+// pour une moyenne pertinente sans faire grossir le stockage indéfiniment.
+const GAS_HISTORY_KEY = 'wallet-pro-gas-history-v1';
+const GAS_HISTORY_SIZE = 12;
+
+const loadGasHistory = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(GAS_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+};
+
+const saveGasHistory = async (history) => {
+  try { await AsyncStorage.setItem(GAS_HISTORY_KEY, JSON.stringify(history)); } catch { /* rien à faire */ }
+};
+
+// Ajoute une mesure à l'historique du réseau et renvoie { history, level } —
+// `level` compare la mesure au reste de l'historique (médiane des mesures
+// PRÉCÉDENTES, celle qu'on vient d'ajouter exclue) : 'low' sous 80% de la
+// médiane, 'high' au-dessus de 130%, 'normal' entre les deux. `null` tant
+// qu'il n'y a pas assez d'historique pour que la comparaison veuille dire
+// quelque chose (3 mesures minimum) — mieux vaut ne rien afficher qu'un
+// jugement basé sur une seule mesure passée.
+const addGasSample = (history, network, gwei) => {
+  const prevSamples = history[network] || [];
+  const nextSamples = [...prevSamples, gwei].slice(-GAS_HISTORY_SIZE);
+  const nextHistory = { ...history, [network]: nextSamples };
+  if (prevSamples.length < 3) return { history: nextHistory, level: null };
+  const sorted = [...prevSamples].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (!median) return { history: nextHistory, level: null };
+  const level = gwei <= median * 0.8 ? 'low' : gwei >= median * 1.3 ? 'high' : 'normal';
+  return { history: nextHistory, level };
 };
 
 // Devise d'affichage (EUR par défaut — voir CURRENCIES). Persistée dès que
@@ -1612,6 +1661,27 @@ function ChangePill({ value }) {
   );
 }
 
+// Badge "c'est un bon moment pour transacter ?" — réutilisé sur Envoyer et
+// Swap (voir l'effet qui alimente gasIndicator, et addGasSample pour le
+// calcul du niveau). Rien affiché tant que la première mesure n'est pas
+// revenue plutôt qu'un badge vide ou un chiffre à 0 trompeur.
+function GasIndicatorBadge({ gasIndicator, nativeSymbol }) {
+  const { T } = useTheme();
+  if (!gasIndicator) return null;
+  const { gwei, level } = gasIndicator;
+  const color = level === 'low' ? T.up : level === 'high' ? T.down : T.text2;
+  const bg = level === 'low' ? T.upBg : level === 'high' ? T.downBg : T.card2;
+  const gweiTxt = gwei < 1 ? gwei.toFixed(3) : gwei.toFixed(1);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, backgroundColor: bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 12 }}>
+      <Ionicons name="speedometer-outline" size={13} color={color} />
+      <Text style={{ color, fontSize: 12, fontWeight: '600' }}>
+        Gas {nativeSymbol ? `(${nativeSymbol}) ` : ''}: {gweiTxt} Gwei{level ? ` · ${GAS_LEVEL_LABEL[level]}` : ''}
+      </Text>
+    </View>
+  );
+}
+
 function BalanceGlow() {
   const { T } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
@@ -2197,6 +2267,7 @@ function AppContent({ themeMode, changeTheme }) {
   // rempli au fil des envois réussis.
   const [sendStep, setSendStep]                 = useState('form');
   const [sendFeeEstimate, setSendFeeEstimate]   = useState(null);
+  const [gasIndicator, setGasIndicator]         = useState(null); // { gwei, level } | null tant que pas chargé
   const [sendFeeLoading, setSendFeeLoading]     = useState(false);
   const [sendGasTier, setSendGasTier]           = useState('normal'); // 'slow' | 'normal' | 'fast'
   const [recentAddresses, setRecentAddresses]   = useState([]);
@@ -2274,6 +2345,33 @@ function AppContent({ themeMode, changeTheme }) {
     setToast({ message, type, subtitle });
     toastTimerRef.current = setTimeout(() => setToast(null), 2600);
   }, []);
+
+  // Indicateur de gas en direct sur Envoyer/Swap ("bon ou mauvais moment
+  // pour transacter ?") — voir addGasSample plus haut pour le calcul du
+  // niveau (auto-calibré sur l'historique de CE réseau sur CET appareil,
+  // pas un seuil absolu deviné). Ne tourne QUE quand un de ces deux écrans
+  // est effectivement ouvert (pas de polling permanent en arrière-plan),
+  // et se rafraîchit toutes les 25s tant qu'il reste ouvert.
+  useEffect(() => {
+    const relevant = showSend || tab === 'swap';
+    if (!relevant) { setGasIndicator(null); return; }
+    let cancelled = false;
+    const fetchGas = async () => {
+      try {
+        const gwei = await localWallet.getGasPriceGwei(network);
+        if (cancelled) return;
+        const history = await loadGasHistory();
+        const { history: nextHistory, level } = addGasSample(history, network, gwei);
+        saveGasHistory(nextHistory);
+        if (!cancelled) setGasIndicator({ gwei, level });
+      } catch {
+        if (!cancelled) setGasIndicator(null); // réseau injoignable — pas d'indicateur plutôt qu'un mensonge
+      }
+    };
+    fetchGas();
+    const id = setInterval(fetchGas, 25000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [showSend, tab, network]);
 
   // Barre du bas qui se réduit en scrollant vers le bas et redevient
   // complète vers le haut (ou tout en haut de la liste). PAS un simple
@@ -5998,6 +6096,7 @@ function AppContent({ themeMode, changeTheme }) {
           </ScrollView>
         ) : (
           <ScrollView style={{ flex: 1, padding: 16 }}>
+            {sendToken !== 'SOL' && sendToken !== 'BTC' && <GasIndicatorBadge gasIndicator={gasIndicator} nativeSymbol={nativeSymbol} />}
             <View style={st.network_badge}>
               <Text style={{ color: T.text2, fontSize: 12, fontWeight: 'bold' }}>
                 ⛓️ Réseau {{ SOL: 'Solana', BTC: 'Bitcoin' }[sendToken] || activeNetwork.label}
@@ -8600,6 +8699,7 @@ function AppContent({ themeMode, changeTheme }) {
         contentContainerStyle={isWideWeb ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : undefined}
       >
         <Text style={st.tab_title}>⇄ Achat / Vente live</Text>
+        <GasIndicatorBadge gasIndicator={gasIndicator} nativeSymbol={nativeSymbol} />
         <View style={st.swap_card}>
           <Text style={st.swap_lbl}>Tu paies</Text>
           <TextInput style={st.swap_big_input} value={swapAmt} onChangeText={(v) => setSwapAmt(normalizeDecimalInput(v))}

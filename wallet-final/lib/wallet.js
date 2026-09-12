@@ -265,6 +265,18 @@ async function estimateSendFee({ from, to, amount, symbol, network = 'ethereum' 
   };
 }
 
+// Juste le prix du gas courant du réseau, sans estimer une transaction
+// précise (pas besoin de destinataire/montant) — pour un indicateur affiché
+// AVANT même que l'utilisateur commence à remplir Envoyer/Swap ("c'est un bon
+// moment pour transacter ?"), contrairement à estimateSendFee ci-dessus qui
+// suppose déjà une tx concrète.
+async function getGasPriceGwei(network = 'ethereum') {
+  const provider = getProvider(network);
+  const feeData = await provider.getFeeData();
+  const gasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.BigNumber.from('0');
+  return parseFloat(ethers.utils.formatUnits(gasPrice, 'gwei'));
+}
+
 // ── Signature locale — retourne une tx déjà signée (rawTx), jamais
 //    diffusée directement d'ici : App.js l'envoie à
 //    POST /wallet/tx/broadcast qui se contente de la relayer. ────
@@ -704,6 +716,7 @@ module.exports = {
   signBitcoinTransferTx,
   getCustomTokenInfo,
   estimateSendFee,
+  getGasPriceGwei,
   signNativeTx,
   signErc20Tx,
   signNftTransferTx,
