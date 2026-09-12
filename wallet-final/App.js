@@ -2109,6 +2109,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [refreshing, setRefreshing]     = useState(false);
   const [selectedToken, setSelectedToken] = useState(null);
   const [detailTf, setDetailTf]           = useState('1J');
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [showSend, setShowSend]           = useState(false);
   const [showBuy, setShowBuy]             = useState(false);
   const [showReceive, setShowReceive]     = useState(false);
@@ -7549,6 +7551,125 @@ function AppContent({ themeMode, changeTheme }) {
     );
   };
 
+  // ════════════════════════════════════════════════════════
+  //  MODAL: RECHERCHE GLOBALE (tokens du wallet, marché, actions/écrans)
+  // ════════════════════════════════════════════════════════
+  const renderGlobalSearch = () => {
+    const q = globalSearchQuery.trim().toLowerCase();
+    const closeAndRun = (fn) => { setShowGlobalSearch(false); fn(); };
+
+    const tokenResults = q ? Object.entries(tokens)
+      .filter(([sym, tk]) => sym.toLowerCase().includes(q) || (tk.name || '').toLowerCase().includes(q))
+      .slice(0, 6) : [];
+
+    const walletSymbols = new Set(Object.keys(tokens));
+    const marketResults = q ? marketCoins
+      .filter(c => !walletSymbols.has((c.symbol || '').toUpperCase()))
+      .filter(c => (c.symbol || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q))
+      .slice(0, 5) : [];
+
+    const ACTIONS = [
+      { key: 'send', label: 'Envoyer', icon: 'arrow-up', onPress: () => setShowSend(true) },
+      { key: 'receive', label: 'Recevoir', icon: 'arrow-down', onPress: () => setShowReceive(true) },
+      { key: 'buy', label: 'Acheter', icon: 'card', onPress: () => setShowBuy(true) },
+      ...(SELL_ENABLED ? [{ key: 'sell', label: 'Vendre', icon: 'cash', onPress: () => setShowSell(true) }] : []),
+      { key: 'swap', label: 'Swap', icon: 'swap-horizontal', onPress: () => setTab('swap') },
+      { key: 'history', label: 'Activité', icon: 'time', onPress: () => setShowHistory(true) },
+      { key: 'market', label: 'Marché', icon: 'trending-up', onPress: () => setTab('market') },
+      { key: 'stats', label: 'Stats', icon: 'stats-chart', onPress: () => setTab('stats') },
+      { key: 'discover', label: 'Découvrir', icon: 'compass', onPress: () => setTab('discover') },
+      { key: 'addresses', label: 'Toutes mes adresses', icon: 'wallet', onPress: () => { setAllAddressesFromReceive(false); setShowAllAddresses(true); } },
+      { key: 'settings', label: 'Réglages', icon: 'settings', onPress: () => setShowSettings(true) },
+      { key: 'faq', label: 'Foire aux questions', icon: 'help-circle', onPress: () => setShowFaq(true) },
+    ];
+    const actionResults = q ? ACTIONS.filter(a => a.label.toLowerCase().includes(q)) : [];
+
+    const hasResults = !!(tokenResults.length || marketResults.length || actionResults.length);
+
+    return (
+      <Modal visible={showGlobalSearch} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setShowGlobalSearch(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Recherche</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={{ padding: 16 }}>
+            <TextInput
+              style={st.form_input}
+              value={globalSearchQuery}
+              onChangeText={setGlobalSearchQuery}
+              placeholder="Un token, une action, un écran..."
+              placeholderTextColor={T.text3}
+              autoFocus
+              autoCapitalize="none"
+            />
+          </View>
+          <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+            {!q && (
+              <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 30 }}>
+                Cherche un token, "Envoyer", "Réglages", "FAQ"...
+              </Text>
+            )}
+            {q && !hasResults && (
+              <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 30 }}>Aucun résultat pour "{globalSearchQuery}".</Text>
+            )}
+            {!!tokenResults.length && (
+              <>
+                <Text style={[st.settings_section, { marginTop: 8 }]}>Mes tokens</Text>
+                {tokenResults.map(([sym, tk]) => (
+                  <AnimPressable key={sym} style={st.settings_row} onPress={() => closeAndRun(() => setSelectedToken(sym))}>
+                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: tk.color || T.gold, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontWeight: '700', fontSize: 12, color: '#000' }}>{sym.slice(0, 2)}</Text>
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.settings_row_title}>{tk.name || sym}</Text>
+                      <Text style={st.settings_row_sub}>{sym} • {fmt((tk.balance || 0) * (tk.price || 0))}</Text>
+                    </View>
+                  </AnimPressable>
+                ))}
+              </>
+            )}
+            {!!marketResults.length && (
+              <>
+                <Text style={[st.settings_section, { marginTop: 16 }]}>Marché</Text>
+                {marketResults.map(c => (
+                  <AnimPressable
+                    key={c.id}
+                    style={st.settings_row}
+                    onPress={() => closeAndRun(() => { setTab('market'); setMarketSearch(c.symbol?.toUpperCase() || ''); })}
+                  >
+                    <Ionicons name="trending-up-outline" size={20} color={T.text2} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.settings_row_title}>{c.name}</Text>
+                      <Text style={st.settings_row_sub}>{(c.symbol || '').toUpperCase()}</Text>
+                    </View>
+                  </AnimPressable>
+                ))}
+              </>
+            )}
+            {!!actionResults.length && (
+              <>
+                <Text style={[st.settings_section, { marginTop: 16 }]}>Actions & écrans</Text>
+                {actionResults.map(a => (
+                  <AnimPressable key={a.key} style={st.settings_row} onPress={() => closeAndRun(a.onPress)}>
+                    <Ionicons name={a.icon} size={20} color={T.text2} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={st.settings_row_title}>{a.label}</Text>
+                    </View>
+                  </AnimPressable>
+                ))}
+              </>
+            )}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   const renderStaking = () => (
     <Modal visible={showStaking} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -8470,9 +8591,14 @@ function AppContent({ themeMode, changeTheme }) {
             {!!walletAddr && <Ionicons name="copy-outline" size={13} color={T.text2} />}
           </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel={t('settings_title')}>
-          <Ionicons name="settings-outline" size={20} color={T.text2} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={() => { setGlobalSearchQuery(''); setShowGlobalSearch(true); }} style={st.icon_btn} accessibilityRole="button" accessibilityLabel="Recherche">
+            <Ionicons name="search-outline" size={20} color={T.text2} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel={t('settings_title')}>
+            <Ionicons name="settings-outline" size={20} color={T.text2} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={{ position: 'relative', marginHorizontal: 14 }}>
@@ -9348,6 +9474,7 @@ function AppContent({ themeMode, changeTheme }) {
       {!!wcRequest && renderWcRequest()}
       {renderApprovals()}
       {renderAllAddresses()}
+      {renderGlobalSearch()}
       {renderStaking()}
       {renderNftGallery()}
       {renderLegal()}

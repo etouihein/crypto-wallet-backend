@@ -156,6 +156,36 @@ async function run() {
       check('bouton "Activité" trouvé', false);
     }
 
+    console.log('4d. Recherche globale (tokens + actions)');
+    const searchBtn = page.locator('[aria-label="Recherche"]');
+    check('icône de recherche présente sur l\'accueil', await searchBtn.count() > 0);
+    if (await searchBtn.count()) {
+      await searchBtn.first().click();
+      await page.waitForTimeout(400);
+      const searchInput = page.locator('input[placeholder*="Un token"]');
+      check('champ de recherche présent', await searchInput.count() > 0);
+      if (await searchInput.count()) {
+        await searchInput.first().fill('eth');
+        await page.waitForTimeout(400);
+        const bodySearchToken = await page.evaluate(() => document.body.innerText);
+        check('recherche "eth" retrouve un token', bodySearchToken.toUpperCase().includes('MES TOKENS') && bodySearchToken.includes('Ethereum'));
+
+        await searchInput.first().fill('réglages');
+        await page.waitForTimeout(400);
+        const settingsResult = page.getByText('Réglages', { exact: true }).last();
+        if (await settingsResult.count()) {
+          await settingsResult.click();
+          await page.waitForTimeout(500);
+          const bodyAfterAction = await page.evaluate(() => document.body.innerText);
+          check('recherche "réglages" ouvre bien Réglages', bodyAfterAction.includes('Paramètres'));
+          const backBtnSearch = page.locator('[aria-label="Retour"]');
+          if (await backBtnSearch.count()) { await backBtnSearch.first().click(); await page.waitForTimeout(400); }
+        } else {
+          check('résultat "Réglages" trouvé dans la recherche', false);
+        }
+      }
+    }
+
     console.log('5. Navigation dans les 5 onglets principaux');
     for (const tabLabel of ['Marché', 'Stats', 'Découvrir', 'Accueil']) {
       const tab = page.getByText(tabLabel, { exact: true }).first();
