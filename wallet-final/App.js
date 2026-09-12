@@ -902,6 +902,18 @@ const saveCurrency = async (code) => {
   try { await AsyncStorage.setItem(CURRENCY_KEY, code); } catch { /* rien à faire */ }
 };
 
+// Checklist sécurité gamifiée (Réglages) — deux étapes qui n'ont pas déjà
+// leur propre état persisté ailleurs dans le fichier (PIN/biométrie/comptes/
+// adresses en observation le sont déjà via leurs propres clés).
+const SEED_BACKED_UP_KEY = 'wallet-pro-seed-backed-up-v1';
+const KEYSTORE_EXPORTED_KEY = 'wallet-pro-keystore-exported-v1';
+const loadFlag = async (key) => {
+  try { return (await AsyncStorage.getItem(key)) === '1'; } catch { return false; }
+};
+const saveFlag = async (key) => {
+  try { await AsyncStorage.setItem(key, '1'); } catch { /* rien à faire */ }
+};
+
 // Parrainage : code de qui a invité cet appareil, capté une seule fois (à la
 // toute première installation) depuis le lien ?ref=XXXXXXXX partagé — voir
 // shareReferralLink. Purement informatif tant qu'aucun système de récompense
@@ -2262,6 +2274,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [unlockedPrivateKey, setUnlockedPrivateKey] = useState(null);
   const [unlockedMnemonic, setUnlockedMnemonic]     = useState(null);
   const [biometricEnabled, setBiometricEnabled]     = useState(false);
+  const [seedBackedUp, setSeedBackedUp]             = useState(false);
+  const [keystoreExported, setKeystoreExported]     = useState(false);
   // Écran de confirmation avant envoi : 'form' (saisie) -> 'confirm' (relire
   // adresse/montant/frais avant de signer). Adresses récentes = carnet léger,
   // rempli au fil des envois réussis.
@@ -2883,6 +2897,8 @@ function AppContent({ themeMode, changeTheme }) {
       setShowExportKeystore(false);
       setExportPassphraseInput('');
       setExportPassphraseConfirm('');
+      setKeystoreExported(true);
+      saveFlag(KEYSTORE_EXPORTED_KEY);
     } catch (err) {
       setExportPassphraseError(humanizeTxError(err) || "Échec de l'export.");
     } finally {
@@ -4260,6 +4276,8 @@ function AppContent({ themeMode, changeTheme }) {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     loadBiometricPin().then(pin => setBiometricEnabled(!!pin));
+    loadFlag(SEED_BACKED_UP_KEY).then(setSeedBackedUp);
+    loadFlag(KEYSTORE_EXPORTED_KEY).then(setKeystoreExported);
   }, []);
 
   // Propose l'activation juste après avoir choisi/confirmé un PIN — c'est le
@@ -5167,7 +5185,7 @@ function AppContent({ themeMode, changeTheme }) {
       playTone('success');
       showAlert(
         '✅ Transaction Soumise!',
-        `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
+        `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}`,
         [
           { text: 'Copier Hash', onPress: () => copyToClipboard(txHash, 'Hash copié'), style: 'default' },
           { text: 'OK' }
@@ -5298,7 +5316,7 @@ function AppContent({ themeMode, changeTheme }) {
       playTone('success');
       showAlert(
         '✅ Swap Soumis !',
-        `${swapAmt} ${swapFrom} → ${swapTo}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label} (Chain ${activeNetwork.chainId})`,
+        `${swapAmt} ${swapFrom} → ${swapTo}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}`,
         [{ text: 'OK' }]
       );
 
@@ -5384,6 +5402,8 @@ function AppContent({ themeMode, changeTheme }) {
               style={[st.green_btn, { marginTop: 24 }]}
               onPress={() => {
                 setPendingMnemonic(null);
+                setSeedBackedUp(true);
+                saveFlag(SEED_BACKED_UP_KEY);
                 if (isFirstTimeMnemonicBackup) {
                   setIsFirstTimeMnemonicBackup(false);
                   setOnboardingStep(0);
@@ -6557,6 +6577,35 @@ function AppContent({ themeMode, changeTheme }) {
           </View>
         )}
 
+        {allocationTotal > 0 && (() => {
+          const portfolioPct = (periodChange / allocationTotal) * 100;
+          const btcPct = typeof tokens.BTC?.[periodChangeField] === 'number' ? tokens.BTC[periodChangeField] : null;
+          const ethPct = typeof tokens.ETH?.[periodChangeField] === 'number' ? tokens.ETH[periodChangeField] : null;
+          if (btcPct == null && ethPct == null) return null;
+          const periodLabel = { '24h': '24h', '7d': '7 jours', '30d': '30 jours' }[balancePeriod] || '24h';
+          const rows = [
+            { label: 'Ton portefeuille', value: portfolioPct, highlight: true },
+            ...(btcPct != null ? [{ label: 'Bitcoin', value: btcPct }] : []),
+            ...(ethPct != null ? [{ label: 'Ethereum', value: ethPct }] : []),
+          ];
+          return (
+            <View style={[st.stats_card, { marginTop: 12 }]}>
+              <Text style={st.stats_card_lbl}>Comparaison de performance ({periodLabel})</Text>
+              {rows.map(r => {
+                const pos = r.value >= 0;
+                return (
+                  <View key={r.label} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
+                    <Text style={{ color: r.highlight ? T.text : T.text2, fontSize: 13, fontWeight: r.highlight ? '700' : '500', flex: 1 }}>{r.label}</Text>
+                    <Text style={{ color: pos ? T.up : T.down, fontSize: 13, fontWeight: '700' }}>
+                      {pos ? '+' : ''}{r.value.toFixed(2)}%
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          );
+        })()}
+
         {historyLoading && !items.length ? (
           <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.gold} /></View>
         ) : !items.length ? (
@@ -6705,7 +6754,7 @@ function AppContent({ themeMode, changeTheme }) {
             style={st.settings_row}
             onPress={() => { setShowWalletConnect(false); setQrScannerFromWalletConnect(true); setShowQrScanner(true); }}
           >
-            <Text style={{ fontSize: 22 }}>📷</Text>
+            <Ionicons name="qr-code-outline" size={22} color={T.text} />
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Scanner un QR code</Text>
               <Text style={st.settings_row_sub}>Utilise la caméra</Text>
@@ -7917,6 +7966,41 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
 
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
+              {!isDuressMode && (() => {
+                const checks = [
+                  { key: 'pin', label: 'Code PIN configuré', done: true },
+                  { key: 'seed', label: 'Phrase de récupération notée', done: seedBackedUp },
+                  ...(Platform.OS !== 'web' ? [{ key: 'bio', label: 'Déverrouillage biométrique activé', done: biometricEnabled }] : []),
+                  { key: 'export', label: 'Sauvegarde chiffrée exportée', done: keystoreExported },
+                  { key: 'accounts', label: 'Compte de secours créé', done: accounts.length > 1 },
+                  { key: 'watch', label: 'Une adresse surveillée ajoutée', done: watchAddresses.length > 0 },
+                ];
+                const doneCount = checks.filter(c => c.done).length;
+                const pct = Math.round((doneCount / checks.length) * 100);
+                return (
+                  <View style={[st.stats_card, { marginBottom: 14 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={st.stats_card_lbl}>Niveau de sécurité</Text>
+                      <Text style={{ color: pct === 100 ? T.up : T.gold, fontSize: 13, fontWeight: '700' }}>{doneCount}/{checks.length}</Text>
+                    </View>
+                    <View style={{ height: 8, borderRadius: 4, backgroundColor: T.card2, overflow: 'hidden', marginTop: 10, marginBottom: 14 }}>
+                      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: pct === 100 ? T.up : T.gold }} />
+                    </View>
+                    {checks.map(c => (
+                      <View key={c.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <Ionicons
+                          name={c.done ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={18}
+                          color={c.done ? T.up : T.text3}
+                        />
+                        <Text style={{ color: c.done ? T.text : T.text2, fontSize: 13, marginLeft: 10, textDecorationLine: c.done ? 'line-through' : 'none' }}>
+                          {c.label}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
               {!!unlockedMnemonic && !isDuressMode && (
                 <AnimPressable
                   style={st.settings_row}
@@ -8103,6 +8187,24 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>Foire aux questions</Text>
               <Text style={st.settings_row_sub}>Phrase de récupération, sécurité, frais...</Text>
+            </View>
+          </AnimPressable>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => {
+              const subject = encodeURIComponent('Signalement NexiaWallet');
+              const body = encodeURIComponent(
+                `Décris ici le problème rencontré :\n\n\n\n— Infos techniques (laisse cette partie) —\nRéseau : ${activeNetwork?.label || '—'}\nAdresse : ${walletAddr || '—'}\nPlateforme : ${Platform.OS}`
+              );
+              Linking.openURL(`mailto:contact@nexiawallet.com?subject=${subject}&body=${body}`).catch(() => {
+                showAlert('Impossible d\'ouvrir ton client mail', 'Écris-nous directement à contact@nexiawallet.com.');
+              });
+            }}
+          >
+            <Text style={{ fontSize: 22 }}>🚩</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Signaler un problème</Text>
+              <Text style={st.settings_row_sub}>Ouvre un email pré-rempli vers le support</Text>
             </View>
           </AnimPressable>
           <AnimPressable style={st.settings_row} onPress={shareApp}>
