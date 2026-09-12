@@ -907,6 +907,20 @@ const saveCurrency = async (code) => {
 // adresses en observation le sont déjà via leurs propres clés).
 const SEED_BACKED_UP_KEY = 'wallet-pro-seed-backed-up-v1';
 const KEYSTORE_EXPORTED_KEY = 'wallet-pro-keystore-exported-v1';
+// Mode Débutant/Avancé : masque les sections WalletConnect/dApp browser/
+// approvals/DCA/bridge/DeFi en mode Débutant. Défaut 'advanced' — un
+// utilisateur déjà en place ne doit jamais voir des fonctionnalités qu'il
+// utilisait déjà disparaître d'un coup après une mise à jour.
+const EXPERIENCE_MODE_KEY = 'wallet-pro-experience-mode-v1';
+const loadExperienceMode = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(EXPERIENCE_MODE_KEY);
+    return raw === 'beginner' ? 'beginner' : 'advanced';
+  } catch { return 'advanced'; }
+};
+const saveExperienceMode = async (mode) => {
+  try { await AsyncStorage.setItem(EXPERIENCE_MODE_KEY, mode); } catch { /* rien à faire */ }
+};
 const loadFlag = async (key) => {
   try { return (await AsyncStorage.getItem(key)) === '1'; } catch { return false; }
 };
@@ -2237,6 +2251,8 @@ function AppContent({ themeMode, changeTheme }) {
   const dappWebViewRef = useRef(null);
   // Autorisations de tokens accordées via cette app (voir lib/approvals.js)
   // — suivi local uniquement, pas d'indexeur tiers.
+  const [showAllAddresses, setShowAllAddresses]   = useState(false);
+  const [allAddressesFromReceive, setAllAddressesFromReceive] = useState(false);
   const [showApprovals, setShowApprovals]         = useState(false);
   const [tokenApprovals, setTokenApprovals]       = useState([]);
   const [approvalsLoading, setApprovalsLoading]   = useState(false);
@@ -2274,6 +2290,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [unlockedPrivateKey, setUnlockedPrivateKey] = useState(null);
   const [unlockedMnemonic, setUnlockedMnemonic]     = useState(null);
   const [biometricEnabled, setBiometricEnabled]     = useState(false);
+  const [experienceMode, setExperienceMode]         = useState('advanced');
   const [seedBackedUp, setSeedBackedUp]             = useState(false);
   const [keystoreExported, setKeystoreExported]     = useState(false);
   // Écran de confirmation avant envoi : 'form' (saisie) -> 'confirm' (relire
@@ -4278,6 +4295,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadBiometricPin().then(pin => setBiometricEnabled(!!pin));
     loadFlag(SEED_BACKED_UP_KEY).then(setSeedBackedUp);
     loadFlag(KEYSTORE_EXPORTED_KEY).then(setKeystoreExported);
+    loadExperienceMode().then(setExperienceMode);
   }, []);
 
   // Propose l'activation juste après avoir choisi/confirmé un PIN — c'est le
@@ -6381,9 +6399,67 @@ function AppContent({ themeMode, changeTheme }) {
           <View style={st.warning_box}>
             <Text style={st.warning_txt}>N'envoie à cette adresse que des actifs du réseau affiché ci-dessus. Un envoi depuis un autre réseau peut être perdu.</Text>
           </View>
+
+          <TouchableOpacity
+            onPress={() => { setShowReceive(false); setAllAddressesFromReceive(true); setShowAllAddresses(true); }}
+            style={{ marginTop: 16 }}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: T.gold, fontSize: 13, fontWeight: '600' }}>Voir toutes mes adresses en un coup d'œil</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     </Modal>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════
+  //  MODAL: TOUTES MES ADRESSES (vue unifiée — une seule adresse EVM
+  //  couvre 6 réseaux, Solana et Bitcoin ont chacune la leur)
+  // ════════════════════════════════════════════════════════
+  const renderAllAddresses = () => {
+    const groups = [
+      { key: 'evm', label: 'EVM', sub: 'Ethereum, Polygon, BNB Chain, Arbitrum, Optimism, Base', addr: walletAddr, emoji: '⛓️' },
+      { key: 'solana', label: 'Solana', sub: 'SOL uniquement', addr: solanaAddr, emoji: '🟣' },
+      { key: 'bitcoin', label: 'Bitcoin', sub: 'BTC uniquement', addr: bitcoinAddr, emoji: '🟠' },
+    ].filter(g => !!g.addr);
+    return (
+      <Modal visible={showAllAddresses} animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity
+              onPress={() => { setShowAllAddresses(false); if (allAddressesFromReceive) { setShowReceive(true); setAllAddressesFromReceive(false); } }}
+              style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour"
+            >
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Toutes mes adresses</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <Text style={{ color: T.text2, fontSize: 12, marginBottom: 16, lineHeight: 18 }}>
+              Ce wallet a une adresse par famille de réseau — la même adresse EVM sert pour Ethereum, Polygon, BNB Chain,
+              Arbitrum, Optimism et Base ; Solana et Bitcoin ont chacune leur propre adresse.
+            </Text>
+            {groups.map(g => (
+              <View key={g.key} style={[st.stats_card, { marginBottom: 12 }]}>
+                <Text style={st.stats_card_lbl}>{g.emoji} {g.label}</Text>
+                <Text style={{ color: T.text3, fontSize: 11, marginTop: 2, marginBottom: 10 }}>{g.sub}</Text>
+                <Text style={{ color: T.text, fontSize: 13 }} selectable numberOfLines={1} ellipsizeMode="middle">{g.addr}</Text>
+                <TouchableOpacity
+                  onPress={() => copyToClipboard(g.addr, 'Adresse copiée')}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copier l'adresse ${g.label}`}
+                >
+                  <Ionicons name="copy-outline" size={16} color={T.gold} />
+                  <Text style={{ color: T.gold, fontSize: 12, fontWeight: '600' }}>Copier</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     );
   };
 
@@ -7594,7 +7670,24 @@ function AppContent({ themeMode, changeTheme }) {
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
-          <Text style={st.settings_section}>💱 {t('settings_currency')}</Text>
+          <Text style={st.settings_section}>🧭 Mode d'affichage</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 4 }}>
+            {[['beginner', '🌱', 'Débutant'], ['advanced', '⚡', 'Avancé']].map(([mode, icon, label]) => (
+              <TouchableOpacity
+                key={mode}
+                style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, experienceMode === mode && st.chip_pill_on]}
+                onPress={() => { setExperienceMode(mode); saveExperienceMode(mode); }}
+              >
+                <Text style={{ fontSize: 15 }}>{icon}</Text>
+                <Text style={[st.chip_pill_txt, experienceMode === mode && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={{ color: T.text3, fontSize: 11, marginBottom: 4 }}>
+            Le mode Débutant masque WalletConnect, le navigateur Web3, les autorisations, le pont cross-chain et les positions DeFi. Rien n'est supprimé, tu peux repasser en Avancé à tout moment.
+          </Text>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>💱 {t('settings_currency')}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
             {Object.entries(CURRENCIES).map(([code, cur]) => (
               <TouchableOpacity
@@ -7892,6 +7985,7 @@ function AppContent({ themeMode, changeTheme }) {
                 </AnimPressable>
               )}
 
+              {experienceMode === 'advanced' && (<>
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔗 {t('settings_walletconnect')}</Text>
               {wcSessions.map(session => {
                 const meta = session.peer?.metadata || {};
@@ -7964,6 +8058,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={st.settings_row_sub}>Staking Lido (ETH) — plus de protocoles à venir</Text>
                 </View>
               </AnimPressable>
+              </>)}
 
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
               {!isDuressMode && (() => {
@@ -9193,6 +9288,7 @@ function AppContent({ themeMode, changeTheme }) {
       {!!dappBridgeRequest && renderDappBridgeRequest()}
       {!!wcRequest && renderWcRequest()}
       {renderApprovals()}
+      {renderAllAddresses()}
       {renderStaking()}
       {renderNftGallery()}
       {renderLegal()}

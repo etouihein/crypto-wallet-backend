@@ -120,6 +120,30 @@ async function run() {
       if (await backBtn.count()) { await backBtn.first().click(); await page.waitForTimeout(400); }
     }
 
+    console.log('4b. Vue unifiée "Toutes mes adresses" depuis Recevoir');
+    const receiveBtn2 = page.getByText('Recevoir', { exact: true });
+    if (await receiveBtn2.count()) {
+      await receiveBtn2.first().click();
+      await page.waitForTimeout(500);
+      const allAddrLink = page.getByText('Voir toutes mes adresses en un coup d\'œil', { exact: false });
+      check('lien "Voir toutes mes adresses" présent sur Recevoir', await allAddrLink.count() > 0);
+      if (await allAddrLink.count()) {
+        await allAddrLink.first().click();
+        await page.waitForTimeout(500);
+        const bodyAddr = await page.evaluate(() => document.body.innerText);
+        check('modal "Toutes mes adresses" affiche le groupe EVM', bodyAddr.includes('EVM'));
+        check('modal "Toutes mes adresses" affiche Solana', bodyAddr.includes('Solana'));
+        check('modal "Toutes mes adresses" affiche Bitcoin', bodyAddr.includes('Bitcoin'));
+        check(`modal "Toutes mes adresses" affiche l'adresse dérivée ${EXPECTED_ADDRESS_FRAGMENT}`, bodyAddr.includes(EXPECTED_ADDRESS_FRAGMENT));
+        const backBtnAddr = page.locator('[aria-label="Retour"]');
+        if (await backBtnAddr.count()) { await backBtnAddr.first().click(); await page.waitForTimeout(400); }
+      }
+      const backBtnReceive = page.locator('[aria-label="Retour"]');
+      if (await backBtnReceive.count()) { await backBtnReceive.first().click(); await page.waitForTimeout(400); }
+    } else {
+      check('bouton Recevoir trouvé (4b)', false);
+    }
+
     console.log('5. Navigation dans les 5 onglets principaux');
     for (const tabLabel of ['Marché', 'Stats', 'Découvrir', 'Accueil']) {
       const tab = page.getByText(tabLabel, { exact: true }).first();
@@ -138,6 +162,27 @@ async function run() {
     const bodyFr = await page.evaluate(() => document.body.innerText);
     check('Réglages affiche "Paramètres"', bodyFr.includes('Paramètres'));
     check('puces devise présentes (EUR)', bodyFr.includes('EUR'));
+
+    console.log('6b. Mode d\'affichage (Débutant/Avancé) + checklist sécurité + signaler un problème');
+    check('checklist "Niveau de sécurité" présente', bodyFr.includes('Niveau de sécurité'));
+    check('bouton "Signaler un problème" présent', bodyFr.includes('Signaler un problème'));
+    const beginnerChip = page.getByText('Débutant', { exact: true });
+    check('chip "Débutant" trouvée', await beginnerChip.count() > 0);
+    if (await beginnerChip.count()) {
+      await beginnerChip.first().click();
+      await page.waitForTimeout(400);
+      const bodyBeginner = await page.evaluate(() => document.body.innerText);
+      check('mode Débutant masque "Pont cross-chain"', !bodyBeginner.includes('Pont cross-chain'));
+      const advancedChip = page.getByText('Avancé', { exact: true });
+      if (await advancedChip.count()) {
+        await advancedChip.first().click();
+        await page.waitForTimeout(400);
+        const bodyAdvanced = await page.evaluate(() => document.body.innerText);
+        check('repasser en Avancé réaffiche "Pont cross-chain"', bodyAdvanced.includes('Pont cross-chain'));
+      } else {
+        check('chip "Avancé" trouvée pour revenir en arrière', false);
+      }
+    }
 
     const englishChip = page.getByText('English', { exact: true });
     if (await englishChip.count()) {
