@@ -2590,6 +2590,29 @@ function AppContent({ themeMode, changeTheme }) {
     base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org',        emoji: '🔷', desc: 'Ethereum en plus rapide et moins cher, par Coinbase' },
   };
   const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
+
+  // Reçu de transaction partageable — même repli clipboard que shareApp/
+  // shareReferralLink si Share.share échoue (desktop web sans navigator.share).
+  // Le nom ENS déjà résolu (voir ensNamesCache, écran Activité) est passé en
+  // paramètre plutôt que re-résolu ici.
+  const shareTransactionReceipt = useCallback(async (item, counterpartyLabel) => {
+    const isOut = item.direction === 'out';
+    const explorerUrl = `${activeNetwork.explorer}/tx/${item.hash}`;
+    const message = [
+      'NexiaWallet — Reçu de transaction',
+      `${isOut ? 'Envoyé' : 'Reçu'} : ${item.amount || ''} ${item.symbol || ''}`.trim(),
+      `Réseau : ${activeNetwork.label}`,
+      `Date : ${new Date(item.timestamp).toLocaleString('fr-FR')}`,
+      `${isOut ? 'Vers' : 'Depuis'} : ${counterpartyLabel}`,
+      `Statut : ${item.failed ? 'Échouée' : 'Confirmée'}`,
+      `Explorateur : ${explorerUrl}`,
+    ].join('\n');
+    try {
+      await Share.share({ title: 'Reçu de transaction NexiaWallet', message, url: explorerUrl });
+    } catch {
+      await copyToClipboard(message, 'Reçu copié dans le presse-papiers');
+    }
+  }, [activeNetwork, copyToClipboard]);
   // Symbole du token natif du réseau actif — recalculé souvent ailleurs
   // avant cette factorisation (envoi, swap, achat, affichage du solde) ;
   // une seule source évite un oubli si un réseau EVM est un jour ajouté/retiré.
@@ -6551,6 +6574,9 @@ function AppContent({ themeMode, changeTheme }) {
 
           {!historyLoading && filteredHistoryItems.slice(0, historyVisibleCount).map((item, i) => {
             const isOut = item.direction === 'out';
+            const counterparty = isOut ? item.to : item.from;
+            const counterpartyLabel = (counterparty && ensNamesCache[counterparty.toLowerCase()])
+              || `${counterparty?.slice(0, 6)}…${counterparty?.slice(-4)}`;
             return (
               <FadeInView key={item.hash + i} deps={[item.hash]}>
                 <AnimPressable
@@ -6567,22 +6593,26 @@ function AppContent({ themeMode, changeTheme }) {
                     </Text>
                     <Text style={st.history_sub}>
                       {new Date(item.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      {' • '}
-                      {(() => {
-                        const counterparty = isOut ? item.to : item.from;
-                        const ensName = counterparty && ensNamesCache[counterparty.toLowerCase()];
-                        return ensName || `${counterparty?.slice(0, 6)}…${counterparty?.slice(-4)}`;
-                      })()}
+                      {' • '}{counterpartyLabel}
                     </Text>
-                    <TouchableOpacity
-                      onPress={(e) => { e.stopPropagation?.(); cycleTxTag(item.hash); }}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                      style={{ alignSelf: 'flex-start', marginTop: 4 }}
-                      accessibilityRole="button"
-                      accessibilityLabel="Changer la catégorie de cette transaction"
-                    >
-                      <Text style={st.tx_tag_chip}>🏷️ {txTags[item.hash] || 'Étiqueter'}</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 4 }}>
+                      <TouchableOpacity
+                        onPress={(e) => { e.stopPropagation?.(); cycleTxTag(item.hash); }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Changer la catégorie de cette transaction"
+                      >
+                        <Text style={st.tx_tag_chip}>🏷️ {txTags[item.hash] || 'Étiqueter'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={(e) => { e.stopPropagation?.(); shareTransactionReceipt(item, counterpartyLabel); }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Partager le reçu de cette transaction"
+                      >
+                        <Ionicons name="share-outline" size={15} color={T.text3} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                   <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.down : T.up) }]}>
                     {isOut ? '-' : '+'}{parseFloat(item.amount).toFixed(5)} {item.symbol}
