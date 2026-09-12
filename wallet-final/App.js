@@ -7575,7 +7575,7 @@ function AppContent({ themeMode, changeTheme }) {
       ...(SELL_ENABLED ? [{ key: 'sell', label: 'Vendre', icon: 'cash', onPress: () => setShowSell(true) }] : []),
       { key: 'swap', label: 'Swap', icon: 'swap-horizontal', onPress: () => setTab('swap') },
       { key: 'history', label: 'Activité', icon: 'time', onPress: () => setShowHistory(true) },
-      { key: 'market', label: 'Marché', icon: 'trending-up', onPress: () => setTab('market') },
+      { key: 'market', label: 'Marché', icon: 'trending-up', onPress: () => setTab('markets') },
       { key: 'stats', label: 'Stats', icon: 'stats-chart', onPress: () => setTab('stats') },
       { key: 'discover', label: 'Découvrir', icon: 'compass', onPress: () => setTab('discover') },
       { key: 'addresses', label: 'Toutes mes adresses', icon: 'wallet', onPress: () => { setAllAddressesFromReceive(false); setShowAllAddresses(true); } },
@@ -7639,7 +7639,7 @@ function AppContent({ themeMode, changeTheme }) {
                   <AnimPressable
                     key={c.id}
                     style={st.settings_row}
-                    onPress={() => closeAndRun(() => { setTab('market'); setMarketSearch(c.symbol?.toUpperCase() || ''); })}
+                    onPress={() => closeAndRun(() => { setTab('markets'); setMarketSearch(c.symbol?.toUpperCase() || ''); })}
                   >
                     <Ionicons name="trending-up-outline" size={20} color={T.text2} />
                     <View style={{ flex: 1, marginLeft: 12 }}>

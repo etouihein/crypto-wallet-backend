@@ -170,6 +170,25 @@ async function run() {
         const bodySearchToken = await page.evaluate(() => document.body.innerText);
         check('recherche "eth" retrouve un token', bodySearchToken.toUpperCase().includes('MES TOKENS') && bodySearchToken.includes('Ethereum'));
 
+        await searchInput.first().fill('doge');
+        await page.waitForTimeout(500);
+        const dogeResult = page.getByText('Dogecoin', { exact: false }).first();
+        if (await dogeResult.count()) {
+          await dogeResult.click();
+          await page.waitForTimeout(500);
+          const bodyMarketTab = await page.evaluate(() => document.body.innerText);
+          check(
+            'recherche d\'une crypto non detenue ouvre bien l\'onglet Marché (pas un ecran vide)',
+            bodyMarketTab.toUpperCase().includes('MARCHÉ') && bodyMarketTab.trim().length > 80
+          );
+        } else {
+          check('résultat "Dogecoin" trouvé pour une crypto non détenue', false);
+        }
+
+        const homeTabBtn = page.getByText('Accueil', { exact: true }).first();
+        if (await homeTabBtn.count()) { await homeTabBtn.click(); await page.waitForTimeout(500); }
+        await searchBtn.first().click();
+        await page.waitForTimeout(400);
         await searchInput.first().fill('réglages');
         await page.waitForTimeout(400);
         const settingsResult = page.getByText('Réglages', { exact: true }).last();
