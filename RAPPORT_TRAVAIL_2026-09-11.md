@@ -356,6 +356,18 @@ répond seul). Ajouté 2 questions manquantes (vente via Coinbase Offramp,
 commissions). Vérifié avec Playwright : accordéon fonctionnel, retour
 correct, zéro erreur console.
 
+## 6octies. Indicateur de gas en direct (commit `23d91a2`)
+
+Choisi par Pablo dans une liste de propositions. Badge "Gas (ETH) : X Gwei"
+sur Envoyer/Swap, avant même de remplir le formulaire. Point notable :
+seuil absolu délibérément évité pour le niveau qualitatif (Faible/Élevé) —
+vérifié en direct sur les 6 réseaux au moment d'écrire ceci, Ethereum
+tournait à ~0,05 Gwei et Polygon à ~260 Gwei, confirmant qu'un seuil fixe
+serait probablement faux demain. Le niveau se calcule à la place par
+comparaison à la médiane des mesures précédentes sur ce même réseau,
+stockées sur l'appareil — auto-calibré, ne peut pas devenir faux avec le
+temps. Vérifié avec Playwright contre le vrai RPC Ethereum (pas mocké).
+
 ## 7. Blocages documentés (rien à débloquer sans intervention de Pablo)
 
 - Test réel sur téléphone (faille dApp browser, migration Expo) : aucun
