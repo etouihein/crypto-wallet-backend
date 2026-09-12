@@ -7517,7 +7517,12 @@ function AppContent({ themeMode, changeTheme }) {
             {approvalsLoading ? (
               <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
             ) : activeApprovals.length === 0 ? (
-              <Text style={st.settings_row_sub}>Aucune autorisation active suivie sur cet appareil.</Text>
+              <View style={{ alignItems: 'center', marginTop: 40 }}>
+                <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: T.goldBg, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="key-outline" size={28} color={T.gold} />
+                </View>
+                <Text style={[st.settings_row_sub, { marginTop: 16, textAlign: 'center' }]}>Aucune autorisation active suivie sur cet appareil.</Text>
+              </View>
             ) : (
               activeApprovals.map((a) => (
                 <View key={a.id} style={[st.settings_row, { flexDirection: 'column', alignItems: 'stretch' }]}>
@@ -7811,7 +7816,12 @@ function AppContent({ themeMode, changeTheme }) {
               ) : nftsError ? (
                 <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
               ) : nfts.length === 0 ? (
-                <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 40 }}>Aucun NFT trouvé sur cette adresse ({NETWORK_INFO[nftNetwork]?.label || nftNetwork}).</Text>
+                <View style={{ alignItems: 'center', marginTop: 40 }}>
+                  <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: T.goldBg, alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="image-outline" size={28} color={T.gold} />
+                  </View>
+                  <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 16 }}>Aucun NFT trouvé sur cette adresse ({NETWORK_INFO[nftNetwork]?.label || nftNetwork}).</Text>
+                </View>
               ) : (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
               {nfts.map((n) => (
