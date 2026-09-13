@@ -5,4 +5,5 @@
 dist/
 *.log
 .env
+/crypto-wallet/data/
 .claude/scheduled_tasks.lock

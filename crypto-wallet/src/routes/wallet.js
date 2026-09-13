@@ -3,6 +3,8 @@ const router = express.Router();
 const { ethers } = require('ethers');
 const crypto = require('crypto');
 const dns = require('dns');
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const https = require('https');
 const ipaddr = require('ipaddr.js');
@@ -32,6 +34,26 @@ const sensitiveLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Trop de requêtes sensibles depuis cette IP — réessaie dans quelques minutes.' },
 });
+
+// Profil léger optionnel (email lié à une adresse de wallet) — pour
+// notifications futures et acquisition, PAS un compte : aucune clé, aucun
+// mot de passe, le wallet reste 100% non-custodial. DATA_DIR doit pointer
+// vers un Volume Railway monté (sinon écrit sur le disque éphémère du
+// conteneur, effacé au prochain déploiement — voir .env.example).
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
+const EMAIL_PROFILES_FILE = path.join(DATA_DIR, 'email-profiles.json');
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function loadEmailProfiles() {
+  try { return JSON.parse(fs.readFileSync(EMAIL_PROFILES_FILE, 'utf8')); } catch { return {}; }
+}
+
+function saveEmailProfile(address, email) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const profiles = loadEmailProfiles();
+  profiles[address.toLowerCase()] = { email, updatedAt: new Date().toISOString() };
+  fs.writeFileSync(EMAIL_PROFILES_FILE, JSON.stringify(profiles, null, 2));
+}
 
 // MoonPay — achat de crypto par carte, livré directement à l'adresse du wallet.
 // Le wallet a une adresse EVM (0x...) et, depuis l'ajout du support Solana,
@@ -1266,6 +1288,29 @@ router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
   } catch (error) {
     console.error('Bitcoin broadcast error:', error);
     res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Bitcoin impossible.' });
+  }
+});
+
+// Profil léger optionnel : associe un email à une adresse de wallet, pour
+// notifications futures / acquisition. Pas d'authentification au-delà de la
+// clé API app (même modèle que les autres routes) — l'adresse n'est pas un
+// secret, et on accepte qu'un tiers puisse en théorie soumettre un email
+// pour une adresse qui n'est pas la sienne (impact nul : ni fonds ni accès
+// au wallet ne dépendent de ce profil).
+router.post('/profile/email', sensitiveLimiter, (req, res) => {
+  const { address, email } = req.body || {};
+  if (!address || typeof address !== 'string' || address.length > 100) {
+    return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
+  }
+  if (!email || typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254) {
+    return res.status(400).json({ success: false, error: 'Adresse email invalide.' });
+  }
+  try {
+    saveEmailProfile(address, email.trim().toLowerCase());
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Email profile save error:', error);
+    res.status(500).json({ success: false, error: 'Impossible d\'enregistrer l\'email pour le moment.' });
   }
 });
 

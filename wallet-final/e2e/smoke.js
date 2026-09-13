@@ -171,8 +171,12 @@ async function run() {
         check('recherche "eth" retrouve un token', bodySearchToken.toUpperCase().includes('MES TOKENS') && bodySearchToken.includes('Ethereum'));
 
         await searchInput.first().fill('doge');
-        await page.waitForTimeout(500);
         const dogeResult = page.getByText('Dogecoin', { exact: false }).first();
+        // Ce résultat dépend de marketCoins (fetch réseau réel vers CoinGecko via
+        // le backend), contrairement à la recherche "eth" ci-dessus qui ne dépend
+        // que de l'état local des tokens du wallet — laisse jusqu'à 8s le temps
+        // que ce fetch se termine plutôt qu'un délai fixe court.
+        for (let i = 0; i < 16 && (await dogeResult.count()) === 0; i++) await page.waitForTimeout(500);
         if (await dogeResult.count()) {
           await dogeResult.click();
           await page.waitForTimeout(500);
@@ -183,10 +187,15 @@ async function run() {
           );
         } else {
           check('résultat "Dogecoin" trouvé pour une crypto non détenue', false);
+          // Le résultat n'est jamais apparu : la recherche est encore ouverte
+          // (pas de clic dessus pour la refermer) — la fermer explicitement
+          // pour ne pas bloquer les vérifications suivantes derrière sa modale.
+          const closeSearchBtn = page.locator('[aria-label="Retour"]');
+          if (await closeSearchBtn.count()) { await closeSearchBtn.first().click(); await page.waitForTimeout(400); }
         }
 
         const homeTabBtn = page.getByText('Accueil', { exact: true }).first();
-        if (await homeTabBtn.count()) { await homeTabBtn.click(); await page.waitForTimeout(500); }
+        if (await homeTabBtn.count()) { await homeTabBtn.click({ timeout: 8000 }).catch(() => {}); await page.waitForTimeout(500); }
         await searchBtn.first().click();
         await page.waitForTimeout(400);
         await searchInput.first().fill('réglages');
@@ -227,6 +236,20 @@ async function run() {
     console.log('6b. Mode d\'affichage (Débutant/Avancé) + checklist sécurité + signaler un problème');
     check('checklist "Niveau de sécurité" présente', bodyFr.includes('Niveau de sécurité'));
     check('bouton "Signaler un problème" présent', bodyFr.includes('Signaler un problème'));
+
+    console.log('6c. Email de profil (optionnel) : validation cote client, pas de soumission reelle (evite de polluer les vraies donnees en prod)');
+    check('section "Email (optionnel)" présente', bodyFr.toUpperCase().includes('EMAIL (OPTIONNEL)'));
+    const profileEmailInput = page.locator('input[placeholder="toi@exemple.com"]');
+    if (await profileEmailInput.count()) {
+      await profileEmailInput.fill('pas-un-email');
+      await page.getByText('Enregistrer', { exact: true }).first().click();
+      await page.waitForTimeout(500);
+      const bodyInvalidEmail = await page.evaluate(() => document.body.innerText);
+      check('email invalide rejeté avant tout appel réseau', bodyInvalidEmail.includes('Adresse email invalide'));
+      await profileEmailInput.fill('');
+    } else {
+      check('champ email de profil trouvé', false);
+    }
     const beginnerChip = page.getByText('Débutant', { exact: true });
     check('chip "Débutant" trouvée', await beginnerChip.count() > 0);
     if (await beginnerChip.count()) {

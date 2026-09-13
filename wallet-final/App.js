@@ -907,6 +907,18 @@ const saveCurrency = async (code) => {
 // adresses en observation le sont déjà via leurs propres clés).
 const SEED_BACKED_UP_KEY = 'wallet-pro-seed-backed-up-v1';
 const KEYSTORE_EXPORTED_KEY = 'wallet-pro-keystore-exported-v1';
+// Email optionnel lié à l'adresse du wallet (notifications futures,
+// acquisition) — voir POST /profile/email côté backend. Aucune clé ni mot
+// de passe : le wallet reste 100% non-custodial, ceci n'est qu'un profil
+// léger côté serveur. Persisté localement pour pré-remplir le champ et
+// afficher l'état "déjà enregistré" sans re-appeler le backend à chaque fois.
+const PROFILE_EMAIL_KEY = 'wallet-pro-profile-email-v1';
+const loadProfileEmail = async () => {
+  try { return (await AsyncStorage.getItem(PROFILE_EMAIL_KEY)) || ''; } catch { return ''; }
+};
+const saveProfileEmailLocal = async (email) => {
+  try { await AsyncStorage.setItem(PROFILE_EMAIL_KEY, email); } catch { /* rien à faire */ }
+};
 // Mode Débutant/Avancé : masque les sections WalletConnect/dApp browser/
 // approvals/DCA/bridge/DeFi en mode Débutant. Défaut 'advanced' — un
 // utilisateur déjà en place ne doit jamais voir des fonctionnalités qu'il
@@ -2295,6 +2307,9 @@ function AppContent({ themeMode, changeTheme }) {
   const [experienceMode, setExperienceMode]         = useState('advanced');
   const [seedBackedUp, setSeedBackedUp]             = useState(false);
   const [keystoreExported, setKeystoreExported]     = useState(false);
+  const [profileEmailInput, setProfileEmailInput]   = useState('');
+  const [profileEmailSaved, setProfileEmailSaved]   = useState('');
+  const [profileEmailSaving, setProfileEmailSaving] = useState(false);
   // Écran de confirmation avant envoi : 'form' (saisie) -> 'confirm' (relire
   // adresse/montant/frais avant de signer). Adresses récentes = carnet léger,
   // rempli au fil des envois réussis.
@@ -2592,6 +2607,30 @@ function AppContent({ themeMode, changeTheme }) {
     base:     { label: 'Base',             network: 'base',     chainId: 8453,  explorer: 'https://basescan.org',        emoji: '🔷', desc: 'Ethereum en plus rapide et moins cher, par Coinbase' },
   };
   const activeNetwork = NETWORK_INFO[network] || NETWORK_INFO.ethereum;
+
+  // Profil léger : associe un email optionnel à l'adresse du wallet côté
+  // backend (voir POST /profile/email) — aucune clé, aucun mot de passe,
+  // juste une adresse publique + un email pour notifications/acquisition.
+  const submitProfileEmail = useCallback(async () => {
+    const email = profileEmailInput.trim();
+    if (!walletAddr) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('Adresse email invalide', 'error');
+      return;
+    }
+    setProfileEmailSaving(true);
+    try {
+      const res = await axios.post(`${API_BASE}/profile/email`, { address: walletAddr, email }, { headers: API_HEADERS, timeout: 10000 });
+      if (!res.data?.success) throw new Error(res.data?.error || 'Échec');
+      await saveProfileEmailLocal(email);
+      setProfileEmailSaved(email);
+      showToast('✓ Email enregistré', 'success');
+    } catch (err) {
+      showToast(humanizeTxError(err) || 'Impossible d\'enregistrer l\'email pour le moment.', 'error');
+    } finally {
+      setProfileEmailSaving(false);
+    }
+  }, [profileEmailInput, walletAddr, showToast]);
 
   // Reçu de transaction partageable — même repli clipboard que shareApp/
   // shareReferralLink si Share.share échoue (desktop web sans navigator.share).
@@ -4321,6 +4360,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadFlag(SEED_BACKED_UP_KEY).then(setSeedBackedUp);
     loadFlag(KEYSTORE_EXPORTED_KEY).then(setKeystoreExported);
     loadExperienceMode().then(setExperienceMode);
+    loadProfileEmail().then((email) => { setProfileEmailSaved(email); setProfileEmailInput(email); });
   }, []);
 
   // Propose l'activation juste après avoir choisi/confirmé un PIN — c'est le
@@ -8432,6 +8472,35 @@ function AppContent({ themeMode, changeTheme }) {
             </View>
             <View style={[st.status_dot, { backgroundColor: vibrationEnabled ? T.gold : T.text3 }]} />
           </AnimPressable>
+
+          <View style={[st.alert_form, { marginTop: 10 }]}>
+            <Text style={[st.form_label, { marginBottom: 4 }]}>Email (optionnel)</Text>
+            <Text style={{ color: T.text3, fontSize: 11, marginBottom: 10, lineHeight: 16 }}>
+              Pour être prévenu des nouveautés et faciliter le contact — jamais utilisé pour autre chose, jamais
+              partagé. Aucune clé n'y est liée, ton wallet reste 100% non-custodial.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TextInput
+                style={[st.form_input, { flex: 1 }]}
+                value={profileEmailInput}
+                onChangeText={setProfileEmailInput}
+                placeholder="toi@exemple.com"
+                placeholderTextColor={T.text3}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+              <AnimPressable
+                style={[st.green_btn, { paddingHorizontal: 18, opacity: profileEmailSaving ? 0.7 : 1 }]}
+                onPress={submitProfileEmail}
+                disabled={profileEmailSaving || !profileEmailInput.trim()}
+              >
+                {profileEmailSaving ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>{profileEmailSaved ? 'Modifier' : 'Enregistrer'}</Text>}
+              </AnimPressable>
+            </View>
+            {!!profileEmailSaved && (
+              <Text style={{ color: T.up, fontSize: 11, marginTop: 8 }}>✓ Enregistré : {profileEmailSaved}</Text>
+            )}
+          </View>
 
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
