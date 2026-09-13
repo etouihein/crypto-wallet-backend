@@ -1353,62 +1353,6 @@ function buildCs(T) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  GÉNÉRATION BOUGIES RÉALISTES
-// ═══════════════════════════════════════════════════════════
-function generateCandlesFromPrice(symbol, price, timeframe, numCandles) {
-  if (!price || !isFinite(price) || price <= 0) return null;
-
-  const VOLATILITY = {
-    BTC: 0.012, ETH: 0.015, BNB: 0.018, SOL: 0.022,
-    USDT: 0.0002, ADA: 0.025, MATIC: 0.028,
-  };
-  const vol = VOLATILITY[symbol] || 0.02;
-
-  const seed = (symbol.charCodeAt(0) * 31 + symbol.charCodeAt(1 % symbol.length)) % 1000;
-  const candles = [];
-  const priceHistory = [price];
-
-  for (let i = 1; i < numCandles; i++) {
-    const s = Math.sin(seed * i * 0.7 + i * 1.3) * 0.5 + 0.5;
-    const direction = s > 0.52 ? 1 : -1;
-    const change = 1 + direction * vol * (0.3 + Math.abs(Math.sin(seed * i * 0.4)) * 0.7);
-    priceHistory.unshift(priceHistory[0] / change);
-  }
-
-  for (let i = 0; i < numCandles; i++) {
-    const base = priceHistory[i];
-    const next = priceHistory[i + 1] ?? price;
-    const s1 = Math.abs(Math.sin(seed * i * 1.1 + 0.5));
-    const s2 = Math.abs(Math.sin(seed * i * 0.9 + 1.2));
-    const s3 = Math.abs(Math.sin(seed * i * 1.3 + 0.7));
-    const s4 = Math.abs(Math.sin(seed * i * 0.6 + 1.8));
-
-    const o = base;
-    const c = next;
-    const bodyHigh = Math.max(o, c);
-    const bodyLow  = Math.min(o, c);
-    const wickUp   = bodyHigh * (1 + s1 * vol * 0.8);
-    const wickDown = bodyLow  * (1 - s2 * vol * 0.8);
-
-    candles.push({
-      o: parseFloat(o.toFixed(o > 100 ? 2 : 6)),
-      h: parseFloat(wickUp.toFixed(wickUp > 100 ? 2 : 6)),
-      l: parseFloat(wickDown.toFixed(wickDown > 100 ? 2 : 6)),
-      c: parseFloat(c.toFixed(c > 100 ? 2 : 6)),
-    });
-  }
-
-  if (candles.length > 0) {
-    const last = candles[candles.length - 1];
-    last.c = price;
-    last.h = Math.max(last.h, price);
-    last.l = Math.min(last.l, price);
-  }
-
-  return candles;
-}
-
-// ═══════════════════════════════════════════════════════════
 //  COMPOSANT LOGO AVEC FALLBACK
 // ═══════════════════════════════════════════════════════════
 function CoinLogo({ logo, icon, size = 44 }) {
@@ -4560,18 +4504,21 @@ function AppContent({ themeMode, changeTheme }) {
       return candles;
     }
 
-    // Vraies bougies (CoinGecko) pour les vues plus longues — remplace la
-    // simulation tant qu'elles n'ont pas encore été récupérées (fetchCoinCandles).
+    // Vraies bougies (CoinGecko) pour les vues plus longues. Tant qu'elles ne
+    // sont pas encore arrivées, on renvoie [] — CandlestickChart affiche alors
+    // son état "Chargement données…" plutôt qu'un graphique inventé.
     const real = realCandles[`${symbol}_${detailTf}`];
     const numCandles = cfg?.numCandles || 8;
     if (real && real.length) return real.slice(-numCandles);
 
-    return generateCandlesFromPrice(symbol, price, detailTf, numCandles) || [];
+    return [];
   }, [detailTf, tokens, candleHistory, chartTick, realCandles]);
 
   // Récupère les vraies bougies + la fiche crypto (CoinGecko) dès qu'on ouvre
   // le détail d'un token ou qu'on change de zoom — avec cache pour ne pas
-  // re-télécharger à chaque re-render.
+  // re-télécharger à chaque re-render. En cas d'échec (rate limit, coupure
+  // réseau), on retente en boucle (backoff jusqu'à 30s) plutôt que d'abandonner :
+  // jamais de donnée inventée affichée à la place d'un vrai graphique.
   useEffect(() => {
     if (!selectedToken) return;
     const cfg = TF_CONFIG[detailTf];
@@ -4580,11 +4527,28 @@ function AppContent({ themeMode, changeTheme }) {
     if (!cgId) return;
     const key = `${selectedToken}_${detailTf}`;
     if (realCandles[key]) return;
-    axios.get(`${API_BASE}/coin/${cgId}/candles`, {
-      params: { timeframe: detailTf }, headers: API_HEADERS, timeout: 15000,
-    }).then(res => {
-      if (res.data?.success) setRealCandles(prev => ({ ...prev, [key]: res.data.candles }));
-    }).catch(err => console.warn('candles CoinGecko indisponibles:', err.message));
+
+    let cancelled = false;
+    let attempt = 0;
+    const load = () => {
+      axios.get(`${API_BASE}/coin/${cgId}/candles`, {
+        params: { timeframe: detailTf }, headers: API_HEADERS, timeout: 15000,
+      }).then(res => {
+        if (cancelled) return;
+        if (res.data?.success) setRealCandles(prev => ({ ...prev, [key]: res.data.candles }));
+        else retry();
+      }).catch(err => {
+        console.warn('candles CoinGecko indisponibles, nouvelle tentative:', err.message);
+        retry();
+      });
+    };
+    const retry = () => {
+      if (cancelled) return;
+      attempt += 1;
+      setTimeout(load, Math.min(5000 * attempt, 30000));
+    };
+    load();
+    return () => { cancelled = true; };
   }, [selectedToken, detailTf, realCandles]);
 
   useEffect(() => {
@@ -4616,11 +4580,28 @@ function AppContent({ themeMode, changeTheme }) {
     if (!selectedMarketCoin) return;
     const id = selectedMarketCoin.id;
     if (!id || marketCoinCandles[id]) return;
-    axios.get(`${API_BASE}/coin/${id}/candles`, {
-      params: { timeframe: '1J' }, headers: API_HEADERS, timeout: 15000,
-    }).then(res => {
-      if (res.data?.success) setMarketCoinCandles(prev => ({ ...prev, [id]: res.data.candles }));
-    }).catch(err => console.warn('bougies (marché) indisponibles:', err.message));
+
+    let cancelled = false;
+    let attempt = 0;
+    const load = () => {
+      axios.get(`${API_BASE}/coin/${id}/candles`, {
+        params: { timeframe: '1J' }, headers: API_HEADERS, timeout: 15000,
+      }).then(res => {
+        if (cancelled) return;
+        if (res.data?.success) setMarketCoinCandles(prev => ({ ...prev, [id]: res.data.candles }));
+        else retry();
+      }).catch(err => {
+        console.warn('bougies (marché) indisponibles, nouvelle tentative:', err.message);
+        retry();
+      });
+    };
+    const retry = () => {
+      if (cancelled) return;
+      attempt += 1;
+      setTimeout(load, Math.min(5000 * attempt, 30000));
+    };
+    load();
+    return () => { cancelled = true; };
   }, [selectedMarketCoin, marketCoinCandles]);
 
   const fetchNews = useCallback(() => {
