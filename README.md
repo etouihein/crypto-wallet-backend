@@ -86,3 +86,9 @@ npm run test:e2e
 NexiaWallet is an early-stage project by a solo developer. **It has not been audited by a third-party security firm.** Start with small amounts, and always keep your recovery phrase written down somewhere safe and offline — nobody, including us, can recover it for you.
 
 Found a security issue? Please email **contact@nexiawallet.com** rather than opening a public issue.
+
+## License
+
+No open-source license. The source code is published for transparency, so you can read and review it, but it may not be copied, modified or redistributed without permission.
+
+© 2026 NexiaWallet. All rights reserved.
