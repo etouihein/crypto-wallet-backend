@@ -9040,7 +9040,9 @@ function AppContent({ themeMode, changeTheme }) {
             placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={st.market_filter_row}>
+        {/* flexShrink: 0 — sinon, sur le web, la FlatList en dessous (très haute)
+            écrase cette rangée à quelques pixels et coupe les filtres. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0 }} contentContainerStyle={st.market_filter_row}>
           <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
             <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>
               ⭐ Favoris{favorites.length ? ` (${favorites.length})` : ''}
@@ -9061,6 +9063,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         <FlatList
           key={numColumns}
+          style={{ flex: 1 }}
           data={gridData}
           numColumns={numColumns}
           keyExtractor={(item) => item.id}

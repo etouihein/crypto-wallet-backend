@@ -171,7 +171,10 @@ async function run() {
         check('recherche "eth" retrouve un token', bodySearchToken.toUpperCase().includes('MES TOKENS') && bodySearchToken.includes('Ethereum'));
 
         await searchInput.first().fill('doge');
-        const dogeResult = page.getByText('Dogecoin', { exact: false }).first();
+        // exact: true — le résultat affiche le nom seul ; un match partiel
+        // attrapait un titre d'actu du jour ("Dogecoin ETFs...") caché sous la
+        // modale de recherche, et le clic échouait.
+        const dogeResult = page.getByText('Dogecoin', { exact: true }).first();
         // Ce résultat dépend de marketCoins (fetch réseau réel vers CoinGecko via
         // le backend), contrairement à la recherche "eth" ci-dessus qui ne dépend
         // que de l'état local des tokens du wallet — laisse jusqu'à 8s le temps
