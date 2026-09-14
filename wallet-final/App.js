@@ -340,10 +340,10 @@ Les prix de marché (CoinGecko), l'historique de transactions (Etherscan et équ
 En cas de bug, un rapport technique (message d'erreur, type d'appareil, version de l'application) peut être envoyé à Sentry, l'outil utilisé pour détecter et corriger les problèmes. Aucune donnée sensible du wallet — clé privée, phrase de récupération, code PIN — n'est jamais incluse dans ces rapports.
 
 6. Mesure d'audience
-NexiaWallet peut utiliser Cloudflare Web Analytics pour mesurer la fréquentation du site (pages consultées, provenance approximative du trafic). Cet outil ne dépose aucun cookie et n'identifie individuellement aucun visiteur.
+Le site nexiawallet.com utilise Umami pour mesurer sa fréquentation (nombre de visites, pages consultées sans leurs paramètres d'URL, site de provenance, pays, type d'appareil et de navigateur). Umami ne dépose aucun cookie et ne sert pas à identifier individuellement les visiteurs. Il ne reçoit aucune donnée du wallet : ni clé, ni phrase de récupération, ni adresse, ni solde.
 
 7. Cookies
-Aucun cookie publicitaire ni outil de suivi tiers n'est utilisé sur ce site.
+Aucun cookie publicitaire ni cookie de mesure d'audience n'est déposé sur ce site, et aucun outil publicitaire n'y est utilisé.
 
 8. Vos droits
 Pour les données techniques limitées décrites ci-dessus, vous disposez d'un droit d'accès, de rectification et d'effacement. Pour l'exercer, contactez contact@nexiawallet.com. Vous pouvez aussi introduire une réclamation auprès de la CNIL (cnil.fr).

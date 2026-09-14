@@ -24,6 +24,14 @@
     <meta name="twitter:description" content="Portefeuille crypto non-custodial : tes clés privées ne quittent jamais ton appareil." />
     <meta name="twitter:image" content="https://nexiawallet.com/icon.png" />
 
+    <!-- Mesure d'audience Umami (sans cookie) : nombre de visiteurs, y compris
+         en temps réel pendant le lancement Product Hunt. data-domains limite le
+         comptage au vrai domaine, pour que les builds locaux et les tests e2e
+         ne faussent pas les statistiques. data-exclude-search retire les
+         paramètres d'URL : un lien partagé qui contiendrait une adresse de
+         wallet (demande de paiement, parrainage) n'arrive jamais chez Umami. -->
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="bab64506-68c1-48b4-aaf8-f922027da76a" data-domains="nexiawallet.com,www.nexiawallet.com" data-exclude-search="true"></script>
+
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icon.png" />
