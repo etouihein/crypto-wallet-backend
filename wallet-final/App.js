@@ -45,7 +45,7 @@ Font.loadAsync({ Ionicons: require('./assets/fonts/Ionicons.ttf') });
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider } from './lib/dappBrowserProvider';
-import { simulateTransaction, decodeKnownCall } from './lib/txSimulation';
+import { simulateTransaction, decodeKnownCall, analyzeTypedData } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
 import * as recurringBuy from './lib/recurringBuy';
@@ -2245,6 +2245,16 @@ function AppContent({ themeMode, changeTheme }) {
   const [pendingPinDigits, setPendingPinDigits] = useState('');
   const [pinError, setPinError]                 = useState(null);
   const [isVerifyingPin, setIsVerifyingPin]     = useState(false);
+  // Anti-bruteforce sur le déverrouillage : sans ça, un appareil déverrouillé
+  // laissé sans surveillance (ou un script qui simule des taps) peut essayer
+  // les 10^6 PIN à 6 chiffres au rythme du déchiffrement scrypt local
+  // (~100ms/essai, voir KEYSTORE_SCRYPT_OPTS dans lib/wallet.js) sans aucun
+  // frein — le même calcul qui avait justifié une passphrase dédiée pour
+  // l'export de keystore s'applique ici, mais un PIN doit rester un PIN.
+  // Délai croissant après plusieurs échecs consécutifs, remis à zéro dès
+  // qu'un PIN correct est saisi.
+  const [pinFailCount, setPinFailCount]         = useState(0);
+  const [pinLockedUntil, setPinLockedUntil]     = useState(0);
   const [unlockedPrivateKey, setUnlockedPrivateKey] = useState(null);
   const [unlockedMnemonic, setUnlockedMnemonic]     = useState(null);
   const [biometricEnabled, setBiometricEnabled]     = useState(false);
@@ -3121,6 +3131,11 @@ function AppContent({ themeMode, changeTheme }) {
   // de code en clair nulle part) — la seule "vérité" est cryptographique.
   const attemptUnlock = useCallback(async (pin) => {
     if (!walletSession?.encryptedKeystore) return;
+    if (Date.now() < pinLockedUntil) {
+      setPinError(`Trop d'essais — réessaie dans ${Math.ceil((pinLockedUntil - Date.now()) / 1000)}s.`);
+      setPinCode('');
+      return;
+    }
     setIsVerifyingPin(true);
     setPinError(null);
     try {
@@ -3128,6 +3143,8 @@ function AppContent({ themeMode, changeTheme }) {
       if (duressRecord && hashDuressPin(pin, duressRecord.salt) === duressRecord.hash) {
         // Code de détresse : jamais de déchiffrement, jamais la vraie clé —
         // juste un état "déverrouillé" avec un solde à zéro.
+        setPinFailCount(0);
+        setPinLockedUntil(0);
         setIsDuressMode(true);
         setIsUnlocked(true);
         setWalletBalance('0');
@@ -3140,6 +3157,8 @@ function AppContent({ themeMode, changeTheme }) {
       if (result.address.toLowerCase() !== walletSession.address.toLowerCase()) {
         throw new Error('Adresse incohérente après déchiffrement.');
       }
+      setPinFailCount(0);
+      setPinLockedUntil(0);
       setUnlockedPrivateKey(result.privateKey);
       setUnlockedMnemonic(result.mnemonic);
       setIsDuressMode(false);
@@ -3148,12 +3167,21 @@ function AppContent({ themeMode, changeTheme }) {
       setPinError(null);
       await refreshPortfolio(network);
     } catch (err) {
+      // Délai croissant à partir du 3e échec consécutif (5s, 10s, 20s, 40s,
+      // plafonné à 60s) — voir le commentaire sur pinFailCount/pinLockedUntil
+      // plus haut. Les 2 premiers échecs restent instantanés (faute de frappe
+      // normale), le frein n'arrive qu'ensuite.
+      setPinFailCount(prev => {
+        const next = prev + 1;
+        if (next >= 3) setPinLockedUntil(Date.now() + Math.min(5000 * (2 ** (next - 3)), 60000));
+        return next;
+      });
       setPinError('Code incorrect');
       setPinCode('');
     } finally {
       setIsVerifyingPin(false);
     }
-  }, [walletSession, network, refreshPortfolio]);
+  }, [walletSession, network, refreshPortfolio, pinLockedUntil]);
 
   const initWallet = useCallback(async () => {
     try {
@@ -6968,12 +6996,15 @@ function AppContent({ themeMode, changeTheme }) {
 
     let title = 'Demande de signature';
     let detail = null;
+    const isTypedData = method === 'eth_signTypedData' || method === 'eth_signTypedData_v4';
+    const typedDataSim = isTypedData ? analyzeTypedData(reqParams[1]) : null;
+    const activeSimResult = method === 'eth_sendTransaction' ? wcSimResult : typedDataSim;
     if (method === 'personal_sign' || method === 'eth_sign') {
       const hex = method === 'personal_sign' ? reqParams[0] : reqParams[1];
       let text = hex;
       try { text = ethers.utils.toUtf8String(hex); } catch { /* reste en hex si pas de l'UTF-8 valide */ }
       detail = <Text style={{ color: T.text, fontSize: 14 }}>{text}</Text>;
-    } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+    } else if (isTypedData) {
       title = 'Signature de données typées';
       const raw = reqParams[1];
       detail = <Text style={{ color: T.text3, fontSize: 12 }} numberOfLines={8}>{typeof raw === 'string' ? raw : JSON.stringify(raw)}</Text>;
@@ -7012,9 +7043,9 @@ function AppContent({ themeMode, changeTheme }) {
             {method === 'eth_sendTransaction' && !wcSimResult && (
               <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
             )}
-            {!!wcSimResult?.warnings?.length && (
-              <View style={[st.warning_box, { marginTop: 10, borderColor: wcSimResult.risk === 'high' ? T.red : T.gold }]}>
-                {wcSimResult.warnings.map((w, i) => (
+            {!!activeSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: activeSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {activeSimResult.warnings.map((w, i) => (
                   <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
                 ))}
               </View>
@@ -7138,6 +7169,9 @@ function AppContent({ themeMode, changeTheme }) {
 
     let title = 'Demande de signature';
     let detail = null;
+    const isDappTypedData = method === 'eth_signTypedData' || method === 'eth_signTypedData_v4';
+    const dappTypedDataSim = isDappTypedData ? analyzeTypedData(params[1]) : null;
+    const activeDappSimResult = method === 'eth_sendTransaction' ? dappSimResult : dappTypedDataSim;
     if (method === 'eth_requestAccounts') {
       title = 'Connexion à cette dApp';
       detail = <Text style={{ color: T.text, fontSize: 14 }}>Autoriser {origin} à voir l'adresse de ton wallet ?</Text>;
@@ -7151,7 +7185,7 @@ function AppContent({ themeMode, changeTheme }) {
       let text = hex;
       try { text = ethers.utils.toUtf8String(hex); } catch { /* reste en hex si pas de l'UTF-8 valide */ }
       detail = <Text style={{ color: T.text, fontSize: 14 }}>{text}</Text>;
-    } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+    } else if (isDappTypedData) {
       title = 'Signature de données typées';
       const raw = params[1];
       detail = <Text style={{ color: T.text3, fontSize: 12 }} numberOfLines={8}>{typeof raw === 'string' ? raw : JSON.stringify(raw)}</Text>;
@@ -7190,9 +7224,9 @@ function AppContent({ themeMode, changeTheme }) {
             {method === 'eth_sendTransaction' && !dappSimResult && (
               <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
             )}
-            {!!dappSimResult?.warnings?.length && (
-              <View style={[st.warning_box, { marginTop: 10, borderColor: dappSimResult.risk === 'high' ? T.red : T.gold }]}>
-                {dappSimResult.warnings.map((w, i) => (
+            {!!activeDappSimResult?.warnings?.length && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: activeDappSimResult.risk === 'high' ? T.red : T.gold }]}>
+                {activeDappSimResult.warnings.map((w, i) => (
                   <Text key={i} style={[st.warning_txt, i > 0 && { marginTop: 6 }]}>⚠️ {w}</Text>
                 ))}
               </View>

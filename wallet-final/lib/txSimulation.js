@@ -43,6 +43,54 @@ function decodeKnownCall(data) {
   }
 }
 
+// Adresse du contrat Permit2 d'Uniswap — identique sur la quasi-totalité des
+// chaînes EVM (déploiement déterministe CREATE2), utile pour reconnaître une
+// demande de signature Permit2 quel que soit le réseau.
+const PERMIT2_ADDRESS = '0x000000000022d473030f116ddee9f6b43ac78ba';
+
+// Une signature "Permit" (EIP-2612) ou "Permit2" coûte 0 gas et ne déclenche
+// AUCUNE transaction on-chain visible au moment de signer — c'est exactement
+// ce qui la rend dangereuse : un site de phishing ("vérifier son wallet",
+// "réclamer un airdrop") la fait passer pour un geste anodin alors qu'elle
+// autorise en réalité un tiers à dépenser les tokens de la victime, sans le
+// moindre avertissement de type "transaction" pour l'alerter. Contrairement à
+// eth_sendTransaction (voir simulateTransaction ci-dessus), rien ne
+// détectait ce risque avant : la modale de confirmation se contentait
+// d'afficher le JSON brut de la donnée typée.
+function analyzeTypedData(rawTypedData) {
+  try {
+    const typedData = typeof rawTypedData === 'string' ? JSON.parse(rawTypedData) : rawTypedData;
+    const domain = typedData?.domain || {};
+    const message = typedData?.message || {};
+    const primaryType = typedData?.primaryType || '';
+    const verifyingContract = (domain.verifyingContract || '').toLowerCase();
+    const contractLabel = domain.name ? `"${domain.name}"` : (verifyingContract || 'ce contrat');
+
+    if (primaryType === 'Permit' && message.spender && message.value !== undefined) {
+      return {
+        risk: 'high',
+        warnings: [`Autorise ${message.spender} à dépenser tes tokens de ${contractLabel} — AUCUNE transaction on-chain ne confirmera ceci, c'est une simple signature. N'accepte que si tu as toi-même initié cette action sur un site de confiance.`],
+      };
+    }
+    if (verifyingContract === PERMIT2_ADDRESS) {
+      const spender = message.spender || message.details?.spender || 'un tiers';
+      return {
+        risk: 'high',
+        warnings: [`Signature Permit2 : autorise ${spender} à dépenser tes tokens sans transaction visible sur la blockchain. N'accepte que si tu as toi-même initié cette action sur un site de confiance.`],
+      };
+    }
+    if (/permit/i.test(primaryType)) {
+      return {
+        risk: 'medium',
+        warnings: [`Cette signature ("${primaryType}") ressemble à une autorisation de dépense de tokens. Vérifie que tu es bien sur le site que tu voulais utiliser avant de continuer.`],
+      };
+    }
+    return { risk: 'none', warnings: [] };
+  } catch {
+    return { risk: 'none', warnings: [] };
+  }
+}
+
 function extractRevertReason(err) {
   return err?.reason
     || err?.error?.reason
@@ -90,4 +138,4 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
   return { risk, warnings, willLikelyRevert, revertReason, decodedMethod: known?.name || null };
 }
 
-module.exports = { simulateTransaction, decodeKnownCall };
+module.exports = { simulateTransaction, decodeKnownCall, analyzeTypedData };
