@@ -14,7 +14,7 @@ import {
   TextInput, ScrollView, Dimensions, ActivityIndicator,
   Modal, Alert, RefreshControl, StatusBar, Image,
   FlatList, Linking, Platform, Animated, Pressable, Easing,
-  useWindowDimensions, AppState, Share, Vibration,
+  useWindowDimensions, AppState, Share, Vibration, AccessibilityInfo,
 } from 'react-native';
 import axios from 'axios';
 import QRCodeSVG from 'react-native-qrcode-svg';
@@ -1408,9 +1408,40 @@ function showAlert(title, message, buttons) {
 // interne (icône | texte | valeur sur une ligne) intacte.
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
+// Lit la préférence système "réduire les animations" (Réglages iOS/Android,
+// prefers-reduced-motion sur le web) et se met à jour si elle change pendant
+// que l'app tourne. Centralisé ici plutôt que patché animation par animation :
+// AnimPressable et FadeInView, les deux briques réutilisées dans tout le
+// fichier, s'en servent pour garder le changement d'état (le bouton s'enfonce,
+// la carte apparaît) SANS le mouvement animé qui va avec.
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    if (Platform.OS === 'web') {
+      const mq = typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+      if (!mq) return;
+      setReduced(mq.matches);
+      const onChange = (e) => { if (mounted) setReduced(e.matches); };
+      if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+      return () => {
+        if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange);
+      };
+    }
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduced(v); });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (v) => { if (mounted) setReduced(v); });
+    return () => { mounted = false; sub?.remove?.(); };
+  }, []);
+  return reduced;
+}
+
 function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95, ...rest }) {
+  const reducedMotion = useReducedMotion();
   const scale = useRef(new Animated.Value(1)).current;
   const animateTo = (toValue) => {
+    if (reducedMotion) { scale.setValue(toValue); return; }
     Animated.spring(scale, { toValue, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
   };
   return (
@@ -1745,12 +1776,14 @@ function SecurityOrb({ size = 220 }) {
 //  APPARITION EN FONDU + GLISSEMENT (pour les fiches crypto)
 // ═══════════════════════════════════════════════════════════
 function FadeInView({ children, style, deps = [] }) {
+  const reducedMotion = useReducedMotion();
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (reducedMotion) { anim.setValue(1); return; }
     anim.setValue(0);
     Animated.timing(anim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, reducedMotion]);
   return (
     <Animated.View
       style={[
@@ -2078,6 +2111,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [historyFilterSymbol, setHistoryFilterSymbol] = useState('ALL');
   const HISTORY_PAGE_SIZE = 15;
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
+  // Grille 2 colonnes -> multiple de 2 pour ne jamais couper une rangée à moitié.
+  const NFT_PAGE_SIZE = 20;
   const [showSettings, setShowSettings]   = useState(false);
   const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
   // true seulement quand renderLegal() a été ouvert depuis Paramètres (et pas
@@ -2229,6 +2264,7 @@ function AppContent({ themeMode, changeTheme }) {
   // clé Alchemy côté serveur) — l'envoi reste signé localement (signNftTransferTx).
   const [showNftGallery, setShowNftGallery]     = useState(false);
   const [nfts, setNfts]                         = useState([]);
+  const [nftVisibleCount, setNftVisibleCount]   = useState(NFT_PAGE_SIZE);
   const [nftsLoading, setNftsLoading]           = useState(false);
   const [nftsError, setNftsError]               = useState(null);
   const [selectedNft, setSelectedNft]           = useState(null);
@@ -3854,6 +3890,7 @@ function AppContent({ themeMode, changeTheme }) {
     setShowNftGallery(true);
     setSelectedNft(null);
     setNftsError(null);
+    setNftVisibleCount(NFT_PAGE_SIZE);
     if (!walletAddr) return;
     setNftsLoading(true);
     try {
@@ -7878,8 +7915,9 @@ function AppContent({ themeMode, changeTheme }) {
                   <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center', marginTop: 16 }}>Aucun NFT trouvé sur cette adresse ({NETWORK_INFO[nftNetwork]?.label || nftNetwork}).</Text>
                 </View>
               ) : (
+            <>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-              {nfts.map((n) => (
+              {nfts.slice(0, nftVisibleCount).map((n) => (
                 <TouchableOpacity
                   key={`${n.contract}-${n.tokenId}`}
                   style={{ width: '48%', marginBottom: 16 }}
@@ -7896,6 +7934,12 @@ function AppContent({ themeMode, changeTheme }) {
                 </TouchableOpacity>
               ))}
             </View>
+              {nfts.length > nftVisibleCount && (
+                <AnimPressable style={st.load_more_btn} onPress={() => setNftVisibleCount(c => c + NFT_PAGE_SIZE)}>
+                  <Text style={st.load_more_txt}>Charger plus ({nfts.length - nftVisibleCount} restants)</Text>
+                </AnimPressable>
+              )}
+            </>
               )}
             </>
           )}
@@ -8928,127 +8972,148 @@ function AppContent({ themeMode, changeTheme }) {
   // ════════════════════════════════════════════════════════
   //  TAB: MARCHÉ
   // ════════════════════════════════════════════════════════
-  const renderMarkets = () => (
-    <View style={{ flex: 1 }}>
-      <View style={st.search_wrap}>
-        <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
-          placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={st.market_filter_row}>
-        <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
-          <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>
-            ⭐ Favoris{favorites.length ? ` (${favorites.length})` : ''}
-          </Text>
-        </TouchableOpacity>
-        <View style={st.market_filter_sep} />
-        {[
-          ['market_cap', 'Capitalisation'],
-          ['gainers', '↑ Hausse'],
-          ['losers', '↓ Baisse'],
-          ['alpha', 'A–Z'],
-        ].map(([key, label]) => (
-          <TouchableOpacity key={key} style={[st.chain_tab_sm, marketSort === key && st.chain_tab_sm_on]} onPress={() => setMarketSort(key)}>
-            <Text style={[st.chain_tab_sm_txt, marketSort === key && st.chain_tab_sm_txt_on]}>{label}</Text>
+  // Grille virtualisée (FlatList) plutôt qu'un .map() dans un ScrollView : avec
+  // 50+ cryptos (CoinGecko), un simple .map() montait toutes les cartes (+ leur
+  // animation d'apparition) d'un coup à l'ouverture de l'onglet — coûteux en
+  // perf/mémoire sur un appareil bas de gamme. FlatList ne monte que les lignes
+  // visibles + une marge. numColumns ne peut pas changer sans redémonter la
+  // FlatList (limite connue de RN) — d'où le `key={numColumns}` qui force ce
+  // redémarrage si la fenêtre passe en largeur "web" (2 → 4 colonnes).
+  const renderMarketCard = ({ item: coin }) => {
+    if (coin.__skeleton) {
+      return (
+        <View style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
+          <SkeletonBlock style={{ height: 96, borderRadius: 16 }} />
+        </View>
+      );
+    }
+    const pos = (coin.price_change_percentage_24h || 0) >= 0;
+    const p = coin.current_price || 0;
+    const sym = coin.symbol?.toUpperCase() || '';
+    const known = WALLET_TOKENS[sym];
+    const isFav = favorites.includes(sym);
+    return (
+      <FadeInView deps={[coin.id]} style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
+        <AnimPressable
+          style={st.market_card}
+          scaleTo={0.95}
+          onPress={() => known ? setSelectedToken(sym) : setSelectedMarketCoin(coin)}
+        >
+          <TouchableOpacity
+            style={st.market_card_fav}
+            onPress={(e) => { e.stopPropagation?.(); toggleFavorite(sym); }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={isFav ? 'star' : 'star-outline'} size={14} color={T.gold} />
           </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <ScrollView
-        style={{ flex: 1 }}
-        showsVerticalScrollIndicator={false}
-        onScroll={handleTabScroll}
-        scrollEventThrottle={16}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); Promise.all([fetchMarket(), fetchNews()]).finally(() => setRefreshing(false)); }}
-            tintColor={T.gold}
-          />
-        }
-      >
-        {!!newsItems.length && (
-          <View style={{ marginBottom: 20 }}>
-            <View style={st.section_hdr}>
-              <SectionTitle>Actu crypto en direct</SectionTitle>
-              <Text style={st.section_sub}>MAJ / 5 min</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <CoinLogo logo={coin.image} icon="🪙" size={30} />
+            <View style={{ marginLeft: 8, flex: 1 }}>
+              <Text style={st.market_card_sym} numberOfLines={1}>{sym}</Text>
+              <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-              {newsItems.slice(0, 10).map((item, i) => (
-                <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
-                  {item.image ? (
-                    <Image source={{ uri: item.image }} style={st.news_img} />
-                  ) : (
-                    <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
-                      <Text style={{ fontSize: 30 }}>📰</Text>
-                    </View>
-                  )}
-                  <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
-                  <Text style={st.news_date}>
-                    {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
-                  </Text>
-                </AnimPressable>
-              ))}
-            </ScrollView>
           </View>
-        )}
+          <Text style={st.market_card_price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+            {fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}
+          </Text>
+          <View style={[st.market_card_badge, { backgroundColor: pos ? T.upBg : T.downBg }]}>
+            <Text style={{ color: pos ? T.up : T.down, fontSize: 11, fontWeight: 'bold' }}>
+              {Math.abs(coin.price_change_percentage_24h || 0) >= 10 ? '🔥 ' : (pos ? '▲ ' : '▼ ')}
+              {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
+            </Text>
+          </View>
+        </AnimPressable>
+      </FadeInView>
+    );
+  };
 
-        <View style={st.section_hdr}>
-          <SectionTitle>Tous les cours</SectionTitle>
-          <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
+  const renderMarkets = () => {
+    const numColumns = isWideWeb ? 4 : 2;
+    const gridData = marketCoins.length === 0
+      ? Array.from({ length: 8 }, (_, i) => ({ id: `skeleton-${i}`, __skeleton: true }))
+      : filteredCoins;
+
+    return (
+      <View style={{ flex: 1 }}>
+        <View style={st.search_wrap}>
+          <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
+            placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
         </View>
-        <View style={st.market_grid}>
-          {marketCoins.length === 0 ? (
-            Array.from({ length: 8 }).map((_, i) => (
-              <View key={i} style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
-                <SkeletonBlock style={{ height: 96, borderRadius: 16 }} />
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={st.market_filter_row}>
+          <TouchableOpacity style={[st.chain_tab_sm, marketFavOnly && st.chain_tab_sm_on]} onPress={() => setMarketFavOnly(v => !v)}>
+            <Text style={[st.chain_tab_sm_txt, marketFavOnly && st.chain_tab_sm_txt_on]}>
+              ⭐ Favoris{favorites.length ? ` (${favorites.length})` : ''}
+            </Text>
+          </TouchableOpacity>
+          <View style={st.market_filter_sep} />
+          {[
+            ['market_cap', 'Capitalisation'],
+            ['gainers', '↑ Hausse'],
+            ['losers', '↓ Baisse'],
+            ['alpha', 'A–Z'],
+          ].map(([key, label]) => (
+            <TouchableOpacity key={key} style={[st.chain_tab_sm, marketSort === key && st.chain_tab_sm_on]} onPress={() => setMarketSort(key)}>
+              <Text style={[st.chain_tab_sm_txt, marketSort === key && st.chain_tab_sm_txt_on]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <FlatList
+          key={numColumns}
+          data={gridData}
+          numColumns={numColumns}
+          keyExtractor={(item) => item.id}
+          renderItem={renderMarketCard}
+          columnWrapperStyle={st.market_grid}
+          showsVerticalScrollIndicator={false}
+          onScroll={handleTabScroll}
+          scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); Promise.all([fetchMarket(), fetchNews()]).finally(() => setRefreshing(false)); }}
+              tintColor={T.gold}
+            />
+          }
+          ListHeaderComponent={
+            <>
+              {!!newsItems.length && (
+                <View style={{ marginBottom: 20 }}>
+                  <View style={st.section_hdr}>
+                    <SectionTitle>Actu crypto en direct</SectionTitle>
+                    <Text style={st.section_sub}>MAJ / 5 min</Text>
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
+                    {newsItems.slice(0, 10).map((item, i) => (
+                      <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+                        {item.image ? (
+                          <Image source={{ uri: item.image }} style={st.news_img} />
+                        ) : (
+                          <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
+                            <Text style={{ fontSize: 30 }}>📰</Text>
+                          </View>
+                        )}
+                        <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
+                        <Text style={st.news_date}>
+                          {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                        </Text>
+                      </AnimPressable>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+              <View style={st.section_hdr}>
+                <SectionTitle>Tous les cours</SectionTitle>
+                <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
               </View>
-            ))
-          ) : filteredCoins.map((coin, i) => {
-            const pos = (coin.price_change_percentage_24h || 0) >= 0;
-            const p = coin.current_price || 0;
-            const sym = coin.symbol?.toUpperCase() || '';
-            const known = WALLET_TOKENS[sym];
-            const isFav = favorites.includes(sym);
-            return (
-              <FadeInView key={coin.id} deps={[coin.id]} style={[st.market_card_slot, isWideWeb && st.market_card_slot_wide]}>
-                <AnimPressable
-                  style={st.market_card}
-                  scaleTo={0.95}
-                  onPress={() => known ? setSelectedToken(sym) : setSelectedMarketCoin(coin)}
-                >
-                  <TouchableOpacity
-                    style={st.market_card_fav}
-                    onPress={(e) => { e.stopPropagation?.(); toggleFavorite(sym); }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name={isFav ? 'star' : 'star-outline'} size={14} color={T.gold} />
-                  </TouchableOpacity>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <CoinLogo logo={coin.image} icon="🪙" size={30} />
-                    <View style={{ marginLeft: 8, flex: 1 }}>
-                      <Text style={st.market_card_sym} numberOfLines={1}>{sym}</Text>
-                      <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
-                    </View>
-                  </View>
-                  <Text style={st.market_card_price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
-                    {fmt(p, p < 0.01 ? 6 : p < 1 ? 4 : 2)}
-                  </Text>
-                  <View style={[st.market_card_badge, { backgroundColor: pos ? T.upBg : T.downBg }]}>
-                    <Text style={{ color: pos ? T.up : T.down, fontSize: 11, fontWeight: 'bold' }}>
-                      {Math.abs(coin.price_change_percentage_24h || 0) >= 10 ? '🔥 ' : (pos ? '▲ ' : '▼ ')}
-                      {Math.abs(coin.price_change_percentage_24h || 0).toFixed(2)}%
-                    </Text>
-                  </View>
-                </AnimPressable>
-              </FadeInView>
-            );
-          })}
-        </View>
-        <View style={{ height: 90 }} />
-      </ScrollView>
-    </View>
-  );
+            </>
+          }
+          ListFooterComponent={<View style={{ height: 90 }} />}
+        />
+      </View>
+    );
+  };
 
   // ════════════════════════════════════════════════════════
   //  TAB: DÉCOUVRIR — assemble des fonctionnalités déjà existantes
