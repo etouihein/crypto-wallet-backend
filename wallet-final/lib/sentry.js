@@ -32,33 +32,9 @@ const DSN =
 
 let initialized = false;
 
-// Bruit de fond de librairies tierces, mesuré en prod : le SDK WalletConnect
-// envoie des évènements d'analytics en "fire and forget" vers
-// pulse.walletconnect.org dès qu'il s'initialise (à chaque déverrouillage du
-// wallet). Quand cette requête est annulée/bloquée — navigation, bloqueur de
-// pub, réseau capricieux — elle ressort en promesse rejetée non gérée
-// ("A network error occurred.", sans pile d'appel) que personne ne peut
-// rattraper depuis notre code : elle naît à l'intérieur du SDK.
-// Résultat mesuré : 1 évènement Sentry gaspillé PAR SESSION utilisateur, sur
-// un quota gratuit de 5 000/mois — de quoi le saturer dès quelques centaines
-// d'utilisateurs et surtout noyer les vraies erreurs.
-// On ne filtre que ce cas précis : message générique de réseau ET aucune pile
-// d'appel. Une vraie erreur réseau de notre code (axios vers le backend, RPC)
-// est soit déjà rattrapée et affichée à l'utilisateur, soit accompagnée d'une
-// pile qui pointe vers notre code — donc jamais concernée par ce filtre.
-const BENIGN_MESSAGES = [
-  'A network error occurred.',
-  'Network request failed',
-  'Load failed',
-];
-
-function isBenignThirdPartyNoise(event) {
-  const values = event?.exception?.values;
-  if (!Array.isArray(values) || values.length !== 1) return false;
-  const [err] = values;
-  const hasStack = !!err?.stacktrace?.frames?.length;
-  return !hasStack && BENIGN_MESSAGES.includes((err?.value || '').trim());
-}
+// Filtre de bruit tiers (WalletConnect analytics) — logique isolée dans
+// lib/sentryNoise.js pour être testable en Node, voir les détails là-bas.
+const { isBenignThirdPartyNoise } = require('./sentryNoise');
 
 function initSentry() {
   if (!DSN || initialized) return;
