@@ -7,3 +7,7 @@ dist/
 .env
 /crypto-wallet/data/
 .claude/scheduled_tasks.lock
+# Config Claude Code personnelle (chemins locaux, permissions, skills tiers) — pas pour un repo public
+.claude/settings.local.json
+.claude/agents/
+.claude/skills/
