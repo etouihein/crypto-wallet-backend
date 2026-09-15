@@ -64,11 +64,20 @@ test('cookie : __Host-, Secure, HttpOnly, SameSite=Strict, Path=/, sans domaine'
 });
 
 test("origine et chemin secret", () => {
-  const req = (origin, host = 'api.example.com', protocol = 'https') => ({ protocol, get: (h) => (h === 'origin' ? origin : host) });
+  const req = (origin, { host = 'api.example.com', protocol = 'https', referer } = {}) => ({
+    protocol,
+    get: (h) => (h === 'origin' ? origin : h === 'referer' ? referer : host),
+  });
   assert.equal(auth.isSameOrigin(req('https://api.example.com')), true);
   assert.equal(auth.isSameOrigin(req('https://evil.example.com')), false);
   assert.equal(auth.isSameOrigin(req(undefined)), false);
   assert.equal(auth.isSameOrigin(req('http://api.example.com')), false);
+  // Ce que le navigateur envoie sous « Referrer-Policy: no-referrer » : refusé.
+  assert.equal(auth.isSameOrigin(req('null')), false);
+  // Sans Origin, le Referer de la même origine fait foi.
+  assert.equal(auth.isSameOrigin(req(undefined, { referer: 'https://api.example.com/Xy7_aB3kLm9QpR2s/login' })), true);
+  assert.equal(auth.isSameOrigin(req(undefined, { referer: 'https://evil.example.com/piege' })), false);
+  assert.equal(auth.isSameOrigin(req(undefined, { referer: 'pas-une-url' })), false);
   assert.equal(auth.isValidAdminPath('/Xy7_aB3kLm9QpR2s'), true);
   assert.equal(auth.isValidAdminPath('/admin'), false);
   assert.equal(auth.isValidAdminPath('Xy7_aB3kLm9QpR2sT'), false);

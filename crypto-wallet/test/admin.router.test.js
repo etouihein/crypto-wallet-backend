@@ -33,13 +33,14 @@ async function startAdmin({ loginMax = 5, globalLoginMax = 20, seed } = {}) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const request = (path, { method = 'GET', cookie, body, withOrigin = true } = {}) => fetch(`${origin}${path}`, {
+  const request = (path, { method = 'GET', cookie, body, withOrigin = true, headers = {} } = {}) => fetch(`${origin}${path}`, {
     method,
     redirect: 'manual',
     headers: {
       ...(cookie ? { cookie } : {}),
       ...(withOrigin && method !== 'GET' ? { origin } : {}),
       ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
+      ...headers,
     },
     body,
   });
@@ -50,7 +51,7 @@ async function startAdmin({ loginMax = 5, globalLoginMax = 20, seed } = {}) {
     return res.headers.get('set-cookie').split(';')[0];
   };
   const close = () => new Promise((r) => server.close(r));
-  return { db, calls, request, login, loggedInCookie, close };
+  return { db, calls, request, login, loggedInCookie, close, origin };
 }
 
 test("sans configuration complète et saine, la page n'existe pas", () => {
@@ -93,6 +94,36 @@ test('connexion : origine exigée, mauvais mot de passe refusé, cookie de sessi
     assert.equal(ok.status, 303);
     const cookie = ok.headers.get('set-cookie');
     for (const flag of ['__Host-nw_admin=', 'HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/']) assert.ok(cookie.includes(flag), flag);
+  } finally { await a.close(); }
+});
+
+// Régression : la page annonçait « Referrer-Policy: no-referrer ». La
+// spécification Fetch impose alors au navigateur d'envoyer « Origin: null » sur
+// une soumission de formulaire (et aucun Referer), donc la connexion était
+// refusée avec « Requête refusée (origine) » — page totalement inutilisable,
+// constaté en production le 15/09/2026. Un test posant l'en-tête Origin à la
+// main ne pouvait pas le voir : c'est la politique de référent qu'il faut
+// vérifier, en même temps que le comportement qu'elle provoque.
+test("la politique de référent n'empêche pas le navigateur d'envoyer son Origin", async () => {
+  const a = await startAdmin();
+  try {
+    const page = await a.request(`${ADMIN_PATH}/login`);
+    const policy = page.headers.get('referrer-policy');
+    assert.notEqual(policy, 'no-referrer', 'no-referrer rendrait la connexion impossible depuis un navigateur');
+    assert.equal(policy, 'same-origin', "rien ne fuit vers un tiers, mais l'Origin nous parvient");
+
+    // Ce que le navigateur envoyait à cause de no-referrer : toujours refusé,
+    // c'est bien le rôle du contrôle.
+    const spoofed = await a.request(`${ADMIN_PATH}/login`, { method: 'POST', body: `password=${PASSWORD}`, withOrigin: false, headers: { origin: 'null' } });
+    assert.equal(spoofed.status, 403);
+
+    // Navigateur qui omet l'Origin mais envoie son Referer : connexion acceptée.
+    const viaReferer = await a.request(`${ADMIN_PATH}/login`, { method: 'POST', body: `password=${PASSWORD}`, withOrigin: false, headers: { referer: `${a.origin}${ADMIN_PATH}/login` } });
+    assert.equal(viaReferer.status, 303);
+
+    // Referer d'un autre site : refusé.
+    const foreign = await a.request(`${ADMIN_PATH}/login`, { method: 'POST', body: `password=${PASSWORD}`, withOrigin: false, headers: { referer: 'https://evil.example.com/piege' } });
+    assert.equal(foreign.status, 403);
   } finally { await a.close(); }
 });
 

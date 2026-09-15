@@ -54,7 +54,10 @@ function createAdminRouter({ passwordHash, getServices, now = () => Date.now(), 
     res.locals.nonce = nonce;
     res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Referrer-Policy', 'no-referrer');
+    // « same-origin », et surtout PAS « no-referrer » : cette dernière ferait
+    // envoyer « Origin: null » par le navigateur sur le formulaire de connexion,
+    // qu'isSameOrigin refuserait (explication complète dans admin/auth.js).
+    res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'nonce-${nonce}'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`);

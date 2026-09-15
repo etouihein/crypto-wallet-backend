@@ -100,10 +100,27 @@ function clearedCookie() {
 
 // Une requête POST légitime vient de la page admin elle-même : son en-tête
 // Origin doit être exactement l'origine de ce serveur.
+//
+// ATTENTION : la politique de référent de cette page ne doit JAMAIS être
+// « no-referrer ». La spécification Fetch (« Append a request Origin header »)
+// impose alors au navigateur de remplacer l'Origin par la chaîne « null » sur
+// toute soumission de formulaire — et il n'envoie pas de Referer non plus. La
+// page devient inutilisable : toute connexion est refusée. Constaté en réel le
+// 15/09/2026. La page annonce donc « same-origin » : rien ne fuit vers un
+// tiers, et l'Origin nous parvient intact.
 function isSameOrigin(req) {
+  const expected = `${req.protocol}://${req.get('host')}`;
   const origin = req.get('origin');
-  if (!origin) return false;
-  return origin === `${req.protocol}://${req.get('host')}`;
+  if (origin) return origin === expected; // « null » compris, donc refusé
+  // Certains navigateurs omettent l'Origin sur un formulaire : le Referer de la
+  // même origine fait alors foi. Un site tiers ne peut pas le forger.
+  const referer = req.get('referer');
+  if (!referer) return false;
+  try {
+    return new URL(referer).origin === expected;
+  } catch {
+    return false;
+  }
 }
 
 function isValidAdminPath(p) {
