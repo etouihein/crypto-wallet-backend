@@ -15,6 +15,7 @@ const { generateJwt } = require('@coinbase/cdp-sdk/auth');
 const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 // Suivi des revenus : appelé après chaque réponse, sans effet sur elle (voir src/revenue/hooks.js).
 const revenueHooks = require('../revenue/hooks');
+const { createHistorySources } = require('../history');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 // demo | stripe | moonpay | coinbase
@@ -629,45 +630,31 @@ router.get('/news', async (req, res) => {
   }
 });
 
-// Historique des transactions — Etherscan API v2 (une seule clé couvre
-// Ethereum ET BSC depuis leur unification multichain). Clé côté serveur
-// uniquement : jamais exposée au client, comme pour CoinGecko/MoonPay.
-// Etherscan v2 est une API unifiée : UNE seule clé couvre toutes ces chaînes
-// (plus besoin d'une clé Polygonscan/Arbiscan/etc. séparée). Trouvé en audit
-// (2026-08-28) : arbitrum/optimism/base/polygon manquaient ici -- un
-// utilisateur sur l'un de ces réseaux retombait silencieusement sur
-// ETHERSCAN_CHAIN_IDS.ethereum (chainid=1) et voyait donc l'historique
-// ETHEREUM de son adresse à la place du vrai historique de son réseau actif
-// (même adresse EVM sur toutes les chaînes -> aucune erreur, juste des
-// données trompeuses). Vérifié directement contre l'API v2 : les 4 chainid
-// ajoutés sont bien reconnus (erreur "clé invalide", pas "chainid non
-// supporté", avec un jeton bidon).
-const ETHERSCAN_CHAIN_IDS = { ethereum: 1, bsc: 56, polygon: 137, arbitrum: 42161, optimism: 10, base: 8453 };
-
-async function fetchEtherscan(params) {
-  const apiKey = process.env.ETHERSCAN_API_KEY;
-  if (!apiKey) throw new Error('ETHERSCAN_API_KEY manquante dans .env');
-  const qs = new URLSearchParams({ ...params, apikey: apiKey }).toString();
-  const response = await fetch(`https://api.etherscan.io/v2/api?${qs}`);
-  if (!response.ok) throw new Error(`Etherscan error ${response.status}`);
-  const data = await response.json();
-  // Etherscan répond status="0" + message="No transactions found" pour une
-  // adresse neuve — ce n'est pas une erreur, juste une liste vide.
-  if (data.status === '0' && data.message !== 'No transactions found') {
-    throw new Error(data.result || data.message || 'Erreur Etherscan');
-  }
-  return Array.isArray(data.result) ? data.result : [];
-}
+// Historique des transactions. Clés côté serveur uniquement, jamais exposées
+// au client, comme pour CoinGecko/MoonPay.
+//
+// Le choix de la source par réseau vit dans src/history : Etherscan V2 ne
+// couvre plus gratuitement BNB Chain, Optimism et Base (« Free API access is
+// not supported for this chain »), ces trois réseaux répondaient donc 500 et
+// l'écran Activité restait vide. Blockscout et NodeReal prennent le relais là
+// où il le faut ; les listes rendues gardent les noms de champs d'Etherscan,
+// donc la mise en forme ci-dessous n'a pas changé.
+//
+// Histoire ancienne, à ne pas refaire : avant l'audit du 28/08/2026, seuls
+// ethereum et bsc étaient déclarés. Un utilisateur sur Polygon, Arbitrum,
+// Optimism ou Base retombait silencieusement sur chainid=1 et voyait
+// l'historique ETHEREUM de son adresse -- même adresse EVM partout, donc
+// aucune erreur, juste des données trompeuses. D'où la table explicite,
+// réseau par réseau, dans src/history.
+const historySources = createHistorySources();
 
 async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
   return cachedFetch(`txhistory:${network}:${address.toLowerCase()}`, 20_000, async () => {
-    const chainid = ETHERSCAN_CHAIN_IDS[normalizeNetwork(network)] || ETHERSCAN_CHAIN_IDS.ethereum;
-    const base = { chainid, address, startblock: 0, endblock: 99999999, page: 1, offset: limit, sort: 'desc' };
-
-    const [native, tokens] = await Promise.all([
-      fetchEtherscan({ ...base, module: 'account', action: 'txlist' }),
-      fetchEtherscan({ ...base, module: 'account', action: 'tokentx' }),
-    ]);
+    const { native, tokens } = await historySources.fetchRawHistory({
+      network: normalizeNetwork(network),
+      address,
+      limit,
+    });
 
     // gasUsed * gasPrice (en wei, natif) -- seul l'expéditeur paie le gas,
     // donc n'a de sens que pour les tx sortantes ; utilisé côté client pour
@@ -681,7 +668,7 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
     const nativeItems = native.map(tx => ({
       hash: tx.hash,
       type: 'native',
-      // Même bug que ETHERSCAN_CHAIN_IDS ci-dessus : un ternaire bsc/ETH
+      // Même bug que la table des réseaux ci-dessus : un ternaire bsc/ETH
       // codait en dur "ETH" pour Polygon aussi, alors que son token natif
       // est MATIC/POL -- utilise la config réseau déjà correcte partout
       // ailleurs dans ce fichier plutôt qu'une deuxième liste à maintenir.

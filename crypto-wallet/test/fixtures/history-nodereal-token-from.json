@@ -1,0 +1,59 @@
+{
+  "result": {
+    "transfers": [
+      {
+        "id": 2960697,
+        "category": "20",
+        "blockNum": "0x6f801a0",
+        "from": "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+        "to": "0x161ba15a5f335c9f06bb5bbb0a9ce14076fbb645",
+        "value": "0x000000000000000000000000000000000000000000000000006a94d74f430000",
+        "asset": "mWBNB",
+        "name": "MultiHopper WBNB",
+        "hash": "0xd47e0c4c7fd490d27e5d3ecc592fbd80292d81cb20f0e3eeb479bfafd59e6130",
+        "contractAddress": "0xf116fa5bfc236a4b9af4135e06267b3224db12d9",
+        "decimal": "18",
+        "amount": "0x0",
+        "blockTimeStamp": 1787173279,
+        "blockMixHash": "0x0000000000000000000000000000000000000000000000000000000000000190",
+        "gasPrice": 50000000,
+        "gasUsed": 143106,
+        "receiptsStatus": 1,
+        "gas": 161123,
+        "input": "0xb252f4e20000000000000000000000000000000000000000000000000000000000000005",
+        "logIndex": 352,
+        "traceIndex": 0,
+        "l1Fee": "",
+        "l1FeeScalar": "0",
+        "l1GasPrice": "",
+        "l1GasUsed": "",
+        "txType": "0x2"
+      },
+      {
+        "id": 3595432,
+        "category": "20",
+        "blockNum": "0x6768d56",
+        "from": "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+        "to": "0xfadf603cc72886ef6aa64a7835dbf5a6083287ac",
+        "value": "0x00000000000000000000000000000000000000000000000001cbe09fb7f9e324",
+        "name": "",
+        "hash": "0x22915eecbb1123f3fb864cdff9d007c6558b4d443484394728066cbfdadaed4f",
+        "contractAddress": "0xfb2f6aa6cc754af316f64e91fcac1dcb4696f49a",
+        "blockTimeStamp": 1783353819,
+        "blockMixHash": "0x000000000000000000000000000000000000000000000000000000000000015e",
+        "gasPrice": 1000000000,
+        "gasUsed": 41262,
+        "receiptsStatus": 1,
+        "gas": 250000,
+        "input": "0xbeabacc8000000000000000000000000bb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c000000000000000000000000fadf603cc72886ef6aa64a7835dbf5a6083287ac00000000000000000000000000000000000000000000000001cbe09fb7f9e324",
+        "logIndex": 1230,
+        "traceIndex": 0,
+        "l1Fee": "",
+        "l1FeeScalar": "0",
+        "l1GasPrice": "",
+        "l1GasUsed": "",
+        "txType": "0x0"
+      }
+    ]
+  }
+}

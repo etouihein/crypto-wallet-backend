@@ -1,0 +1,266 @@
+{
+  "items": [
+    {
+      "priority_fee": "22580000000",
+      "raw_input": "0xa9059cbb0000000000000000000000005020d170ae3538f86f38722cbafd3051c90b4ea90000000000000000000000000000000000000000000000000de0b6b3a7640000",
+      "is_pending_update": false,
+      "result": "success",
+      "hash": "0xa19f3aa477dbae2bdc6375dc957bb15f72b4d2e366403490dd93084bc34ae0ec",
+      "max_fee_per_gas": "11000000",
+      "revert_reason": null,
+      "confirmation_duration": [
+        0,
+        2000
+      ],
+      "transaction_burnt_fee": "112900000000",
+      "type": 2,
+      "token_transfers_overflow": null,
+      "confirmations": 1419772,
+      "position": 50,
+      "max_priority_fee_per_gas": "1000000",
+      "transaction_tag": null,
+      "created_contract": null,
+      "value": "0",
+      "from": {
+        "ens_domain_name": null,
+        "hash": "0x65193bb7fa80092f2d6BE0db1703A3C35C5aDbbb",
+        "implementations": [
+          {
+            "address_hash": "0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B",
+            "name": "EIP7702StatelessDeleGator"
+          }
+        ],
+        "is_contract": true,
+        "is_scam": false,
+        "is_verified": true,
+        "metadata": null,
+        "name": null,
+        "private_tags": [],
+        "proxy_type": "eip7702",
+        "public_tags": [],
+        "reputation": "ok",
+        "watchlist_names": []
+      },
+      "gas_used": "22580",
+      "status": "ok",
+      "to": {
+        "ens_domain_name": null,
+        "hash": "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3",
+        "implementations": [],
+        "is_contract": false,
+        "is_scam": false,
+        "is_verified": false,
+        "metadata": {
+          "tags": [
+            {
+              "meta": {},
+              "name": "Exchange",
+              "ordinal": 0,
+              "slug": "exchange",
+              "tagType": "generic"
+            },
+            {
+              "meta": {
+                "tagIcon ": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "textColor": "#C163D4",
+                "tooltipAttribution": "https://www.openlabelsinitiative.org?utm_source=blockscout",
+                "tooltipAttributionIcon": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "tooltipDescription": "Provided by OLI",
+                "tooltipUrl": "https://www.binance.com/"
+              },
+              "name": "Binance 51",
+              "ordinal": 0,
+              "slug": "binance-51",
+              "tagType": "name"
+            }
+          ]
+        },
+        "name": null,
+        "private_tags": [],
+        "proxy_type": null,
+        "public_tags": [],
+        "reputation": "ok",
+        "watchlist_names": []
+      },
+      "authorization_list": [],
+      "method": null,
+      "fee": {
+        "type": "actual",
+        "value": "136080027248"
+      },
+      "gas_limit": "150000",
+      "gas_price": "6000000",
+      "decoded_input": null,
+      "fhe_operations_count": 0,
+      "token_transfers": null,
+      "base_fee_per_gas": "5000000",
+      "timestamp": "2026-08-14T01:38:03.000000Z",
+      "nonce": 1,
+      "historic_exchange_rate": null,
+      "transaction_types": [],
+      "exchange_rate": "2382.8",
+      "block_number": 49941068,
+      "has_error_in_internal_transactions": false
+    },
+    {
+      "priority_fee": "3960600000000",
+      "raw_input": "0xa9059cbb000000000000000000000000f977814e90da44bfa03b6295a0616a897441acec00000000000000000000000000000000000000000004b346434b306a5a9c0000",
+      "is_pending_update": false,
+      "result": "success",
+      "hash": "0xcc70dbd28054174e2c4a9935a28b3f14f2d78e3bcd3fac5fff51940d63337d09",
+      "max_fee_per_gas": "120000000",
+      "revert_reason": null,
+      "confirmation_duration": [
+        0,
+        2000
+      ],
+      "transaction_burnt_fee": "172200000000",
+      "type": 2,
+      "token_transfers_overflow": null,
+      "confirmations": 6892147,
+      "position": 95,
+      "max_priority_fee_per_gas": "120000000",
+      "transaction_tag": null,
+      "created_contract": null,
+      "value": "0",
+      "from": {
+        "ens_domain_name": null,
+        "hash": "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3",
+        "implementations": [],
+        "is_contract": false,
+        "is_scam": false,
+        "is_verified": false,
+        "metadata": {
+          "tags": [
+            {
+              "meta": {},
+              "name": "Exchange",
+              "ordinal": 0,
+              "slug": "exchange",
+              "tagType": "generic"
+            },
+            {
+              "meta": {
+                "tagIcon ": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "textColor": "#C163D4",
+                "tooltipAttribution": "https://www.openlabelsinitiative.org?utm_source=blockscout",
+                "tooltipAttributionIcon": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "tooltipDescription": "Provided by OLI",
+                "tooltipUrl": "https://www.binance.com/"
+              },
+              "name": "Binance 51",
+              "ordinal": 0,
+              "slug": "binance-51",
+              "tagType": "name"
+            }
+          ]
+        },
+        "name": null,
+        "private_tags": [],
+        "proxy_type": null,
+        "public_tags": [],
+        "reputation": "ok",
+        "watchlist_names": []
+      },
+      "gas_used": "34440",
+      "status": "ok",
+      "to": {
+        "ens_domain_name": null,
+        "hash": "0x7AaFD31a321d3627b30A8e2171264B56852187fe",
+        "implementations": [],
+        "is_contract": true,
+        "is_scam": false,
+        "is_verified": true,
+        "metadata": {
+          "tags": [
+            {
+              "meta": {
+                "tagIcon ": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "textColor": "#C163D4",
+                "tooltipAttribution": "https://www.openlabelsinitiative.org?utm_source=blockscout",
+                "tooltipAttributionIcon": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+                "tooltipDescription": "Mira is the decentralized verification network that enables truly autonomous AI. Current AI systems produce hallucinations and unreliable outputs, requiring constant human oversight that prevents their deployment in critical applications.",
+                "tooltipUrl": "https://mira.network/"
+              },
+              "name": "Mira: MIRA Token",
+              "ordinal": 10,
+              "slug": "mira-mira-token",
+              "tagType": "name"
+            },
+            {
+              "meta": {},
+              "name": "Token Contract",
+              "ordinal": 0,
+              "slug": "token-contract",
+              "tagType": "generic"
+            },
+            {
+              "meta": {},
+              "name": "Blockchain",
+              "ordinal": 0,
+              "slug": "blockchain",
+              "tagType": "generic"
+            },
+            {
+              "meta": {},
+              "name": "DeFi",
+              "ordinal": 0,
+              "slug": "defi",
+              "tagType": "generic"
+            },
+            {
+              "meta": {},
+              "name": "Mira",
+              "ordinal": 0,
+              "slug": "mira",
+              "tagType": "protocol"
+            }
+          ]
+        },
+        "name": "Mira",
+        "private_tags": [],
+        "proxy_type": null,
+        "public_tags": [],
+        "reputation": "ok",
+        "watchlist_names": []
+      },
+      "authorization_list": [],
+      "method": "transfer",
+      "fee": {
+        "type": "actual",
+        "value": "4134510738497"
+      },
+      "gas_limit": "84000",
+      "gas_price": "120000000",
+      "decoded_input": {
+        "method_call": "transfer(address to, uint256 value)",
+        "method_id": "a9059cbb",
+        "parameters": [
+          {
+            "name": "to",
+            "type": "address",
+            "value": "0xF977814e90dA44bFA03b6295A0616a897441aceC"
+          },
+          {
+            "name": "value",
+            "type": "uint256",
+            "value": "5682303000000000000000000"
+          }
+        ]
+      },
+      "fhe_operations_count": 0,
+      "token_transfers": null,
+      "base_fee_per_gas": "5000000",
+      "timestamp": "2026-04-09T09:25:33.000000Z",
+      "nonce": 0,
+      "historic_exchange_rate": "2190.18",
+      "transaction_types": [
+        "contract_call",
+        "token_transfer"
+      ],
+      "exchange_rate": "2382.8",
+      "block_number": 44468693,
+      "has_error_in_internal_transactions": null
+    }
+  ]
+}
