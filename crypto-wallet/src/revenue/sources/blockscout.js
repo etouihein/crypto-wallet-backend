@@ -152,8 +152,18 @@ function createBlockscoutSource({ fetchImpl = globalThis.fetch, apiKey = process
     return out;
   }
 
+  // Contrat visé par la transaction (son `to`), qui dit qui a payé la
+  // commission. Demandé à Blockscout plutôt qu'au RPC : certains nœuds publics
+  // refusent eth_getTransactionReceipt (constaté en réel sur Optimism : 403).
+  async function getTransactionTarget(chain, txHash) {
+    const data = await getJson(`${chain.blockscoutHost}/api/v2/transactions/${txHash}`);
+    const to = data && data.to && (data.to.hash || data.to);
+    return to ? String(to).toLowerCase() : null;
+  }
+
   return {
     name: 'blockscout',
+    getTransactionTarget,
     kinds: ['native', 'internal', 'erc20'],
     isConfigured: (chain) => Boolean(chain.blockscoutHost),
     fetch(kind, chain, address, fromBlock, toBlock) {

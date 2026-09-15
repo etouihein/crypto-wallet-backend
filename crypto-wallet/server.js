@@ -82,6 +82,13 @@ if (ENV === 'production') {
   });
 }
 
+// Page d'administration des revenus (src/admin/router.js). Montée AVANT le CORS
+// et les autres middlewares globaux : c'est une page du serveur lui-même (même
+// origine), pas une API appelée par l'app — elle a ses propres en-têtes, limites
+// et authentification. Totalement absente (404) tant que ADMIN_PATH et
+// ADMIN_PASSWORD_HASH ne sont pas définis.
+require('./src/admin/router').mountAdminFromEnv(app);
+
 // Configuration des Middlewares globaux
 app.use(cors({ origin: corsOriginCheck }));
 app.use(express.json({
@@ -154,4 +161,6 @@ app.listen(PORT, () => {
   console.log(`🚀 SERVEUR DÉMARRÉ SUR LE PORT : ${PORT}`);
   console.log(`📡 En attente des requêtes du téléphone...`);
   console.log(`==========================================`);
+  // Indexeur des commissions on-chain, si INDEXER_ENABLED=1 (ne peut pas faire planter le serveur).
+  require('./src/revenue/scheduler').startRevenueIndexer();
 });

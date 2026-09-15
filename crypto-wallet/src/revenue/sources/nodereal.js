@@ -115,8 +115,23 @@ function createNodeRealSource({ fetchImpl = globalThis.fetch, apiKey = process.e
     return out;
   }
 
+  // Même rôle que côté Blockscout : le contrat visé par la transaction, lu via
+  // le RPC NodeReal (avec la clé, donc sans la limite des nœuds publics).
+  async function getTransactionTarget(chain, txHash) {
+    const res = await fetchImpl(`https://bsc-mainnet.nodereal.io/v1/${apiKey}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'eth_getTransactionByHash', params: [txHash] }),
+    });
+    if (!res.ok) throw new Error(`NodeReal HTTP ${res.status}`);
+    const data = await res.json();
+    const to = data && data.result && data.result.to;
+    return to ? String(to).toLowerCase() : null;
+  }
+
   return {
     name: 'nodereal',
+    getTransactionTarget,
     kinds: ['all'], // une seule requête couvre natif, interne et ERC-20
     isConfigured: () => Boolean(apiKey),
     fetch(kind, chain, address, fromBlock, toBlock) {

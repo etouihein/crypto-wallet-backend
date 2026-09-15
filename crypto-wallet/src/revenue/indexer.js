@@ -26,6 +26,25 @@ const REORG_OVERLAP_BLOCKS = 50;
 function createIndexer({ db, sources, rpc, pricing, feeAddress, chains = CHAINS, startTime = DEFAULT_START_TIME, now = () => Date.now(), logger = console }) {
   const address = String(feeAddress).toLowerCase();
 
+  // Contrat visé par la transaction qui a produit un transfert : c'est lui qui
+  // distingue une commission (0x, LI.FI) d'un envoi quelconque. On demande
+  // d'abord à la source d'indexation (Blockscout / NodeReal), et on ne retombe
+  // sur le RPC qu'en dernier recours : certains nœuds publics refusent
+  // eth_getTransactionReceipt (Optimism répond 403).
+  async function parentTarget(chain, txHash) {
+    const source = chain.source === 'nodereal' ? sources.nodereal : sources.blockscout;
+    if (source && typeof source.getTransactionTarget === 'function') {
+      try {
+        const target = await source.getTransactionTarget(chain, txHash);
+        if (target) return target;
+      } catch (error) {
+        logger.warn(`transaction ${txHash} introuvable via ${source.name} : ${error.message}`);
+      }
+    }
+    const receipt = await rpc.getReceipt(chain, txHash);
+    return receipt && receipt.to ? String(receipt.to).toLowerCase() : null;
+  }
+
   const getCursor = db.prepare('SELECT last_block FROM indexer_cursors WHERE chain_id = ? AND kind = ?');
   const setCursor = db.prepare(`INSERT INTO indexer_cursors (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`);
@@ -92,10 +111,9 @@ function createIndexer({ db, sources, rpc, pricing, feeAddress, chains = CHAINS,
         const key = `${row.chain_id}:${row.tx_hash}`;
         if (!parentCache.has(key)) {
           try {
-            const receipt = await rpc.getReceipt(chain, row.tx_hash);
-            parentCache.set(key, receipt && receipt.to ? String(receipt.to).toLowerCase() : null);
+            parentCache.set(key, await parentTarget(chain, row.tx_hash));
           } catch (error) {
-            logger.warn(`reçu introuvable ${row.tx_hash} : ${error.message}`);
+            logger.warn(`contrat cible introuvable pour ${row.tx_hash} : ${error.message}`);
             parentCache.set(key, null);
           }
         }

@@ -48,7 +48,7 @@ function setup() {
     historicalPrices: async (id, ts) => { priceCalls.push([id, ts]); return id === 'usd-coin' ? { usd: '1', eur: '0.9' } : { usd: '2000', eur: '1800' }; },
   };
   const indexer = createIndexer({ db, sources: { blockscout: source }, rpc, pricing, feeAddress: FEE, chains: [chain], now: () => 42, logger: { warn() {} } });
-  return { db, state, data, indexer, fetchCalls, priceCalls };
+  return { db, state, data, indexer, fetchCalls, priceCalls, source, rpc, parents };
 }
 
 const rows = (db) => db.prepare('SELECT tx_hash, classification, classification_reason, value_usd_at_receipt, value_eur_at_receipt FROM inbound_transfers ORDER BY tx_hash').all();
@@ -106,5 +106,32 @@ test('une source en panne : statut partiel, curseur non avancé, aucun doublon e
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM inbound_transfers').get().n, 4);
   const runs = db.prepare('SELECT status FROM indexer_runs ORDER BY id').all().map((r) => r.status);
   assert.deepEqual(runs, ['partial', 'ok']);
+  db.close();
+});
+
+test('le contrat payeur est demandé à la source, le RPC ne sert que de secours', async () => {
+  const { db, indexer, source, rpc, parents } = setup();
+  const asked = { source: [], rpc: [] };
+  source.getTransactionTarget = async (chain, hash) => { asked.source.push(hash); return parents[hash] || null; };
+  // Comme le RPC public d'Optimism en vrai : refuse de répondre.
+  rpc.getReceipt = async (chain, hash) => { asked.rpc.push(hash); throw new Error('RPC eth_getTransactionReceipt HTTP 403'); };
+  await indexer.runOnce();
+  assert.deepEqual(asked.rpc, [], 'aucun appel au RPC quand la source répond');
+  assert.ok(asked.source.length >= 2);
+  const fee1 = db.prepare("SELECT classification, classification_reason FROM inbound_transfers WHERE tx_hash = '0xfee1'").get();
+  assert.deepEqual(fee1, { classification: 'swap_fee', classification_reason: 'zerox_allowance_holder' });
+  db.close();
+});
+
+test('si la source ne sait pas répondre, le RPC prend le relais', async () => {
+  const { db, indexer, source, rpc } = setup();
+  const askedRpc = [];
+  source.getTransactionTarget = async () => { throw new Error('Blockscout HTTP 500'); };
+  const rpcReceipt = rpc.getReceipt;
+  rpc.getReceipt = async (chain, hash) => { askedRpc.push(hash); return rpcReceipt(chain, hash); };
+  await indexer.runOnce();
+  const fee2 = db.prepare("SELECT classification, classification_reason FROM inbound_transfers WHERE tx_hash = '0xfee2'").get();
+  assert.deepEqual(fee2, { classification: 'bridge_fee', classification_reason: 'lifi_diamond' }, 'classé grâce au secours RPC');
+  assert.ok(askedRpc.includes('0xfee2'), 'le RPC a bien pris le relais');
   db.close();
 });
