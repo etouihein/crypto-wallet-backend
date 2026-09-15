@@ -13,6 +13,8 @@ const rateLimit = require('express-rate-limit');
 const { Connection: SolanaConnection, PublicKey: SolanaPublicKey } = require('@solana/web3.js');
 const { generateJwt } = require('@coinbase/cdp-sdk/auth');
 const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
+// Suivi des revenus : appelé après chaque réponse, sans effet sur elle (voir src/revenue/hooks.js).
+const revenueHooks = require('../revenue/hooks');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 // demo | stripe | moonpay | coinbase
@@ -768,6 +770,7 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: data?.reason || data?.validationErrors?.[0]?.reason || data?.message || 'Devis de swap impossible.' });
     }
     res.json({ success: true, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
+    revenueHooks.onSwapQuote({ chainId, sellToken, buyToken, sellAmount, taker, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
   } catch (error) {
     console.error('Wallet route error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
@@ -822,6 +825,7 @@ router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
       });
     }
     res.json({ success: true, quote: data, feePct: LIFI_FEE * 100 });
+    revenueHooks.onBridgeQuote({ fromChain: fc, toChain: tc, fromAddress, fromAmount, quote: data, fee: LIFI_FEE });
   } catch (error) {
     console.error('Bridge quote error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur lors du devis de pont.' });
@@ -1242,6 +1246,7 @@ router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
     }
     const transactionResponse = await getProvider(network).sendTransaction(rawTx);
     res.json({ success: true, txHash: transactionResponse.hash, network });
+    revenueHooks.onBroadcast({ rawTx, txHash: transactionResponse.hash });
   } catch (error) {
     console.error('Broadcast error:', error);
     res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction impossible.' });

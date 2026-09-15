@@ -1,0 +1,223 @@
+[
+  {
+    "name": "swap ok",
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": true,
+      "quote": {
+        "buyAmount": "420000000000000",
+        "fees": {
+          "integratorFee": {
+            "amount": "3165000000000",
+            "token": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+            "type": "volume"
+          },
+          "zeroExFee": null
+        },
+        "issues": {
+          "allowance": {
+            "actual": "0",
+            "spender": "0x0000000000001fF3684f28c67538d4D072C22734"
+          }
+        },
+        "transaction": {
+          "to": "0x0000000000001fF3684f28c67538d4D072C22734",
+          "data": "0x2213bc0b000000000000000000000000abcdef",
+          "value": "0",
+          "gas": "210000"
+        }
+      },
+      "feeBps": 75
+    },
+    "upstream": [
+      {
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=1000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "headers": {
+          "0x-api-key": "zerox-test-key",
+          "0x-version": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "name": "swap bsc ok",
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": true,
+      "quote": {
+        "buyAmount": "420000000000000",
+        "fees": {
+          "integratorFee": {
+            "amount": "3165000000000",
+            "token": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+            "type": "volume"
+          },
+          "zeroExFee": null
+        },
+        "issues": {
+          "allowance": {
+            "actual": "0",
+            "spender": "0x0000000000001fF3684f28c67538d4D072C22734"
+          }
+        },
+        "transaction": {
+          "to": "0x0000000000001fF3684f28c67538d4D072C22734",
+          "data": "0x2213bc0b000000000000000000000000abcdef",
+          "value": "0",
+          "gas": "210000"
+        }
+      },
+      "feeBps": 75
+    },
+    "upstream": [
+      {
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=56&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=2000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "headers": {
+          "0x-api-key": "zerox-test-key",
+          "0x-version": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "name": "swap montant invalide",
+    "status": 400,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Paramètres de swap invalides."
+    },
+    "upstream": []
+  },
+  {
+    "name": "swap reseau non supporte",
+    "status": 400,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Paramètres de swap invalides."
+    },
+    "upstream": []
+  },
+  {
+    "name": "swap erreur 0x",
+    "status": 400,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "INSUFFICIENT_LIQUIDITY"
+    },
+    "upstream": [
+      {
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=999&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "headers": {
+          "0x-api-key": "zerox-test-key",
+          "0x-version": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "name": "swap sans cle 0x",
+    "status": 503,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Swap non configuré (ZEROX_API_KEY manquante dans .env)."
+    },
+    "upstream": []
+  },
+  {
+    "name": "swap sans cle app",
+    "status": 401,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Clé API invalide ou absente."
+    },
+    "upstream": []
+  },
+  {
+    "name": "bridge ok",
+    "status": 200,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": true,
+      "quote": {
+        "estimate": {
+          "toAmount": "995000000000000",
+          "feeCosts": [
+            {
+              "name": "LIFI Fixed Fee",
+              "amount": "5000000000000"
+            }
+          ]
+        },
+        "transactionRequest": {
+          "to": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+          "data": "0x4630a0d8000000000000000000000000fedcba",
+          "value": "0x38d7ea4c68000",
+          "gasLimit": "0x30d40"
+        }
+      },
+      "feePct": 0.25
+    },
+    "upstream": [
+      {
+        "url": "https://li.quest/v1/quote?fromChain=1&toChain=42161&fromToken=0x0000000000000000000000000000000000000000&toToken=0x0000000000000000000000000000000000000000&fromAddress=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&fromAmount=1000000000000000&integrator=nexiawallet&fee=0.0025",
+        "headers": {
+          "x-lifi-api-key": "lifi-test-key"
+        }
+      }
+    ]
+  },
+  {
+    "name": "bridge chaines invalides",
+    "status": 400,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Chaînes de pont invalides."
+    },
+    "upstream": []
+  },
+  {
+    "name": "bridge adresse invalide",
+    "status": 400,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Adresse invalide."
+    },
+    "upstream": []
+  },
+  {
+    "name": "bridge erreur lifi",
+    "status": 404,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "No available quotes for the requested transfer"
+    },
+    "upstream": [
+      {
+        "url": "https://li.quest/v1/quote?fromChain=8453&toChain=10&fromToken=0x0000000000000000000000000000000000000000&toToken=0x0000000000000000000000000000000000000000&fromAddress=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&fromAmount=999&integrator=nexiawallet&fee=0.0025",
+        "headers": {
+          "x-lifi-api-key": "lifi-test-key"
+        }
+      }
+    ]
+  },
+  {
+    "name": "bridge sans cle app",
+    "status": 401,
+    "contentType": "application/json; charset=utf-8",
+    "body": {
+      "success": false,
+      "error": "Clé API invalide ou absente."
+    },
+    "upstream": []
+  }
+]
