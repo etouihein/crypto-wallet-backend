@@ -52,7 +52,7 @@ import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
-import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG } from './lib/i18n';
+import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { ethers } from 'ethers';
 import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -376,10 +376,11 @@ contact@nexiawallet.com`,
 // (pas un import) a confirmé avoir noté sa phrase de récupération — le
 // moment où l'utilisateur vient de tout mettre en place et est le plus
 // réceptif avant de découvrir l'app par lui-même.
+// Textes dans lib/i18n.js (onboarding_s*_title / onboarding_s*_desc).
 const ONBOARDING_SLIDES = [
-  { icon: '🔐', title: 'Tes clés, tes cryptos', desc: "Ta phrase de récupération est la seule clé de tes fonds. NexiaWallet ne détient jamais tes cryptos et ne peut ni la récupérer ni la réinitialiser si tu la perds." },
-  { icon: '📤', title: 'Envoie et reçois', desc: "Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Solana ou Bitcoin." },
-  { icon: '💳', title: 'Achète et échange', desc: "Achète par carte via Coinbase Onramp, livré directement sur ton wallet, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app." },
+  { icon: '🔐', titleKey: 'onboarding_s1_title', descKey: 'onboarding_s1_desc' },
+  { icon: '📤', titleKey: 'onboarding_s2_title', descKey: 'onboarding_s2_desc' },
+  { icon: '💳', titleKey: 'onboarding_s3_title', descKey: 'onboarding_s3_desc' },
 ];
 
 // FAQ affichée sur la landing — questions réellement posées par les
@@ -991,8 +992,8 @@ const LOCALE_KEY = 'wallet-pro-locale-v1';
 const loadLocale = async () => {
   try {
     const raw = await AsyncStorage.getItem(LOCALE_KEY);
-    return SUPPORTED_LOCALES.includes(raw) ? raw : 'fr';
-  } catch { return 'fr'; }
+    return SUPPORTED_LOCALES.includes(raw) ? raw : detectDeviceLocale();
+  } catch { return detectDeviceLocale(); }
 };
 
 const saveLocale = async (locale) => {
@@ -2320,7 +2321,10 @@ function AppContent({ themeMode, changeTheme }) {
   const [portfolioIsCached, setPortfolioIsCached] = useState(false); // true tant qu'on affiche le cache, pas un solde fraîchement récupéré
   const [showReferral, setShowReferral] = useState(false);
   const [referredByCode, setReferredByCode] = useState(null);
-  const [locale, setLocale] = useState('fr');
+  // Démarre sur la langue de l'appareil (synchrone, pas de flash en français
+  // pour un visiteur anglophone) ; loadLocale() la remplace ensuite par un
+  // choix enregistré dans Paramètres s'il y en a un.
+  const [locale, setLocale] = useState(detectDeviceLocale);
   // t() traduit les libellés d'UI courants (nav, accueil, paramètres...) —
   // voir lib/i18n.js pour la portée exacte (les pages légales/FAQ restent en
   // français uniquement). Défini ici, tout en haut, pour être utilisable par
@@ -5536,12 +5540,9 @@ function AppContent({ themeMode, changeTheme }) {
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
             <Text style={{ fontSize: 40, textAlign: 'center', marginBottom: 8 }}>🔑</Text>
-            <Text style={st.modal_title_lg}>Ta phrase de récupération</Text>
+            <Text style={st.modal_title_lg}>{t('mnemonic_title')}</Text>
             <View style={st.warning_box}>
-              <Text style={st.warning_txt}>
-                ⚠️ Ces 12 mots sont les SEULS moyens de récupérer ton wallet. Note-les sur papier,
-                jamais dans une capture d'écran ou un email. Personne ne pourra te les redonner.
-              </Text>
+              <Text style={st.warning_txt}>{t('mnemonic_warning')}</Text>
             </View>
             <View style={st.mnemonic_grid}>
               {words.map((w, i) => (
@@ -5566,7 +5567,7 @@ function AppContent({ themeMode, changeTheme }) {
                 }
               }}
             >
-              <Text style={st.green_btn_txt}>✅ Je l'ai notée en lieu sûr</Text>
+              <Text style={st.green_btn_txt}>{t('mnemonic_saved_button')}</Text>
             </AnimPressable>
           </ScrollView>
         </SafeAreaView>
@@ -5596,9 +5597,9 @@ function AppContent({ themeMode, changeTheme }) {
     const subtitle = isConfirmStage
       ? t('pin_confirm_title')
       : (pendingWalletForPin?.isMigration
-        ? 'Choisis un code pour sécuriser ce wallet'
+        ? t('pin_choose_migration')
         : pendingWalletForPin?.isNewAccount
-          ? 'Choisis un code PIN pour ce nouveau compte'
+          ? t('pin_choose_new_account')
           : t('pin_choose_title'));
     return (
       <SafeAreaView style={st.pin_screen}>
@@ -5642,7 +5643,7 @@ function AppContent({ themeMode, changeTheme }) {
             onPress={() => { setPinStage(null); setPendingWalletForPin(null); setPinCode(''); setPendingPinDigits(''); setPinError(null); }}
             style={{ marginTop: 20 }}
           >
-            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center' }}>Annuler</Text>
+            <Text style={{ color: T.text3, fontSize: 13, textAlign: 'center' }}>{t('common_cancel')}</Text>
           </TouchableOpacity>
         )}
       </SafeAreaView>
@@ -5682,19 +5683,19 @@ function AppContent({ themeMode, changeTheme }) {
 
             {/* Accroche */}
             <Text style={{ fontSize: 30, lineHeight: 38, fontWeight: '800', color: L.text, textAlign: 'center' }}>
-              Tes cryptos,{'\n'}<Text style={{ color: L.accent }}>simplement.</Text>
+              {t('landing_title_line1')}{'\n'}<Text style={{ color: L.accent }}>{t('landing_title_line2')}</Text>
             </Text>
             <Text style={{ fontSize: 15, lineHeight: 22, color: L.soft, textAlign: 'center', marginTop: 14, maxWidth: 300 }}>
-              Achète, envoie et échange. Tes clés restent sur ton téléphone.
+              {t('landing_subtitle')}
             </Text>
 
             {/* Boutons — tout en haut */}
             <View style={{ width: '100%', marginTop: 30 }}>
               <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
-                <Text style={{ color: '#062219', fontSize: 16, fontWeight: '800' }}>Créer mon wallet</Text>
+                <Text style={{ color: '#062219', fontSize: 16, fontWeight: '800' }}>{t('onboarding_create')}</Text>
               </AnimPressable>
               <AnimPressable style={{ paddingVertical: 15, alignItems: 'center', width: '100%', marginTop: 10, borderRadius: 16, borderWidth: 1.5, borderColor: L.border }} onPress={() => { setImportMode(true); setImportError(null); }}>
-                <Text style={{ color: L.text, fontSize: 14, fontWeight: '700' }}>J'ai déjà un wallet</Text>
+                <Text style={{ color: L.text, fontSize: 14, fontWeight: '700' }}>{t('onboarding_import')}</Text>
               </AnimPressable>
             </View>
 
@@ -5702,7 +5703,7 @@ function AppContent({ themeMode, changeTheme }) {
 
             {/* 3 repères */}
             <View style={{ flexDirection: 'row', marginTop: 24, width: '100%' }}>
-              {[['🔒', 'Non-custodial'], ['⚡', 'Instantané'], ['🌍', '8 réseaux']].map(([ic, lb], i) => (
+              {[['🔒', t('landing_chip_noncustodial')], ['⚡', t('landing_chip_instant')], ['🌍', t('landing_chip_networks')]].map(([ic, lb], i) => (
                 <View key={lb} style={{ flex: 1, backgroundColor: L.chip, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginLeft: i ? 8 : 0 }}>
                   <Text style={{ fontSize: 18 }}>{ic}</Text>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: L.text, marginTop: 6 }}>{lb}</Text>
@@ -5718,20 +5719,20 @@ function AppContent({ themeMode, changeTheme }) {
                     style={impInput}
                     value={referralInputValue}
                     onChangeText={setReferralInputValue}
-                    placeholder="Code de parrainage"
+                    placeholder={t('landing_referral_placeholder')}
                     placeholderTextColor={L.soft}
                     autoCapitalize="characters"
                   />
                   <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 10 }} onPress={() => applyReferralCode(referralInputValue)}>
-                    <Text style={{ color: '#fff', fontWeight: '800' }}>Valider</Text>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>{t('common_validate')}</Text>
                   </AnimPressable>
                   <TouchableOpacity onPress={() => { setReferralInputMode(false); setReferralInputValue(''); }} style={{ marginTop: 10 }}>
-                    <Text style={{ color: L.soft, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                    <Text style={{ color: L.soft, fontSize: 12, textAlign: 'center' }}>{t('common_cancel')}</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity onPress={() => setReferralInputMode(true)} style={{ marginTop: 18 }}>
-                  <Text style={{ color: L.soft, fontSize: 12 }}>J'ai un code de parrainage</Text>
+                  <Text style={{ color: L.soft, fontSize: 12 }}>{t('landing_referral_cta')}</Text>
                 </TouchableOpacity>
               )
             )}
@@ -5740,7 +5741,7 @@ function AppContent({ themeMode, changeTheme }) {
             {importMode && (
               <View style={{ width: '100%', marginTop: 16, backgroundColor: L.chip, borderRadius: 16, padding: 16 }}>
                 <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: 10, padding: 3, marginBottom: 12 }}>
-                  {[['mnemonic', 'Mots'], ['privateKey', 'Clé privée'], ['keystore', 'Keystore']].map(([tp, lb]) => (
+                  {[['mnemonic', t('import_tab_words')], ['privateKey', t('import_tab_private_key')], ['keystore', t('import_tab_keystore')]].map(([tp, lb]) => (
                     <TouchableOpacity key={tp} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: importType === tp ? L.accent : 'transparent' }} onPress={() => setImportType(tp)}>
                       <Text style={{ fontSize: 12, fontWeight: '700', color: importType === tp ? '#fff' : L.soft }}>{lb}</Text>
                     </TouchableOpacity>
@@ -5750,7 +5751,7 @@ function AppContent({ themeMode, changeTheme }) {
                   style={[impInput, (importType === 'mnemonic' || importType === 'keystore') && { minHeight: 84, textAlignVertical: 'top' }]}
                   value={importValue}
                   onChangeText={setImportValue}
-                  placeholder={importType === 'mnemonic' ? 'Entrer 12 mots...' : importType === 'keystore' ? 'Colle le JSON du keystore chiffré...' : '0x... clé privée'}
+                  placeholder={importType === 'mnemonic' ? t('import_placeholder_mnemonic') : importType === 'keystore' ? t('import_placeholder_keystore') : t('import_placeholder_private_key')}
                   placeholderTextColor={L.soft}
                   multiline={importType === 'mnemonic' || importType === 'keystore'}
                   autoCapitalize="none"
@@ -5760,7 +5761,7 @@ function AppContent({ themeMode, changeTheme }) {
                     style={[impInput, { marginTop: 10 }]}
                     value={importKeystorePassword}
                     onChangeText={setImportKeystorePassword}
-                    placeholder="Mot de passe du keystore"
+                    placeholder={t('import_keystore_password')}
                     placeholderTextColor={L.soft}
                     secureTextEntry
                     autoCapitalize="none"
@@ -5768,7 +5769,7 @@ function AppContent({ themeMode, changeTheme }) {
                 )}
                 {importError ? <Text style={st.import_error}>{importError}</Text> : null}
                 <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 12 }} onPress={importWallet}>
-                  <Text style={{ color: '#fff', fontWeight: '800' }}>Importer</Text>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>{t('import_button')}</Text>
                 </AnimPressable>
               </View>
             )}
@@ -5776,12 +5777,12 @@ function AppContent({ themeMode, changeTheme }) {
             {/* Anti-phishing */}
             <View style={{ width: '100%', marginTop: 28, backgroundColor: '#FFF7ED', borderRadius: 12, padding: 12 }}>
               <Text style={{ color: '#9A6B2E', fontSize: 11.5, lineHeight: 17 }}>
-                🛡️ NexiaWallet ne te demandera jamais ta phrase de récupération. Si on te la demande, c'est une arnaque.
+                {t('landing_antiphishing')}
               </Text>
             </View>
             {Platform.OS === 'web' && (
               <Text style={{ color: L.soft, fontSize: 11, lineHeight: 16, marginTop: 12, textAlign: 'center' }}>
-                Sur navigateur : pratique pour découvrir. Pour de vrais fonds, préfère l'app mobile.
+                {t('landing_web_note')}
               </Text>
             )}
 
@@ -5793,7 +5794,7 @@ function AppContent({ themeMode, changeTheme }) {
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={{ color: L.soft, fontSize: 11, marginTop: 12, letterSpacing: 0.4 }}>NEXIA WALLET · Tes clés, tes cryptos</Text>
+            <Text style={{ color: L.soft, fontSize: 11, marginTop: 12, letterSpacing: 0.4 }}>{t('landing_footer_tagline')}</Text>
 
           </View>
         </ScrollView>
@@ -6915,8 +6916,8 @@ function AppContent({ themeMode, changeTheme }) {
         <View style={st.onboarding_overlay}>
           <View style={st.onboarding_card}>
             <Text style={st.onboarding_icon}>{slide.icon}</Text>
-            <Text style={st.onboarding_title}>{slide.title}</Text>
-            <Text style={st.onboarding_desc}>{slide.desc}</Text>
+            <Text style={st.onboarding_title}>{t(slide.titleKey)}</Text>
+            <Text style={st.onboarding_desc}>{t(slide.descKey)}</Text>
             <View style={st.onboarding_dots}>
               {ONBOARDING_SLIDES.map((_, i) => (
                 <View key={i} style={[st.onboarding_dot, i === onboardingStep && st.onboarding_dot_on]} />
@@ -6926,11 +6927,11 @@ function AppContent({ themeMode, changeTheme }) {
               style={[st.green_btn, { marginTop: 20, width: '100%' }]}
               onPress={() => (isLast ? setShowOnboarding(false) : setOnboardingStep(s => s + 1))}
             >
-              <Text style={st.green_btn_txt}>{isLast ? 'Commencer' : 'Suivant'}</Text>
+              <Text style={st.green_btn_txt}>{isLast ? t('onboarding_start') : t('common_next')}</Text>
             </AnimPressable>
             {!isLast && (
               <TouchableOpacity onPress={() => setShowOnboarding(false)} style={{ marginTop: 14 }}>
-                <Text style={{ color: T.text3, fontSize: 13 }}>Passer</Text>
+                <Text style={{ color: T.text3, fontSize: 13 }}>{t('onboarding_skip')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -9345,11 +9346,11 @@ function AppContent({ themeMode, changeTheme }) {
           <TouchableOpacity onPress={() => setShowBuy(false)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Retour">
             <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={st.modal_title}>Acheter des crypto</Text>
+          <Text style={st.modal_title}>{t('buy_screen_title')}</Text>
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
-          <Text style={st.form_label}>Token</Text>
+          <Text style={st.form_label}>{t('buy_token_label')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
             {[...(BUYABLE_TOKENS[network] || []), ...BUYABLE_TOKENS.solana, ...BUYABLE_TOKENS.bitcoin].map((sym) => {
               const t = tokens[sym];
@@ -9363,7 +9364,7 @@ function AppContent({ themeMode, changeTheme }) {
             })}
           </ScrollView>
 
-          <Text style={st.form_label}>Montant (EUR)</Text>
+          <Text style={st.form_label}>{t('buy_amount_label')}</Text>
           <View style={st.buy_amount_row}>
             <Text style={st.buy_amount_currency}>€</Text>
             <TextInput style={st.buy_amount_input} value={buyAmount} onChangeText={(v) => setBuyAmount(normalizeDecimalInput(v))}
@@ -9387,12 +9388,12 @@ function AppContent({ themeMode, changeTheme }) {
 
           <View style={st.buy_info_box}>
             <View style={st.buy_info_row}>
-              <Text style={st.buy_info_label}>Réseau</Text>
+              <Text style={st.buy_info_label}>{t('buy_network_label')}</Text>
               <Text style={st.buy_info_value}>{{ SOL: 'Solana', BTC: 'Bitcoin' }[buyToken] || activeNetwork.label}</Text>
             </View>
             <View style={st.buy_info_divider} />
             <View style={st.buy_info_row}>
-              <Text style={st.buy_info_label}>Destination</Text>
+              <Text style={st.buy_info_label}>{t('buy_destination_label')}</Text>
               <Text style={st.buy_info_value}>
                 {(() => {
                   const addr = buyToken === 'SOL' ? solanaAddr : buyToken === 'BTC' ? bitcoinAddr : walletAddr;
@@ -9401,11 +9402,11 @@ function AppContent({ themeMode, changeTheme }) {
               </Text>
             </View>
           </View>
-          <Text style={st.buy_disclaimer}>🔒 Paiement sécurisé par carte, crypto livrée directement à ton wallet — aucun compte tiers requis.</Text>
+          <Text style={st.buy_disclaimer}>{t('buy_disclaimer')}</Text>
 
           <AnimPressable style={[st.green_btn, { opacity: buyLoading ? 0.7 : 1, marginTop: 20 }]}
             onPress={handleBuyNow} disabled={buyLoading}>
-            {buyLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Payer avec carte</Text>}
+            {buyLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>{t('buy_pay_button')}</Text>}
           </AnimPressable>
           <View style={{ height: 40 }} />
         </ScrollView>

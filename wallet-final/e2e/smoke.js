@@ -71,7 +71,9 @@ async function dismissOnboardingIfPresent(page) {
 async function run() {
   console.log(`Smoke test contre ${BASE_URL}\n`);
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  // Navigateur explicitement en français : l'app choisit maintenant sa langue de
+  // départ selon celle du navigateur, et ce parcours vérifie des textes français.
+  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, locale: 'fr-FR' });
   const page = await context.newPage();
 
   const consoleErrors = [];
@@ -282,6 +284,27 @@ async function run() {
     } else {
       check('sélecteur de langue "English" trouvé', false);
     }
+
+    console.log('6d. Visiteur anglophone : langue détectée depuis le navigateur (appareil neuf, aucun choix enregistré)');
+    const enContext = await browser.newContext({ viewport: { width: 420, height: 900 }, locale: 'en-US' });
+    const enPage = await enContext.newPage();
+    enPage.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push('[en] ' + msg.text()); });
+    enPage.on('pageerror', (err) => consoleErrors.push('[en] PAGEERROR: ' + err.message));
+    await enPage.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await enPage.waitForTimeout(1000);
+    const landingEn = await enPage.evaluate(() => document.body.innerText);
+    check('landing en anglais pour un navigateur en-US ("Create a wallet")', landingEn.includes('Create a wallet') && landingEn.includes('made simple.'));
+    check('aucun texte français sur la landing anglaise', !landingEn.includes('Tes cryptos') && !landingEn.includes("J'ai déjà un wallet") && !landingEn.includes('arnaque'));
+    const createEn = enPage.getByText('Create a wallet', { exact: true });
+    if (await createEn.count()) {
+      await createEn.first().click();
+      await enPage.waitForTimeout(1000);
+      const pinEn = await enPage.evaluate(() => document.body.innerText);
+      check('écran PIN en anglais ("Choose a 6-digit PIN code")', pinEn.includes('Choose a 6-digit PIN code'));
+    } else {
+      check('bouton "Create a wallet" trouvé', false);
+    }
+    await enContext.close();
 
     console.log('\n7. Erreurs console cumulées sur tout le parcours');
     check(`zéro erreur console (trouvé: ${consoleErrors.length})`, consoleErrors.length === 0);

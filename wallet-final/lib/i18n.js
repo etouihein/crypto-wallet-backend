@@ -8,9 +8,9 @@
 //  mériteraient une vraie relecture humaine avant d'exister en anglais,
 //  pas juste une traduction mot à mot.
 //
-//  Le français reste la langue de référence : une clé absente de `en`
-//  retombe sur `fr`, et une clé absente des deux renvoie la clé elle-même
-//  (jamais un écran vide ou un crash pour une chaîne oubliée).
+//  Le français reste la langue de référence. Une clé absente d'une autre
+//  langue retombe sur `en`, puis sur `fr` ; une clé absente partout renvoie
+//  la clé elle-même (jamais un écran vide ou un crash pour une chaîne oubliée).
 // ─────────────────────────────────────────────────────────────────
 
 'use strict';
@@ -102,6 +102,48 @@ const fr = {
   common_read_only: 'Lecture seule',
   home_news_title: 'Actu crypto en direct',
   home_news_updated: 'MAJ / 5 min',
+
+  // Parcours d'un nouveau visiteur (landing, import, PIN, phrase, onboarding, achat)
+  landing_title_line1: 'Tes cryptos,',
+  landing_title_line2: 'simplement.',
+  landing_subtitle: 'Achète, envoie et échange. Tes clés restent sur ton téléphone.',
+  landing_chip_noncustodial: 'Non-custodial',
+  landing_chip_instant: 'Instantané',
+  landing_chip_networks: '8 réseaux',
+  landing_referral_cta: "J'ai un code de parrainage",
+  landing_referral_placeholder: 'Code de parrainage',
+  common_validate: 'Valider',
+  import_tab_words: 'Mots',
+  import_tab_private_key: 'Clé privée',
+  import_tab_keystore: 'Keystore',
+  import_placeholder_mnemonic: 'Entrer 12 mots...',
+  import_placeholder_keystore: 'Colle le JSON du keystore chiffré...',
+  import_placeholder_private_key: '0x... clé privée',
+  import_keystore_password: 'Mot de passe du keystore',
+  import_button: 'Importer',
+  landing_antiphishing: "🛡️ NexiaWallet ne te demandera jamais ta phrase de récupération. Si on te la demande, c'est une arnaque.",
+  landing_web_note: "Sur navigateur : pratique pour découvrir. Pour de vrais fonds, préfère l'app mobile.",
+  landing_footer_tagline: 'NEXIA WALLET · Tes clés, tes cryptos',
+  pin_choose_migration: 'Choisis un code pour sécuriser ce wallet',
+  pin_choose_new_account: 'Choisis un code PIN pour ce nouveau compte',
+  mnemonic_title: 'Ta phrase de récupération',
+  mnemonic_warning: "⚠️ Ces 12 mots sont les SEULS moyens de récupérer ton wallet. Note-les sur papier, jamais dans une capture d'écran ou un email. Personne ne pourra te les redonner.",
+  mnemonic_saved_button: "✅ Je l'ai notée en lieu sûr",
+  onboarding_s1_title: 'Tes clés, tes cryptos',
+  onboarding_s1_desc: 'Ta phrase de récupération est la seule clé de tes fonds. NexiaWallet ne détient jamais tes cryptos et ne peut ni la récupérer ni la réinitialiser si tu la perds.',
+  onboarding_s2_title: 'Envoie et reçois',
+  onboarding_s2_desc: 'Utilise ton adresse pour recevoir des fonds, ou envoie en quelques secondes sur Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Solana ou Bitcoin.',
+  onboarding_s3_title: 'Achète et échange',
+  onboarding_s3_desc: "Achète par carte via Coinbase Onramp, livré directement sur ton wallet, ou échange directement entre cryptos au meilleur prix, sans jamais quitter l'app.",
+  onboarding_start: 'Commencer',
+  onboarding_skip: 'Passer',
+  buy_screen_title: 'Acheter des crypto',
+  buy_token_label: 'Token',
+  buy_amount_label: 'Montant (EUR)',
+  buy_network_label: 'Réseau',
+  buy_destination_label: 'Destination',
+  buy_disclaimer: '🔒 Paiement sécurisé par carte, crypto livrée directement à ton wallet — aucun compte tiers requis.',
+  buy_pay_button: 'Payer avec carte',
 };
 
 const en = {
@@ -191,6 +233,47 @@ const en = {
   common_read_only: 'Read-only',
   home_news_title: 'Live crypto news',
   home_news_updated: 'Updated / 5 min',
+
+  landing_title_line1: 'Your crypto,',
+  landing_title_line2: 'made simple.',
+  landing_subtitle: 'Buy, send and swap. Your keys stay on your phone.',
+  landing_chip_noncustodial: 'Non-custodial',
+  landing_chip_instant: 'Instant',
+  landing_chip_networks: '8 networks',
+  landing_referral_cta: 'I have a referral code',
+  landing_referral_placeholder: 'Referral code',
+  common_validate: 'Apply',
+  import_tab_words: 'Words',
+  import_tab_private_key: 'Private key',
+  import_tab_keystore: 'Keystore',
+  import_placeholder_mnemonic: 'Enter your 12 words...',
+  import_placeholder_keystore: 'Paste the encrypted keystore JSON...',
+  import_placeholder_private_key: '0x... private key',
+  import_keystore_password: 'Keystore password',
+  import_button: 'Import',
+  landing_antiphishing: '🛡️ NexiaWallet will never ask for your recovery phrase. Anyone who does is a scammer.',
+  landing_web_note: 'In a browser: handy to try it out. For real funds, prefer the mobile app.',
+  landing_footer_tagline: 'NEXIA WALLET · Your keys, your crypto',
+  pin_choose_migration: 'Choose a code to secure this wallet',
+  pin_choose_new_account: 'Choose a PIN code for this new account',
+  mnemonic_title: 'Your recovery phrase',
+  mnemonic_warning: '⚠️ These 12 words are the ONLY way to recover your wallet. Write them down on paper, never in a screenshot or an email. Nobody can give them back to you.',
+  mnemonic_saved_button: '✅ I wrote it down safely',
+  onboarding_s1_title: 'Your keys, your crypto',
+  onboarding_s1_desc: "Your recovery phrase is the only key to your funds. NexiaWallet never holds your crypto and can't recover or reset your phrase if you lose it.",
+  onboarding_s2_title: 'Send and receive',
+  onboarding_s2_desc: 'Use your address to receive funds, or send in seconds on Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Solana or Bitcoin.',
+  onboarding_s3_title: 'Buy and swap',
+  onboarding_s3_desc: 'Buy by card with Coinbase Onramp, delivered straight to your wallet, or swap between cryptos at the best rate without leaving the app.',
+  onboarding_start: 'Get started',
+  onboarding_skip: 'Skip',
+  buy_screen_title: 'Buy crypto',
+  buy_token_label: 'Token',
+  buy_amount_label: 'Amount (EUR)',
+  buy_network_label: 'Network',
+  buy_destination_label: 'Destination',
+  buy_disclaimer: '🔒 Secure card payment, crypto delivered straight to your wallet. No third-party account needed.',
+  buy_pay_button: 'Pay by card',
 };
 
 const es = {
@@ -469,7 +552,11 @@ const INTL_LOCALE_TAG = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', de: 'de-DE', pt
 
 function translate(locale, key, vars) {
   const dict = DICTIONARIES[locale] || DICTIONARIES.fr;
-  let text = dict[key] ?? DICTIONARIES.fr[key] ?? key;
+  // Hors français, une clé pas encore traduite (es/de/pt sont partiels)
+  // retombe d'abord sur l'anglais : pour un visiteur étranger, un texte en
+  // anglais reste lisible, un texte en français non.
+  const englishFallback = locale === 'fr' ? undefined : DICTIONARIES.en[key];
+  let text = dict[key] ?? englishFallback ?? DICTIONARIES.fr[key] ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
       text = text.replace(new RegExp(`{{${k}}}`, 'g'), v);
@@ -480,4 +567,21 @@ function translate(locale, key, vars) {
 
 const SUPPORTED_LOCALES = ['fr', 'en', 'es', 'de', 'pt'];
 
-module.exports = { translate, SUPPORTED_LOCALES, INTL_LOCALE_TAG };
+// Langue de départ d'un visiteur qui n'a encore rien choisi dans Paramètres :
+// français si l'appareil est réglé en français, anglais sinon. Seules ces deux
+// langues couvrent tout le parcours d'un nouveau visiteur ; es/de/pt restent
+// proposés dans Paramètres. Avant, tout le monde démarrait en français, et un
+// visiteur venu de Product Hunt tombait sur une page qu'il ne pouvait pas lire.
+function detectDeviceLocale() {
+  try {
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    let tag = nav && ((nav.languages && nav.languages[0]) || nav.language);
+    if (!tag && typeof Intl !== 'undefined') tag = Intl.DateTimeFormat().resolvedOptions().locale;
+    if (!tag) return 'fr';
+    return String(tag).toLowerCase().startsWith('fr') ? 'fr' : 'en';
+  } catch {
+    return 'fr';
+  }
+}
+
+module.exports = { translate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale };
