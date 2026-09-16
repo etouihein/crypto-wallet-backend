@@ -6,14 +6,18 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      }
     },
     "preview": {
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://crypto-wallet-backend-production-5c6c.up.railway.app/wallet",
         "EXPO_PUBLIC_APP_API_KEY": "wallet-pro-dev-key-2026-7f3a9b2c",
-        "EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID": "55c2aebe65c7efd7a891664b9570c52d"
+        "EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID": "55c2aebe65c7efd7a891664b9570c52d",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
     "preview-ios-simulator": {
@@ -27,7 +31,10 @@
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://crypto-wallet-backend-production-5c6c.up.railway.app/wallet",
         "EXPO_PUBLIC_APP_API_KEY": "wallet-pro-dev-key-2026-7f3a9b2c",
-        "EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID": "55c2aebe65c7efd7a891664b9570c52d"
+        "EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID": "55c2aebe65c7efd7a891664b9570c52d",
+        "SENTRY_ORG": "nexia-wallet",
+        "SENTRY_PROJECT": "react-native",
+        "SENTRY_ALLOW_FAILURE": "true"
       }
     }
   },
