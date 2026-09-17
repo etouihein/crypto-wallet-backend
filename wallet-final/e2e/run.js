@@ -30,7 +30,17 @@ function waitForServer(url, timeoutMs) {
 }
 
 async function main() {
-  console.log('1/4 — Build du web (expo export -p web)...');
+  // Tests de bibliothèque d'abord : ils ne demandent ni build ni navigateur,
+  // et couvrent la signature des transactions — autant le savoir tout de
+  // suite si elle est cassée.
+  console.log('0/4 — Tests de lib/wallet.js (signature des transactions)...');
+  const lib = spawnSync('node', ['--test'], { cwd: path.join(__dirname, '..'), stdio: 'inherit', shell: true });
+  if (lib.status !== 0) {
+    console.error('Les tests de bibliothèque échouent — arrêt avant le build.');
+    process.exit(1);
+  }
+
+  console.log('\n1/4 — Build du web (expo export -p web)...');
   const build = spawnSync('npx', ['expo', 'export', '-p', 'web'], {
     cwd: path.join(__dirname, '..'),
     stdio: 'inherit',
@@ -55,7 +65,7 @@ async function main() {
 
     // Tous les tests tournent, même si l'un échoue : un rapport complet vaut
     // mieux qu'un arrêt au premier rouge qui cache les suivants.
-    const TESTS = ['e2e/smoke.js', 'e2e/qrScanner.js', 'e2e/receiveAddress.js', 'e2e/errorStates.js', 'e2e/notifications.js'];
+    const TESTS = ['e2e/smoke.js', 'e2e/qrScanner.js', 'e2e/receiveAddress.js', 'e2e/errorStates.js', 'e2e/notifications.js', 'e2e/crossSwap.js'];
     console.log(`4/4 — Lancement des tests (${TESTS.length})...\n`);
     const echoues = [];
     for (const fichier of TESTS) {

@@ -5968,13 +5968,111 @@ function AppContent({ themeMode, changeTheme }) {
     setSendLoading(false);
   };
 
+  // ── ÉCHANGE ENTRE ÉCOSYSTÈMES (SOL, BTC) ───────────────────────────────
+  // L'échange classique passe par 0x, qui ne fait que de l'EVM sur UNE chaîne :
+  // le SOL et le BTC n'étaient donc pas échangeables du tout. Dès qu'un des
+  // deux côtés est du SOL ou du BTC, on passe par /swap/cross-quote (LI.FI),
+  // et l'app signe selon l'écosystème de départ — toujours en local, la clé ne
+  // sort jamais de l'appareil.
+  const reseauDuJeton = useCallback((symbole) => (symbole === 'SOL' ? 'solana' : symbole === 'BTC' ? 'bitcoin' : network), [network]);
+  const decimalesDuJeton = useCallback((symbole) => {
+    if (symbole === 'SOL') return 9;
+    if (symbole === 'BTC') return 8;
+    if (symbole === nativeSymbol) return 18;
+    return localWallet.ERC20_TOKENS[network]?.[symbole]?.decimals ?? 18;
+  }, [network, nativeSymbol]);
+  const adresseDuReseau = useCallback((reseau) => (reseau === 'solana' ? solanaAddr : reseau === 'bitcoin' ? bitcoinAddr : walletAddr), [solanaAddr, bitcoinAddr, walletAddr]);
+  const soldeDuJeton = useCallback((symbole) => {
+    if (symbole === 'SOL') return parseFloat(solanaBalance || '0');
+    if (symbole === 'BTC') return parseFloat(bitcoinBalance || '0');
+    if (symbole === nativeSymbol) return parseFloat(walletBalance || '0');
+    return tokens[symbole]?.balance || 0;
+  }, [solanaBalance, bitcoinBalance, walletBalance, nativeSymbol, tokens]);
+  const estEchangeInterEcosysteme = (de, vers) => de === 'SOL' || de === 'BTC' || vers === 'SOL' || vers === 'BTC';
+
+  const confirmerEchangeInterEcosysteme = async () => {
+    const reseauDepart = reseauDuJeton(swapFrom);
+    const reseauArrivee = reseauDuJeton(swapTo);
+    const decimales = decimalesDuJeton(swapFrom);
+    const fromAddress = adresseDuReseau(reseauDepart);
+    const toAddress = adresseDuReseau(reseauArrivee);
+    if (!fromAddress || !toAddress) throw new Error('Adresse de wallet indisponible pour ce réseau.');
+    const montantUnites = ethers.utils.parseUnits(parseFloat(swapAmt).toFixed(decimales), decimales).toString();
+
+    const devis = await axios.get(`${API_BASE}/swap/cross-quote`, {
+      params: {
+        fromNetwork: reseauDepart, toNetwork: reseauArrivee,
+        fromToken: swapFrom, toToken: swapTo,
+        fromAmount: montantUnites, fromAddress, toAddress,
+      },
+      headers: API_HEADERS,
+      timeout: 30000,
+    });
+    if (!devis.data?.success) throw new Error(devis.data?.error || 'Aucune route disponible pour cet échange.');
+    const { quote, ecosystemeDepart } = devis.data;
+    const tx = quote?.transactionRequest || {};
+
+    let rawTx;
+    let routeDiffusion;
+    let corps;
+    if (ecosystemeDepart === 'solana') {
+      ({ rawTx } = await localWallet.signSolanaSwapTx({ mnemonic: unlockedMnemonic, base64Tx: tx.data }));
+      routeDiffusion = '/tx/broadcast-solana';
+      corps = { rawTx };
+    } else if (ecosystemeDepart === 'bitcoin') {
+      ({ rawTx } = await localWallet.signBitcoinSwapPsbt({ mnemonic: unlockedMnemonic, psbtHex: tx.data }));
+      routeDiffusion = '/tx/broadcast-bitcoin';
+      corps = { rawTx };
+    } else {
+      ({ rawTx } = await localWallet.signRawTx({
+        privateKey: unlockedPrivateKey,
+        to: tx.to,
+        data: tx.data,
+        value: ethers.BigNumber.from(tx.value || '0x0').toString(),
+        gasLimit: tx.gasLimit ? ethers.BigNumber.from(tx.gasLimit).toString() : undefined,
+        network: reseauDepart,
+      }));
+      routeDiffusion = '/tx/broadcast';
+      corps = { rawTx, network: reseauDepart };
+    }
+
+    const diffusion = await axios.post(`${API_BASE}${routeDiffusion}`, corps, { timeout: 25000, headers: API_HEADERS });
+    if (!diffusion.data?.success) throw new Error(diffusion.data?.error || "Échec de la diffusion de l'échange.");
+
+    const txHash = diffusion.data.txHash;
+    trackTransaction({ txHash, net: reseauDepart, token: swapFrom, amount: swapAmt, kind: 'Échange' });
+    playTone('success');
+    showAlert(
+      '✅ Échange lancé',
+      `${swapAmt} ${swapFrom} → ${swapTo}.\nHash : ${txHash?.slice(0, 10)}…\n\nL'arrivée peut prendre quelques minutes ; tu seras prévenu.`,
+      [{ text: 'OK' }],
+    );
+    setSwapAmt('');
+    refreshPortfolio(network);
+    refreshSolanaBalance();
+    refreshBitcoinBalance();
+  };
+
   const handleSwapConfirm = async () => {
     if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
     if (swapFrom === swapTo) { showAlert('Tokens identiques', 'Choisis deux tokens différents.'); return; }
 
-    const available = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
+    const available = soldeDuJeton(swapFrom);
     if (parseFloat(swapAmt) > available) {
       showAlert('Solde insuffisant', `Tu n'as pas assez de ${swapFrom} pour cette opération.`);
+      return;
+    }
+
+    if (estEchangeInterEcosysteme(swapFrom, swapTo)) {
+      setSwapLoading(true);
+      try {
+        await confirmerEchangeInterEcosysteme();
+      } catch (e) {
+        console.warn('échange inter-écosystèmes échoué', e.message);
+        showAlert('❌ Erreur', humanizeTxError(e) || 'Échange impossible');
+      } finally {
+        setSwapLoading(false);
+      }
       return;
     }
 
@@ -9877,11 +9975,12 @@ function AppContent({ themeMode, changeTheme }) {
     const fprice = ft?.price || 1;
     const tprice = tt?.price || 1;
     const rate = tprice > 0 ? fprice / tprice : 0;
-    // Même calcul que handleSwapConfirm (voir plus haut) : le natif du réseau
-    // (ETH/BNB...) vit dans walletBalance, tous les autres tokens dans
-    // tokens[symbole].balance — une seule et même source pour le contrôle
-    // "solde insuffisant" à la confirmation et l'affichage ici.
-    const swapAvailable = swapFrom === nativeSymbol ? parseFloat(walletBalance || '0') : (tokens[swapFrom]?.balance || 0);
+    // Même source que le contrôle "solde insuffisant" à la confirmation
+    // (soldeDuJeton), SOL et BTC compris — chacun a son propre solde.
+    const swapAvailable = soldeDuJeton(swapFrom);
+    // SOL et BTC s'ajoutent aux jetons EVM du réseau actif : l'échange passe
+    // alors par LI.FI (voir confirmerEchangeInterEcosysteme) au lieu de 0x.
+    const jetonsEchangeables = [...(SWAPPABLE_TOKENS[network] || []), 'SOL', 'BTC'];
     return (
       <ScrollView
         style={{ flex: 1, padding: 16 }}
@@ -9929,7 +10028,7 @@ function AppContent({ themeMode, changeTheme }) {
             </>
           )}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {(SWAPPABLE_TOKENS[network] || []).map((sym) => {
+            {jetonsEchangeables.map((sym) => {
               const t = tokens[sym];
               if (!t) return null;
               return (
@@ -9956,7 +10055,7 @@ function AppContent({ themeMode, changeTheme }) {
           </Text>
           <Text style={{ color: T.text2, fontSize: 12, marginBottom: 10 }}>≈ {fmt((parseFloat(swapRes) || 0) * tprice)}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {(SWAPPABLE_TOKENS[network] || []).map((sym) => {
+            {jetonsEchangeables.map((sym) => {
               const t = tokens[sym];
               if (!t) return null;
               return (
@@ -9972,9 +10071,12 @@ function AppContent({ themeMode, changeTheme }) {
           </ScrollView>
         </View>
 
+        {/* Le chemin et les frais ne sont pas les mêmes selon les jetons : dire
+            « 0x, 0,75 % » pour un échange vers du BTC ou du SOL serait faux. */}
         <Text style={{ color: T.text3, fontSize: 11, marginTop: 4, textAlign: 'center' }}>
-          Swap réel via agrégateur DEX (0x) — la meilleure route est cherchée automatiquement.
-          {'\n'}Frais NexiaWallet de {(SWAP_FEE_BPS / 100).toFixed(2)} % inclus dans le taux affiché.
+          {estEchangeInterEcosysteme(swapFrom, swapTo)
+            ? "Échange entre réseaux via LI.FI — la meilleure route est cherchée automatiquement.\nL'arrivée peut prendre quelques minutes ; le taux affiché ici est une estimation."
+            : `Swap réel via agrégateur DEX (0x) — la meilleure route est cherchée automatiquement.\nFrais NexiaWallet de ${(SWAP_FEE_BPS / 100).toFixed(2)} % inclus dans le taux affiché.`}
         </Text>
 
         <AnimPressable style={[st.green_btn, { marginTop: 16 }, swapLoading && { opacity: 0.6 }]}

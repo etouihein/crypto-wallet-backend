@@ -16,7 +16,7 @@ const { ethers } = require('ethers');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const {
-  Keypair, PublicKey, Connection, SystemProgram, Transaction,
+  Keypair, PublicKey, Connection, SystemProgram, Transaction, VersionedTransaction,
   StakeProgram, Authorized, Lockup,
 } = require('@solana/web3.js');
 const { BIP32Factory } = require('bip32');
@@ -693,18 +693,22 @@ async function signBitcoinTransferTx({ mnemonic, to, amountBtc }) {
   }
   if (inputSum < amountSats + estFeeSats) throw new Error('Fonds BTC insuffisants (montant + frais réseau).');
 
+  // bitcoinjs-lib 7 exige des BigInt pour les montants (en v6 un nombre
+  // passait). Sans cette conversion, TOUT envoi de BTC échouait sur « Data
+  // for input key witnessUtxo is incorrect », message incompréhensible pour
+  // l'utilisateur — découvert en écrivant les tests de signature.
   const psbt = new bitcoin.Psbt({ network: BITCOIN_NETWORK });
   for (const utxo of selected) {
     psbt.addInput({
       hash: utxo.txid,
       index: utxo.vout,
-      witnessUtxo: { script: fromScript, value: utxo.value },
+      witnessUtxo: { script: fromScript, value: BigInt(utxo.value) },
     });
   }
-  psbt.addOutput({ address: to, value: amountSats });
+  psbt.addOutput({ address: to, value: BigInt(amountSats) });
   const changeSats = inputSum - amountSats - estFeeSats;
   if (changeSats > 546) { // seuil de poussière standard, en dessous le réseau rejette la sortie
-    psbt.addOutput({ address: fromAddress, value: changeSats });
+    psbt.addOutput({ address: fromAddress, value: BigInt(changeSats) });
   }
 
   const signer = {
@@ -714,6 +718,46 @@ async function signBitcoinTransferTx({ mnemonic, to, amountBtc }) {
   selected.forEach((_, i) => psbt.signInput(i, signer));
   psbt.finalizeAllInputs();
 
+  return { rawTx: psbt.extractTransaction().toHex() };
+}
+
+// ── Échange entre écosystèmes (EVM ↔ Solana ↔ Bitcoin) ───────────────────
+// Le backend (GET /wallet/swap/cross-quote) renvoie une transaction PRÊTE,
+// construite par LI.FI, dont la forme dépend de l'écosystème de départ. Elle
+// est signée ICI, en local, comme tout le reste : la clé ne sort jamais de
+// l'appareil, seule la transaction signée part vers /wallet/tx/broadcast-*.
+//
+// Solana : transaction sérialisée en base64. Deux formats coexistent (v0
+// « versionnée », ou l'ancien) — on essaie le premier, puis l'autre.
+async function signSolanaSwapTx({ mnemonic, base64Tx }) {
+  if (typeof base64Tx !== 'string' || !base64Tx) throw new Error('Transaction Solana manquante.');
+  const keypair = solanaKeypairFromMnemonic(mnemonic);
+  const brut = Buffer.from(base64Tx, 'base64');
+  try {
+    const tx = VersionedTransaction.deserialize(brut);
+    tx.sign([keypair]);
+    return { rawTx: Buffer.from(tx.serialize()).toString('base64') };
+  } catch (err) {
+    const tx = Transaction.from(brut);
+    tx.partialSign(keypair);
+    return { rawTx: tx.serialize({ requireAllSignatures: false }).toString('base64') };
+  }
+}
+
+// Bitcoin : LI.FI renvoie un PSBT en hexadécimal (il commence par 70736274ff,
+// « psbt\xff »). On signe toutes les entrées qui nous appartiennent, on
+// finalise, et on extrait la transaction brute à diffuser.
+async function signBitcoinSwapPsbt({ mnemonic, psbtHex }) {
+  const hex = String(psbtHex || '').replace(/^0x/, '');
+  if (!/^70736274ff/i.test(hex)) throw new Error("Ce n'est pas un PSBT Bitcoin valide.");
+  const keyPair = bitcoinKeyPairFromMnemonic(mnemonic);
+  const psbt = bitcoin.Psbt.fromHex(hex, { network: BITCOIN_NETWORK });
+  const signer = {
+    publicKey: Buffer.from(keyPair.publicKey),
+    sign: (hash) => Buffer.from(keyPair.sign(hash)),
+  };
+  psbt.signAllInputs(signer);
+  psbt.finalizeAllInputs();
   return { rawTx: psbt.extractTransaction().toHex() };
 }
 
@@ -745,6 +789,8 @@ module.exports = {
   getBitcoinBalance,
   getBitcoinTxStatus,
   signBitcoinTransferTx,
+  signSolanaSwapTx,
+  signBitcoinSwapPsbt,
   getCustomTokenInfo,
   estimateSendFee,
   getGasPriceGwei,

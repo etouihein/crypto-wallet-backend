@@ -819,6 +819,124 @@ router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
   }
 });
 
+// ── ÉCHANGE ENTRE ÉCOSYSTÈMES (EVM ↔ Solana ↔ Bitcoin) ──────────────────
+// L'échange « classique » (/swap/quote, agrégateur 0x) ne sait faire que de
+// l'EVM, sur une seule chaîne à la fois : impossible d'échanger du BTC ou du
+// SOL. LI.FI, déjà utilisé pour le pont, couvre les trois écosystèmes — on
+// passe donc par lui, avec des identifiants de chaîne qui lui sont propres.
+//
+// Ce que l'app doit signer diffère selon l'écosystème de DÉPART, et c'est
+// elle qui signe, toujours en local (le backend ne relaie que du signé) :
+//   - EVM     : une transaction classique (to / data / value) ;
+//   - Solana  : une transaction sérialisée en base64 ;
+//   - Bitcoin : un PSBT (transactionRequest.data commence par 70736274ff).
+const CROSS_NETWORKS = {
+  ethereum: { id: 1,                ecosysteme: 'evm' },
+  bsc:      { id: 56,               ecosysteme: 'evm' },
+  polygon:  { id: 137,              ecosysteme: 'evm' },
+  arbitrum: { id: 42161,            ecosysteme: 'evm' },
+  optimism: { id: 10,               ecosysteme: 'evm' },
+  base:     { id: 8453,             ecosysteme: 'evm' },
+  solana:   { id: 1151111081099710, ecosysteme: 'solana' },
+  bitcoin:  { id: 20000000000001,   ecosysteme: 'bitcoin' },
+};
+
+const EST_ADRESSE_SOLANA = (v) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v || '');
+const EST_ADRESSE_BITCOIN = (v) => /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(v || '');
+
+function adresseValidePour(ecosysteme, adresse) {
+  if (ecosysteme === 'evm') return ethers.utils.isAddress(adresse || '');
+  if (ecosysteme === 'solana') return EST_ADRESSE_SOLANA(adresse);
+  return EST_ADRESSE_BITCOIN(adresse);
+}
+
+// Un jeton se désigne par son symbole (SOL, BTC, USDC…), par une adresse de
+// contrat EVM, ou par une adresse de mint Solana.
+function jetonValide(v) {
+  const s = String(v || '').trim();
+  return /^[A-Za-z0-9]{2,12}$/.test(s) || ethers.utils.isAddress(s) || EST_ADRESSE_SOLANA(s);
+}
+
+router.get('/swap/cross-quote', sensitiveLimiter, async (req, res) => {
+  try {
+    const { fromNetwork, toNetwork, fromToken, toToken, fromAmount, fromAddress, toAddress } = req.query;
+    const depart = CROSS_NETWORKS[String(fromNetwork || '').toLowerCase()];
+    const arrivee = CROSS_NETWORKS[String(toNetwork || '').toLowerCase()];
+    if (!depart || !arrivee) {
+      return res.status(400).json({ success: false, error: 'Réseaux d\'échange invalides.' });
+    }
+    if (!jetonValide(fromToken) || !jetonValide(toToken)) {
+      return res.status(400).json({ success: false, error: 'Jetons invalides.' });
+    }
+    if (typeof fromAmount !== 'string' || !/^[1-9][0-9]*$/.test(fromAmount)) {
+      return res.status(400).json({ success: false, error: 'Montant invalide.' });
+    }
+    if (!adresseValidePour(depart.ecosysteme, fromAddress)) {
+      return res.status(400).json({ success: false, error: 'Adresse de départ invalide pour ce réseau.' });
+    }
+    if (!adresseValidePour(arrivee.ecosysteme, toAddress)) {
+      return res.status(400).json({ success: false, error: 'Adresse de destination invalide pour ce réseau.' });
+    }
+    if (depart.id === arrivee.id && String(fromToken).toLowerCase() === String(toToken).toLowerCase()) {
+      return res.status(400).json({ success: false, error: 'Choisis deux jetons différents.' });
+    }
+
+    const base = {
+      fromChain: String(depart.id),
+      toChain: String(arrivee.id),
+      fromToken: String(fromToken).trim(),
+      toToken: String(toToken).trim(),
+      fromAddress,
+      toAddress,
+      fromAmount,
+      integrator: LIFI_INTEGRATOR,
+    };
+
+    const demander = async (avecCommission) => {
+      const params = new URLSearchParams(avecCommission && LIFI_FEE > 0 ? { ...base, fee: String(LIFI_FEE) } : base);
+      const reponse = await fetch(`https://li.quest/v1/quote?${params.toString()}`, {
+        headers: LIFI_API_KEY ? { 'x-lifi-api-key': LIFI_API_KEY } : {},
+      });
+      return { reponse, data: await reponse.json().catch(() => null) };
+    };
+
+    let commissionAppliquee = LIFI_FEE > 0;
+    let { reponse, data } = await demander(commissionAppliquee);
+
+    // LI.FI refuse la commission tant qu'aucune adresse de collecte n'est
+    // configurée pour CETTE chaîne sur portal.li.fi (le cas aujourd'hui pour
+    // Solana et Bitcoin). Plutôt que de priver l'utilisateur de l'échange, on
+    // redemande sans commission — et on le signale dans la réponse.
+    if (!reponse.ok && commissionAppliquee && /not configured for collecting fees/i.test(JSON.stringify(data || ''))) {
+      console.warn(`LI.FI : commission non collectée sur ${fromNetwork} (adresse de collecte à configurer sur portal.li.fi)`);
+      commissionAppliquee = false;
+      ({ reponse, data } = await demander(false));
+    }
+
+    if (!reponse.ok || !data?.transactionRequest) {
+      return res.status(400).json({
+        success: false,
+        error: data?.message || 'Aucune route disponible pour cet échange.',
+      });
+    }
+
+    res.json({
+      success: true,
+      quote: data,
+      ecosystemeDepart: depart.ecosysteme,
+      feePct: commissionAppliquee ? LIFI_FEE * 100 : 0,
+      commissionAppliquee,
+    });
+    revenueHooks.onBridgeQuote({
+      fromChain: depart.id, toChain: arrivee.id, fromAddress, fromAmount,
+      quote: data, fee: commissionAppliquee ? LIFI_FEE : 0,
+    });
+  } catch (error) {
+    console.error('Cross swap quote error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur lors du devis d\'échange.' });
+  }
+});
+
 // Galerie NFT (lecture seule) — clé Alchemy côté serveur uniquement, même
 // principe que ZEROX_API_KEY ci-dessus : évite d'exposer une clé liée au
 // compte/quota personnel de Pablo dans le bundle client public (visible par
