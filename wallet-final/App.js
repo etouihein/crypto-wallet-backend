@@ -218,6 +218,12 @@ const humanizeTxError = (err) => {
   if (/timeout|network ?error|ECONNABORTED/i.test(raw)) {
     return 'Le réseau ne répond pas — réessaie dans un instant.';
   }
+  // Erreur HTTP d'axios : « Request failed with status code 503 » s'affichait
+  // tel quel à l'utilisateur. Serveur en panne ou surchargé → message clair.
+  const httpStatus = err?.response?.status || Number((raw.match(/status code (\d{3})/i) || [])[1]);
+  if (httpStatus >= 500 || httpStatus === 429) {
+    return 'Le service ne répond pas pour le moment — réessaie dans un instant. Tes fonds ne sont pas concernés.';
+  }
   // Ethers ajoute parfois "[ See: https://... ]" ou "(error={...})" avec le
   // JSON-RPC complet à la suite d'un message par ailleurs correct — nos
   // propres `throw new Error(...)` (messages métier) n'ont jamais ça.
@@ -1494,11 +1500,65 @@ function QRCodeMock({ address }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  ÉTAT D'ERREUR
+// ═══════════════════════════════════════════════════════════
+// Même langage visuel que les états vides de l'app (pastille, titre, texte),
+// avec un bouton Réessayer. Règle : une erreur ne se déguise jamais en écran
+// vide ni en chargement sans fin. Constaté avant correction : « Aucune
+// transaction pour l'instant » quand le serveur ne répondait pas — faux, et
+// inquiétant sur un portefeuille —, un « Chargement… » éternel sur la fiche
+// d'un jeton, et le texte brut du serveur sur l'écran NFT.
+function ErrorState({ title, message, onRetry, compact = false }) {
+  const { T } = useTheme();
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    if (!onRetry || retrying) return;
+    setRetrying(true);
+    try { await onRetry(); } finally { setRetrying(false); }
+  };
+  const size = compact ? 48 : 64;
+  return (
+    <View style={{ alignItems: 'center', marginTop: compact ? 0 : 40, paddingHorizontal: 24 }} accessibilityRole="alert">
+      <View style={{ width: size, height: size, borderRadius: compact ? 16 : 20, backgroundColor: T.redBg, alignItems: 'center', justifyContent: 'center' }}>
+        <Ionicons name="cloud-offline-outline" size={compact ? 22 : 28} color={T.red} />
+      </View>
+      <Text style={{ color: T.text, fontSize: compact ? 14 : 16, fontWeight: '700', marginTop: 14, textAlign: 'center' }}>{title}</Text>
+      {!!message && (
+        <Text style={{ color: T.text3, fontSize: 13, lineHeight: 19, marginTop: 6, textAlign: 'center' }}>{message}</Text>
+      )}
+      {!!onRetry && (
+        <TouchableOpacity
+          onPress={retry}
+          disabled={retrying}
+          accessibilityRole="button"
+          accessibilityLabel="Réessayer"
+          style={{ marginTop: 14, minWidth: 130, alignItems: 'center', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 12, borderWidth: 1.5, borderColor: T.gold, opacity: retrying ? 0.6 : 1 }}
+        >
+          {retrying
+            ? <ActivityIndicator color={T.gold} />
+            : <Text style={{ color: T.gold, fontWeight: '700', fontSize: 14 }}>Réessayer</Text>}
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  CANDLESTICK CHART
 // ═══════════════════════════════════════════════════════════
-function CandlestickChart({ candles }) {
+function CandlestickChart({ candles, failed = false, onRetry }) {
   const { T, cs } = useTheme();
   if (!candles || candles.length === 0) {
+    // Vide ne veut pas dire « en cours » : après un échec, afficher encore
+    // « Chargement… » laissait l'utilisateur attendre indéfiniment (observé :
+    // toujours là après 20 s, serveur en panne).
+    if (failed) {
+      return (
+        <View style={[cs.area, { justifyContent: 'center' }]}>
+          <ErrorState compact title="Graphique indisponible pour le moment" message="Nouvel essai automatique en cours." onRetry={onRetry} />
+        </View>
+      );
+    }
     return (
       <View style={cs.area}>
         <ActivityIndicator color={T.gold} style={{ marginTop: 60 }} />
@@ -1615,9 +1675,71 @@ function CoinLogo({ logo, icon, size = 44 }) {
 //  ALERTES CROSS-PLATFORM
 //  Alert.alert de react-native-web est un no-op total (voir
 //  node_modules/react-native-web/dist/exports/Alert) : rien ne s'affiche
-//  jamais sur le web. On bascule sur window.alert/confirm dans ce cas.
+//  jamais sur le web. On passait donc par window.alert/confirm — la boîte
+//  NATIVE du navigateur (« nexiawallet.com indique… »), qui fait penser à du
+//  phishing sur un portefeuille et bloque toute la page. Sur le web, les
+//  alertes s'affichent désormais dans une vraie boîte de dialogue de l'app
+//  (AlertHost, monté à la racine). Repli sur window.alert/confirm tant
+//  qu'AlertHost n'est pas monté. Aucun appelant ne dépend du blocage de
+//  window.confirm : toutes les actions passent par le onPress des boutons.
 // ═══════════════════════════════════════════════════════════
+let pushAppAlert = null;
+
+function AlertHost() {
+  const { T } = useTheme();
+  const [queue, setQueue] = useState([]);
+  useEffect(() => {
+    pushAppAlert = (alert) => setQueue((q) => [...q, alert]);
+    return () => { pushAppAlert = null; };
+  }, []);
+  const current = queue[0];
+  if (!current) return null;
+  const buttons = Array.isArray(current.buttons) && current.buttons.length ? current.buttons : [{ text: 'OK' }];
+  const choose = (button) => {
+    setQueue((q) => q.slice(1));
+    if (button && typeof button.onPress === 'function') button.onPress();
+  };
+  const cancel = buttons.find((b) => b.style === 'cancel');
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={() => choose(cancel)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <View accessibilityRole="alert" style={{ width: '100%', maxWidth: 380, backgroundColor: T.card, borderRadius: 20, padding: 22, borderWidth: 1, borderColor: T.border }}>
+          <Text style={{ color: T.text, fontSize: 17, fontWeight: '700', lineHeight: 23 }}>{current.title}</Text>
+          {!!current.message && (
+            <Text style={{ color: T.text2, fontSize: 14, lineHeight: 21, marginTop: 8 }}>{current.message}</Text>
+          )}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+            {buttons.map((b, i) => {
+              const isCancel = b.style === 'cancel';
+              const isDestructive = b.style === 'destructive';
+              return (
+                <TouchableOpacity
+                  key={`${b.text || 'OK'}-${i}`}
+                  onPress={() => choose(b)}
+                  accessibilityRole="button"
+                  accessibilityLabel={b.text || 'OK'}
+                  style={{
+                    paddingHorizontal: 18, paddingVertical: 11, borderRadius: 12, minWidth: 84, alignItems: 'center',
+                    backgroundColor: isCancel ? 'transparent' : isDestructive ? T.red : T.gold,
+                    borderWidth: isCancel ? 1 : 0, borderColor: T.border,
+                  }}
+                >
+                  <Text style={{ color: isCancel ? T.text2 : isDestructive ? '#FFFFFF' : '#000000', fontWeight: '700', fontSize: 14 }}>{b.text || 'OK'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function showAlert(title, message, buttons) {
+  if (Platform.OS === 'web' && pushAppAlert) {
+    pushAppAlert({ title, message, buttons });
+    return;
+  }
   if (Platform.OS === 'web') {
     const text = message ? `${title}\n\n${message}` : title;
     if (Array.isArray(buttons) && buttons.length > 1) {
@@ -2343,6 +2465,10 @@ function AppContent({ themeMode, changeTheme }) {
   const [importDataText, setImportDataText] = useState('');
   const [historyItems, setHistoryItems]   = useState(null); // null = pas encore chargé, [] = chargé et vide
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Échec du dernier chargement. Distinct de « vide » : avant, un serveur en
+  // panne affichait « Aucune transaction pour l'instant » (Activité) et
+  // « Pas encore de stats » (Stats).
+  const [historyError, setHistoryError]   = useState(false);
   const [historyFilterSymbol, setHistoryFilterSymbol] = useState('ALL');
   const HISTORY_PAGE_SIZE = 15;
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
@@ -2769,6 +2895,23 @@ function AppContent({ themeMode, changeTheme }) {
   const [lastUpdateTime, setLastUpdateTime] = useState(Date.now()); // mis à jour par fetchMarket ; jamais affiché mais reste actif ailleurs dans l'app
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
   const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
+  // Échecs de chargement des fiches (bougies, infos) par clé, pour afficher un
+  // état d'erreur au lieu d'un « Chargement… » éternel. « Réessayer » les
+  // efface et relance les chargements en incrémentant detailRetryTick.
+  const [detailLoadErrors, setDetailLoadErrors] = useState({});
+  const [detailRetryTick, setDetailRetryTick]   = useState(0);
+  const markDetailError = useCallback((key, failed) => {
+    setDetailLoadErrors((prev) => {
+      if (!!prev[key] === failed) return prev;
+      const next = { ...prev };
+      if (failed) next[key] = true; else delete next[key];
+      return next;
+    });
+  }, []);
+  const retryDetailLoad = useCallback(() => {
+    setDetailLoadErrors({});
+    setDetailRetryTick((t) => t + 1);
+  }, []);
   const [newsItems, setNewsItems]         = useState([]);
   // Phrase de récupération à faire sauvegarder par l'utilisateur juste après
   // la création d'un wallet — sans ça, il n'a AUCUN moyen de récupérer ses
@@ -3085,16 +3228,24 @@ function AppContent({ themeMode, changeTheme }) {
   const fetchHistory = useCallback(async () => {
     if (!walletAddr) return;
     setHistoryLoading(true);
+    setHistoryError(false);
     try {
       const res = await axios.get(`${API_BASE}/tx/history`, {
         params: { address: walletAddr, network },
         headers: API_HEADERS,
         timeout: 20000,
       });
-      setHistoryItems(res.data?.success ? res.data.items : []);
+      if (res.data?.success) {
+        setHistoryItems(res.data.items);
+      } else {
+        setHistoryItems(null);
+        setHistoryError(true);
+      }
     } catch (err) {
       console.warn('fetchHistory error', err.message);
-      setHistoryItems([]);
+      // null et non [] : un échec n'est pas un historique vide.
+      setHistoryItems(null);
+      setHistoryError(true);
     } finally {
       setHistoryLoading(false);
     }
@@ -4136,6 +4287,9 @@ function AppContent({ themeMode, changeTheme }) {
       if (!response.data?.success) throw new Error(response.data?.error || 'Impossible de récupérer les NFT.');
       setNfts(response.data.nfts || []);
     } catch (err) {
+      // Le détail brut (« Service indisponible »…) reste en console : à
+      // l'écran, un état d'erreur lisible avec Réessayer.
+      console.warn('NFT indisponibles :', err.response?.data?.error || err.message);
       setNftsError(err.response?.data?.error || humanizeTxError(err) || 'Impossible de récupérer les NFT.');
     } finally {
       setNftsLoading(false);
@@ -4830,6 +4984,7 @@ function AppContent({ themeMode, changeTheme }) {
     if (!cgId) return;
     const key = `${selectedToken}_${detailTf}`;
     if (realCandles[key]) return;
+    const errKey = `candles:${key}`;
 
     let cancelled = false;
     let attempt = 0;
@@ -4838,7 +4993,7 @@ function AppContent({ themeMode, changeTheme }) {
         params: { timeframe: detailTf }, headers: API_HEADERS, timeout: 15000,
       }).then(res => {
         if (cancelled) return;
-        if (res.data?.success) setRealCandles(prev => ({ ...prev, [key]: res.data.candles }));
+        if (res.data?.success) { setRealCandles(prev => ({ ...prev, [key]: res.data.candles })); markDetailError(errKey, false); }
         else retry();
       }).catch(err => {
         console.warn('candles CoinGecko indisponibles, nouvelle tentative:', err.message);
@@ -4847,23 +5002,38 @@ function AppContent({ themeMode, changeTheme }) {
     };
     const retry = () => {
       if (cancelled) return;
+      // Dès le premier échec on le DIT (état d'erreur + Réessayer) ; les
+      // tentatives automatiques continuent derrière.
+      markDetailError(errKey, true);
       attempt += 1;
       setTimeout(load, Math.min(5000 * attempt, 30000));
     };
     load();
     return () => { cancelled = true; };
-  }, [selectedToken, detailTf, realCandles]);
+  }, [selectedToken, detailTf, realCandles, detailRetryTick, markDetailError]);
 
+  // Une seule tentative et une erreur envoyée en console, avant : en cas
+  // d'échec, « Chargement des infos réelles… » restait affiché pour toujours,
+  // sans même un nouvel essai.
   useEffect(() => {
     if (!selectedToken || coinDetails[selectedToken]) return;
     const cgId = WALLET_TOKENS[selectedToken]?.cgId;
     if (!cgId) return;
+    const errKey = `coin:${selectedToken}`;
+    let cancelled = false;
     axios.get(`${API_BASE}/coin/${cgId}`, { headers: API_HEADERS, timeout: 15000 })
       .then(res => {
-        if (res.data?.success) setCoinDetails(prev => ({ ...prev, [selectedToken]: res.data.coin }));
+        if (cancelled) return;
+        if (res.data?.success) { setCoinDetails(prev => ({ ...prev, [selectedToken]: res.data.coin })); markDetailError(errKey, false); }
+        else markDetailError(errKey, true);
       })
-      .catch(err => console.warn('fiche crypto indisponible:', err.message));
-  }, [selectedToken, coinDetails]);
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('fiche crypto indisponible:', err.message);
+        markDetailError(errKey, true);
+      });
+    return () => { cancelled = true; };
+  }, [selectedToken, coinDetails, detailRetryTick, markDetailError]);
 
   // Fiche + bougies pour une crypto du Marché qui n'est PAS dans le wallet —
   // même endpoints que ci-dessus, mais indexés par id CoinGecko (pas de
@@ -4872,17 +5042,27 @@ function AppContent({ themeMode, changeTheme }) {
     if (!selectedMarketCoin) return;
     const id = selectedMarketCoin.id;
     if (!id || marketCoinInfo[id]) return;
+    const errKey = `mcoin:${id}`;
+    let cancelled = false;
     axios.get(`${API_BASE}/coin/${id}`, { headers: API_HEADERS, timeout: 15000 })
       .then(res => {
-        if (res.data?.success) setMarketCoinInfo(prev => ({ ...prev, [id]: res.data.coin }));
+        if (cancelled) return;
+        if (res.data?.success) { setMarketCoinInfo(prev => ({ ...prev, [id]: res.data.coin })); markDetailError(errKey, false); }
+        else markDetailError(errKey, true);
       })
-      .catch(err => console.warn('fiche crypto (marché) indisponible:', err.message));
-  }, [selectedMarketCoin, marketCoinInfo]);
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('fiche crypto (marché) indisponible:', err.message);
+        markDetailError(errKey, true);
+      });
+    return () => { cancelled = true; };
+  }, [selectedMarketCoin, marketCoinInfo, detailRetryTick, markDetailError]);
 
   useEffect(() => {
     if (!selectedMarketCoin) return;
     const id = selectedMarketCoin.id;
     if (!id || marketCoinCandles[id]) return;
+    const errKey = `mcandles:${id}`;
 
     let cancelled = false;
     let attempt = 0;
@@ -4891,7 +5071,7 @@ function AppContent({ themeMode, changeTheme }) {
         params: { timeframe: '1J' }, headers: API_HEADERS, timeout: 15000,
       }).then(res => {
         if (cancelled) return;
-        if (res.data?.success) setMarketCoinCandles(prev => ({ ...prev, [id]: res.data.candles }));
+        if (res.data?.success) { setMarketCoinCandles(prev => ({ ...prev, [id]: res.data.candles })); markDetailError(errKey, false); }
         else retry();
       }).catch(err => {
         console.warn('bougies (marché) indisponibles, nouvelle tentative:', err.message);
@@ -4900,12 +5080,13 @@ function AppContent({ themeMode, changeTheme }) {
     };
     const retry = () => {
       if (cancelled) return;
+      markDetailError(errKey, true);
       attempt += 1;
       setTimeout(load, Math.min(5000 * attempt, 30000));
     };
     load();
     return () => { cancelled = true; };
-  }, [selectedMarketCoin, marketCoinCandles]);
+  }, [selectedMarketCoin, marketCoinCandles, detailRetryTick, markDetailError]);
 
   const fetchNews = useCallback(() => {
     return axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
@@ -4931,7 +5112,14 @@ function AppContent({ themeMode, changeTheme }) {
   // Générique : sert à la fois pour un token du wallet (info via coinDetails)
   // et pour une crypto du Marché qui n'y est pas (info via marketCoinInfo) —
   // seule la source de `info` et la couleur d'accent changent chez l'appelant.
-  const renderCoinAbout = (info, keyId, accentColor = T.blue) => {
+  const renderCoinAbout = (info, keyId, accentColor = T.blue, failed = false) => {
+    if (!info && failed) {
+      return (
+        <View style={[st.about_box, { alignItems: 'center', paddingVertical: 18 }]}>
+          <ErrorState compact title="Infos indisponibles pour le moment" onRetry={retryDetailLoad} />
+        </View>
+      );
+    }
     if (!info) {
       return (
         <View style={[st.about_box, { alignItems: 'center' }]}>
@@ -6129,7 +6317,7 @@ function AppContent({ themeMode, changeTheme }) {
               </View>
             </View>
             <View style={{ paddingHorizontal: 16 }}>
-              <CandlestickChart candles={candles} />
+              <CandlestickChart candles={candles} failed={!!detailLoadErrors[`candles:${selectedToken}_${detailTf}`]} onRetry={retryDetailLoad} />
             </View>
             {renderPriceAlertSection(selectedToken, tk.price)}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, marginBottom: 16 }}>
@@ -6170,7 +6358,7 @@ function AppContent({ themeMode, changeTheme }) {
               ))}
             </View>
 
-            {renderCoinAbout(coinDetails[selectedToken], selectedToken, tokens[selectedToken]?.color)}
+            {renderCoinAbout(coinDetails[selectedToken], selectedToken, tokens[selectedToken]?.color, !!detailLoadErrors[`coin:${selectedToken}`])}
 
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -6218,9 +6406,10 @@ function AppContent({ themeMode, changeTheme }) {
               </View>
             </View>
 
-            {candles.length > 0 && (
+            {/* Caché pendant le chargement, comme avant ; mais un échec se dit. */}
+            {(candles.length > 0 || !!detailLoadErrors[`mcandles:${coin.id}`]) && (
               <View style={{ paddingHorizontal: 16 }}>
-                <CandlestickChart candles={candles} />
+                <CandlestickChart candles={candles} failed={!!detailLoadErrors[`mcandles:${coin.id}`]} onRetry={retryDetailLoad} />
               </View>
             )}
 
@@ -6263,7 +6452,7 @@ function AppContent({ themeMode, changeTheme }) {
               </Text>
             </View>
 
-            {renderCoinAbout(info, coin.id, T.violet)}
+            {renderCoinAbout(info, coin.id, T.violet, !!detailLoadErrors[`mcoin:${coin.id}`])}
 
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -6871,11 +7060,21 @@ function AppContent({ themeMode, changeTheme }) {
           {historyLoading && (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <ActivityIndicator color={T.gold} size="large" />
-              <Text style={{ color: T.text2, fontSize: 12, marginTop: 10 }}>Chargement depuis {activeNetwork.explorer}…</Text>
+              {/* Plus d'URL d'explorateur à l'écran : c'est du jargon, et la
+                  source varie selon le réseau (Etherscan, Blockscout, NodeReal). */}
+              <Text style={{ color: T.text2, fontSize: 12, marginTop: 10 }}>Chargement de ton activité sur {activeNetwork.label}…</Text>
             </View>
           )}
 
-          {!historyLoading && !!filteredHistoryItems.length && (
+          {!historyLoading && historyError && (
+            <ErrorState
+              title="Impossible de charger ton activité"
+              message="Tes fonds ne sont pas concernés : seul l'affichage de l'historique n'a pas pu se charger."
+              onRetry={fetchHistory}
+            />
+          )}
+
+          {!historyLoading && !historyError && !!filteredHistoryItems.length && (
             <TouchableOpacity
               onPress={() => exportHistoryCsv(filteredHistoryItems)}
               style={{ alignSelf: 'flex-end', marginBottom: 12 }}
@@ -6886,7 +7085,7 @@ function AppContent({ themeMode, changeTheme }) {
             </TouchableOpacity>
           )}
 
-          {!historyLoading && filteredHistoryItems.length === 0 && (
+          {!historyLoading && !historyError && filteredHistoryItems.length === 0 && (
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <Text style={{ fontSize: 40, marginBottom: 10 }}>🕐</Text>
               <Text style={{ color: T.text2, fontSize: 13, textAlign: 'center' }}>
@@ -7068,6 +7267,12 @@ function AppContent({ themeMode, changeTheme }) {
 
         {historyLoading && !items.length ? (
           <View style={{ alignItems: 'center', marginTop: 30 }}><ActivityIndicator color={T.gold} /></View>
+        ) : historyError && !items.length ? (
+          <ErrorState
+            title="Impossible de calculer tes stats"
+            message="Elles se basent sur ton historique, qui n'a pas pu se charger. Tes fonds ne sont pas concernés."
+            onRetry={fetchHistory}
+          />
         ) : !items.length ? (
           <View style={{ alignItems: 'center', marginTop: 48, paddingHorizontal: 24 }}>
             <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: T.goldBg, alignItems: 'center', justifyContent: 'center' }}>
@@ -8143,7 +8348,11 @@ function AppContent({ themeMode, changeTheme }) {
               {nftsLoading ? (
                 <ActivityIndicator color={T.gold} style={{ marginTop: 40 }} />
               ) : nftsError ? (
-                <Text style={{ color: T.red, fontSize: 13, textAlign: 'center', marginTop: 20 }}>{nftsError}</Text>
+                <ErrorState
+                  title="Impossible de charger tes NFT"
+                  message="Tes NFT ne sont pas concernés : seul leur affichage n'a pas pu se charger."
+                  onRetry={() => openNftGallery(nftNetwork)}
+                />
               ) : nfts.length === 0 ? (
                 <View style={{ alignItems: 'center', marginTop: 40 }}>
                   <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: T.goldBg, alignItems: 'center', justifyContent: 'center' }}>
@@ -9899,6 +10108,7 @@ export default function App() {
   return (
     <ThemeContext.Provider value={{ T, st, cs }}>
       <AppContent themeMode={themeMode} changeTheme={changeTheme} />
+      {Platform.OS === 'web' && <AlertHost />}
     </ThemeContext.Provider>
   );
 }

@@ -55,7 +55,7 @@ async function main() {
 
     // Tous les tests tournent, même si l'un échoue : un rapport complet vaut
     // mieux qu'un arrêt au premier rouge qui cache les suivants.
-    const TESTS = ['e2e/smoke.js', 'e2e/qrScanner.js', 'e2e/receiveAddress.js'];
+    const TESTS = ['e2e/smoke.js', 'e2e/qrScanner.js', 'e2e/receiveAddress.js', 'e2e/errorStates.js'];
     console.log(`4/4 — Lancement des tests (${TESTS.length})...\n`);
     const echoues = [];
     for (const fichier of TESTS) {
