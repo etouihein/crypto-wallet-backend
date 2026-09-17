@@ -465,6 +465,16 @@ const BUYABLE_TOKENS = {
   bitcoin: ['BTC'],
 };
 
+// Quelle adresse montrer sur « Recevoir » pour un jeton donné — même règle
+// que l'achat, la vente et l'envoi : SOL vit sur Solana, BTC sur Bitcoin,
+// tout le reste sur les réseaux EVM. Oublier cette correspondance affichait
+// l'adresse 0x sous la fiche SOL : des SOL envoyés là sont perdus.
+function receiveChainForToken(symbol) {
+  if (symbol === 'SOL') return 'solana';
+  if (symbol === 'BTC') return 'bitcoin';
+  return 'evm';
+}
+
 // Le swap réel passe par un agrégateur DEX (0x) : on ne propose que les
 // tokens pour lesquels le wallet peut réellement signer/diffuser une
 // transaction (natif + ERC20/BEP20 configurés dans lib/wallet.js).
@@ -1166,24 +1176,50 @@ const BLOCKCHAIN_CONFIG = {
 // un <video> DOM inséré à la main dans un View (React Native Web ne permet
 // pas d'écrire <video> en JSX), et jsQR décode chaque frame capturée sur un
 // <canvas> caché. Le natif continue d'utiliser CameraView normalement.
+// Décodage limité à ~8 images/s et à 960 px de côté : jsQR sur l'image
+// pleine résolution à chaque rafraîchissement coûtait 39 ms par image en
+// 1080p et 155 ms en 4K sur un PC — plusieurs fois plus sur un téléphone, à
+// chaque image, de quoi figer la page. L'aperçu vidéo, lui, reste fluide : il
+// est affiché par la balise <video>, indépendamment du décodage.
+const QR_DECODE_INTERVAL_MS = 120;
+const QR_DECODE_MAX_SIDE = 960;
+
 function WebQrScanner({ onScanned }) {
   const { T } = useTheme();
   const containerRef = useRef(null);
   const [error, setError] = useState(null);
+
+  // La caméra ne doit démarrer qu'UNE fois par ouverture du scanner. Avant,
+  // l'effet dépendait de `onScanned`, que l'appelant recrée à chaque rendu —
+  // et l'app se redessine toute seule toutes les 25 à 45 s (gas, marché,
+  // portefeuille). Chaque rendu arrêtait puis relançait la caméra : mesuré,
+  // 10 redémarrages en 60 s, autofocus remis à zéro à chaque fois, et un QR
+  // qui n'avait jamais le temps d'être net. On garde donc la dernière version
+  // du rappel dans une ref, lue au moment du scan, et l'effet ne dépend plus
+  // de rien.
+  const onScannedRef = useRef(onScanned);
+  useEffect(() => { onScannedRef.current = onScanned; }, [onScanned]);
 
   useEffect(() => {
     let stopped = false;
     let rafId = null;
     let stream = null;
     let videoEl = null;
+    let lastDecode = 0;
     const canvas = document.createElement('canvas');
 
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
         if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
         videoEl = document.createElement('video');
-        videoEl.setAttribute('playsinline', 'true'); // évite le plein écran natif sur iOS Safari
+        // iOS Safari : sans ces trois attributs posés AVANT la lecture, la
+        // vidéo passe en plein écran natif ou refuse de démarrer seule.
+        videoEl.setAttribute('playsinline', 'true');
+        videoEl.setAttribute('muted', '');
+        videoEl.setAttribute('autoplay', '');
         videoEl.muted = true;
         videoEl.style.width = '100%';
         videoEl.style.height = '100%';
@@ -1193,15 +1229,18 @@ function WebQrScanner({ onScanned }) {
         await videoEl.play();
 
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        const tick = () => {
+        const tick = (now) => {
           if (stopped) return;
-          if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
-            canvas.width = videoEl.videoWidth;
-            canvas.height = videoEl.videoHeight;
-            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-            if (code?.data) { onScanned(code.data); return; }
+          if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA && now - lastDecode >= QR_DECODE_INTERVAL_MS) {
+            lastDecode = now;
+            const scale = Math.min(1, QR_DECODE_MAX_SIDE / Math.max(videoEl.videoWidth, videoEl.videoHeight));
+            const w = Math.round(videoEl.videoWidth * scale);
+            const h = Math.round(videoEl.videoHeight * scale);
+            if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+            ctx.drawImage(videoEl, 0, 0, w, h);
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const code = jsQR(imageData.data, w, h);
+            if (code?.data) { onScannedRef.current(code.data); return; }
           }
           rafId = requestAnimationFrame(tick);
         };
@@ -1220,7 +1259,7 @@ function WebQrScanner({ onScanned }) {
       if (stream) stream.getTracks().forEach(t => t.stop());
       if (videoEl && videoEl.parentNode) videoEl.parentNode.removeChild(videoEl);
     };
-  }, [onScanned]);
+  }, []);
 
   if (error) {
     const CAMERA_ERROR_MESSAGES = {
@@ -1234,6 +1273,13 @@ function WebQrScanner({ onScanned }) {
         <Text style={{ color: T.text2, textAlign: 'center' }}>
           {CAMERA_ERROR_MESSAGES[error] || "Impossible d'accéder à la caméra — utilise plutôt le collage depuis le presse-papier."}
         </Text>
+        {/* Le nom technique de l'erreur, discret : sans lui, un « ça ne marche
+            pas » signalé depuis un téléphone est impossible à diagnostiquer. */}
+        {!CAMERA_ERROR_MESSAGES[error] && (
+          <Text style={{ color: T.text3 || T.text2, textAlign: 'center', fontSize: 11, marginTop: 10 }}>
+            Code : {error}
+          </Text>
+        )}
       </View>
     );
   }
@@ -4835,7 +4881,7 @@ function AppContent({ themeMode, changeTheme }) {
     { id: 'send',    icon: 'arrow-up',   label: t('action_send'),    bg: T.card2, onPress: () => setShowSend(true) },
     { id: 'buy',     icon: 'card',       label: t('action_buy'),     bg: T.gold, onPress: () => setShowBuy(true) },
     ...(SELL_ENABLED ? [{ id: 'sell', icon: 'cash', label: t('action_sell'), bg: T.card2, onPress: () => setShowSell(true) }] : []),
-    { id: 'receive', icon: 'arrow-down', label: t('action_receive'), bg: T.card2, onPress: () => setShowReceive(true) },
+    { id: 'receive', icon: 'arrow-down', label: t('action_receive'), bg: T.card2, onPress: () => { setReceiveChain('evm'); setShowReceive(true); } },
     { id: 'history', icon: 'time',       label: t('home_activity'),  bg: T.card2, onPress: () => setShowHistory(true) },
     { id: 'nft',     icon: 'image',      label: 'NFT',               bg: T.card2, onPress: () => openNftGallery() },
   ];
@@ -5923,7 +5969,7 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={st.detail_actions}>
               {[
                 { icon: 'arrow-up',         label: 'Envoyer',  onPress: () => { setSelectedToken(null); setSendToken(selectedToken); setShowSend(true); } },
-                { icon: 'arrow-down',       label: 'Recevoir', onPress: () => { setSelectedToken(null); setShowReceive(true); } },
+                { icon: 'arrow-down',       label: 'Recevoir', onPress: () => { setReceiveChain(receiveChainForToken(selectedToken)); setSelectedToken(null); setShowReceive(true); } },
                 { icon: 'swap-horizontal',  label: 'Swap',     onPress: () => { setSelectedToken(null); setSwapFrom(selectedToken); setTab('swap'); } },
                 ...(selectedToken === 'SOL' ? [{ icon: 'leaf-outline', label: 'Staker', onPress: () => { setSelectedToken(null); openStaking(); } }] : []),
               ].map(a => (
@@ -7668,7 +7714,7 @@ function AppContent({ themeMode, changeTheme }) {
 
     const ACTIONS = [
       { key: 'send', label: 'Envoyer', icon: 'arrow-up', onPress: () => setShowSend(true) },
-      { key: 'receive', label: 'Recevoir', icon: 'arrow-down', onPress: () => setShowReceive(true) },
+      { key: 'receive', label: 'Recevoir', icon: 'arrow-down', onPress: () => { setReceiveChain('evm'); setShowReceive(true); } },
       { key: 'buy', label: 'Acheter', icon: 'card', onPress: () => setShowBuy(true) },
       ...(SELL_ENABLED ? [{ key: 'sell', label: 'Vendre', icon: 'cash', onPress: () => setShowSell(true) }] : []),
       { key: 'swap', label: 'Swap', icon: 'swap-horizontal', onPress: () => setTab('swap') },

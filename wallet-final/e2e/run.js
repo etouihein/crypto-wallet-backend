@@ -53,14 +53,23 @@ async function main() {
     console.log('3/4 — Attente que le serveur réponde...');
     await waitForServer(BASE_URL, 20000);
 
-    console.log('4/4 — Lancement du smoke test...\n');
-    const test = spawnSync('node', ['e2e/smoke.js'], {
-      cwd: path.join(__dirname, '..'),
-      env: { ...process.env, BASE_URL },
-      stdio: 'inherit',
-      shell: true,
-    });
-    exitCode = test.status ?? 1;
+    // Tous les tests tournent, même si l'un échoue : un rapport complet vaut
+    // mieux qu'un arrêt au premier rouge qui cache les suivants.
+    const TESTS = ['e2e/smoke.js', 'e2e/qrScanner.js', 'e2e/receiveAddress.js'];
+    console.log(`4/4 — Lancement des tests (${TESTS.length})...\n`);
+    const echoues = [];
+    for (const fichier of TESTS) {
+      const test = spawnSync('node', [fichier], {
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, BASE_URL },
+        stdio: 'inherit',
+        shell: true,
+      });
+      if (test.status !== 0) echoues.push(fichier);
+      console.log('');
+    }
+    console.log(echoues.length ? `En échec : ${echoues.join(', ')}` : 'Tous les tests sont verts.');
+    exitCode = echoues.length ? 1 : 0;
   } catch (err) {
     console.error('Erreur pendant l\'orchestration:', err.message);
   } finally {
