@@ -420,6 +420,21 @@ async function getSolanaBalance(address) {
   return (lamports / 1_000_000_000).toString();
 }
 
+// État d'une transaction Solana, pour prévenir l'utilisateur quand son envoi
+// est confirmé. Renvoie 'confirmee' | 'echouee' | 'en_attente' | null.
+async function getSolanaTxStatus(signature) {
+  try {
+    const { value } = await getSolanaConnection().getSignatureStatuses([signature], { searchTransactionHistory: true });
+    const etat = value && value[0];
+    if (!etat) return 'en_attente';
+    if (etat.err) return 'echouee';
+    if (etat.confirmationStatus === 'confirmed' || etat.confirmationStatus === 'finalized') return 'confirmee';
+    return 'en_attente';
+  } catch {
+    return null;
+  }
+}
+
 // Construit + signe un transfert SOL natif en local ; retourne une
 // transaction sérialisée en base64, diffusée ensuite par le backend
 // (POST /wallet/tx/broadcast-solana) exactement comme un rawTx EVM.
@@ -624,6 +639,20 @@ async function getBitcoinBalance(address) {
   return (totalSats / 1e8).toString();
 }
 
+// État d'une transaction Bitcoin, pour prévenir l'utilisateur quand son envoi
+// est confirmé (avant, l'app disait « transaction soumise » puis plus rien).
+// Renvoie 'confirmee' | 'en_attente' | null (inconnue / API muette).
+async function getBitcoinTxStatus(txid) {
+  try {
+    const res = await fetch(`${BLOCKSTREAM_API_URL}/tx/${txid}/status`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.confirmed ? 'confirmee' : 'en_attente';
+  } catch {
+    return null;
+  }
+}
+
 // Estimation de frais réelle (sat/vByte) via l'endpoint public Blockstream,
 // repli sur 15 sat/vByte (ordre de grandeur raisonnable) si l'API échoue —
 // juste pour ne pas bloquer l'envoi, pas une promesse de précision absolue.
@@ -704,6 +733,7 @@ module.exports = {
   getSolanaAddress,
   isValidSolanaAddress,
   getSolanaBalance,
+  getSolanaTxStatus,
   signSolanaTransferTx,
   getSolanaValidators,
   getSolanaStakeAccountsInfo,
@@ -713,6 +743,7 @@ module.exports = {
   getBitcoinAddress,
   isValidBitcoinAddress,
   getBitcoinBalance,
+  getBitcoinTxStatus,
   signBitcoinTransferTx,
   getCustomTokenInfo,
   estimateSendFee,

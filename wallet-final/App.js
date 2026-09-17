@@ -224,6 +224,13 @@ const humanizeTxError = (err) => {
   if (httpStatus >= 500 || httpStatus === 429) {
     return 'Le service ne répond pas pour le moment — réessaie dans un instant. Tes fonds ne sont pas concernés.';
   }
+  // Sinon (400, 404...), le backend explique POURQUOI dans sa réponse — la
+  // raison de l'agrégateur de swap, par exemple. « Request failed with status
+  // code 400 » n'apprend rien ; cette explication-là, si.
+  const duServeur = err?.response?.data?.error;
+  if (typeof duServeur === 'string' && duServeur.trim() && duServeur.trim().length < 200) {
+    return duServeur.trim();
+  }
   // Ethers ajoute parfois "[ See: https://... ]" ou "(error={...})" avec le
   // JSON-RPC complet à la suite d'un message par ailleurs correct — nos
   // propres `throw new Error(...)` (messages métier) n'ont jamais ça.
@@ -1500,6 +1507,34 @@ function QRCodeMock({ address }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  LOGO D'UNE dAPP (onglet Découvrir)
+// ═══════════════════════════════════════════════════════════
+// Le vrai logo, embarqué dans l'app. La pastille colorée avec l'initiale ne
+// sert plus que de secours, si l'image venait à manquer.
+function DappLogo({ dapp }) {
+  const [echec, setEchec] = useState(false);
+  const cadre = { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' };
+  if (!dapp.logo || echec) {
+    return (
+      <View style={[cadre, { backgroundColor: dapp.color }]}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 17 }}>{dapp.letter}</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={[cadre, { backgroundColor: '#FFFFFF', overflow: 'hidden' }]}>
+      <Image
+        source={dapp.logo}
+        style={{ width: 40, height: 40 }}
+        resizeMode="contain"
+        onError={() => setEchec(true)}
+        accessibilityLabel={`Logo ${dapp.name}`}
+      />
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  ÉTAT D'ERREUR
 // ═══════════════════════════════════════════════════════════
 // Même langage visuel que les états vides de l'app (pastille, titre, texte),
@@ -2617,6 +2652,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [stakeAccounts, setStakeAccounts]       = useState([]);
   const [stakeAccountsLoading, setStakeAccountsLoading] = useState(false);
   const [validators, setValidators]             = useState([]);
+  const [validatorsLoading, setValidatorsLoading] = useState(false);
+  const [validatorsError, setValidatorsError]     = useState(false);
   const [selectedValidator, setSelectedValidator] = useState(null);
   const [stakeAmount, setStakeAmount]           = useState('');
   const [stakeLoading, setStakeLoading]         = useState(false);
@@ -2892,7 +2929,14 @@ function AppContent({ themeMode, changeTheme }) {
   const [chartTick, setChartTick]         = useState(0);
   const [candleHistory, setCandleHistory] = useState({});
   const [apiError, setApiError]           = useState(null);
-  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now()); // mis à jour par fetchMarket ; jamais affiché mais reste actif ailleurs dans l'app
+  // « live » ne doit s'afficher que si les prix viennent vraiment d'arriver.
+  // Quand le backend tombait, le Marché continuait d'annoncer « live » à côté
+  // de prix figés ou repris du cache — malhonnête envers l'utilisateur.
+  const MARKET_FRESH_MS = 120000;
+  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now()); // mis à jour par fetchMarket
+  const marketFreshness = (apiError || !lastUpdateTime || (Date.now() - lastUpdateTime) > MARKET_FRESH_MS)
+    ? 'prix différés'
+    : 'live';
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
   const [coinDetails, setCoinDetails]     = useState({}); // symbol -> fiche crypto réelle (CoinGecko)
   // Échecs de chargement des fiches (bougies, infos) par clé, pour afficher un
@@ -3189,29 +3233,52 @@ function AppContent({ themeMode, changeTheme }) {
   // Suivi d'un envoi EVM jusqu'à sa confirmation : avant, l'app disait
   // « Transaction soumise » puis plus rien. On interroge le réseau toutes les
   // 10 s, 30 min au plus, et l'on arrête tout au verrouillage.
+  // Couvre les trois écosystèmes (EVM, Solana, Bitcoin) et les trois sortes
+  // d'opération (envoi, swap, pont). Bitcoin confirme en ~10 min : on l'espace
+  // davantage et on patiente plus longtemps, sans marteler l'API publique.
   const sendTrackersRef = useRef(new Set());
-  const trackSendConfirmation = useCallback(({ txHash, net, token, amount }) => {
+  const trackTransaction = useCallback(({ txHash, net, token, amount, kind = 'Envoi' }) => {
     if (!txHash) return;
-    const placeLabel = NETWORK_INFO[net]?.label || net;
-    const provider = localWallet.getProvider(net);
+    const placeLabel = NETWORK_INFO[net]?.label || (net === 'solana' ? 'Solana' : net === 'bitcoin' ? 'Bitcoin' : net);
+    const intervalle = net === 'bitcoin' ? 60000 : 10000;
+    const dureeMax = net === 'bitcoin' ? 3 * 60 * 60 * 1000 : 30 * 60 * 1000;
     const startedAt = Date.now();
     const tracker = { stopped: false, timer: null };
     const stop = () => { tracker.stopped = true; if (tracker.timer) clearTimeout(tracker.timer); sendTrackersRef.current.delete(stop); };
     sendTrackersRef.current.add(stop);
+
+    // 'ok' | 'ko' | null (pas encore confirmée / réseau muet)
+    const etat = async () => {
+      if (net === 'solana') {
+        const s = await localWallet.getSolanaTxStatus(txHash);
+        return s === 'confirmee' ? 'ok' : s === 'echouee' ? 'ko' : null;
+      }
+      if (net === 'bitcoin') {
+        return (await localWallet.getBitcoinTxStatus(txHash)) === 'confirmee' ? 'ok' : null;
+      }
+      const receipt = await localWallet.getProvider(net).getTransactionReceipt(txHash);
+      if (receipt && receipt.blockNumber) return receipt.status === 1 ? 'ok' : 'ko';
+      return null;
+    };
+
     const check = async () => {
       if (tracker.stopped) return;
       try {
-        const receipt = await provider.getTransactionReceipt(txHash);
+        const resultat = await etat();
         if (tracker.stopped) return;
-        if (receipt && receipt.blockNumber) {
-          if (receipt.status === 1) notify({ title: '✅ Envoi confirmé', body: `${amount} ${token} sur ${placeLabel}` });
-          else notify({ title: '❌ Envoi échoué', body: `Le réseau a rejeté l'envoi de ${amount} ${token}.`, type: 'error' });
+        if (resultat === 'ok') {
+          notify({ title: `✅ ${kind} confirmé`, body: `${amount} ${token} sur ${placeLabel}` });
+          stop();
+          return;
+        }
+        if (resultat === 'ko') {
+          notify({ title: `❌ ${kind} échoué`, body: `Le réseau a rejeté l'opération de ${amount} ${token}.`, type: 'error' });
           stop();
           return;
         }
       } catch { /* nœud momentanément injoignable : on retente */ }
-      if (Date.now() - startedAt > 30 * 60 * 1000) { stop(); return; }
-      tracker.timer = setTimeout(check, 10000);
+      if (Date.now() - startedAt > dureeMax) { stop(); return; }
+      tracker.timer = setTimeout(check, intervalle);
     };
     tracker.timer = setTimeout(check, 8000);
   }, [notify]);
@@ -4296,12 +4363,21 @@ function AppContent({ themeMode, changeTheme }) {
     setShowStaking(true);
     setStakeError(null);
     loadStakeAccounts();
+    // Avant, un échec ne faisait qu'un avertissement en console : la liste des
+    // validateurs restait vide, sans indicateur ni message, et « Staker »
+    // renvoyait « Choisis un validateur » alors qu'aucun n'était proposé.
+    // Vérifié en coupant le nœud Solana.
+    setValidatorsLoading(true);
+    setValidatorsError(false);
     try {
       const list = await localWallet.getSolanaValidators();
       setValidators(list);
       if (list.length && !selectedValidator) setSelectedValidator(list[0].votePubkey);
     } catch (err) {
       console.warn('getSolanaValidators error', err.message);
+      setValidatorsError(true);
+    } finally {
+      setValidatorsLoading(false);
     }
   }, [loadStakeAccounts, selectedValidator]);
 
@@ -5630,6 +5706,10 @@ function AppContent({ themeMode, changeTheme }) {
       });
       const resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
       if (!resp.data?.success) throw new Error(resp.data?.error || 'Échec de la diffusion.');
+      // Confirmation du DÉPART sur le réseau d'origine. L'arrivée sur l'autre
+      // réseau dépend du pont lui-même et se voit au solde, qui déclenche sa
+      // propre notification « Fonds reçus ».
+      trackTransaction({ txHash: resp.data.txHash, net: bridgeFromNetwork, token: ({ bsc: 'BNB', polygon: 'MATIC' }[bridgeFromNetwork] || 'ETH'), amount: bridgeAmount, kind: 'Pont' });
       showAlert('✅ Pont envoyé', `Ta transaction de pont a été diffusée.\nHash: ${resp.data.txHash?.slice(0, 10)}...\nL'arrivée sur ${bridgeToNetwork} peut prendre quelques minutes.`, [{ text: 'OK' }]);
       setShowBridge(false);
       setBridgeQuote(null);
@@ -5756,6 +5836,7 @@ function AppContent({ themeMode, changeTheme }) {
         if (!response.data?.success) throw new Error(response.data?.error || 'Échec du transfert');
 
         const txHash = response.data.txHash;
+        trackTransaction({ txHash, net: 'solana', token: 'SOL', amount: sendAmount, kind: 'Envoi' });
         playTone('success');
         showAlert(
           '✅ Transaction Soumise!',
@@ -5796,6 +5877,7 @@ function AppContent({ themeMode, changeTheme }) {
         if (!response.data?.success) throw new Error(response.data?.error || 'Échec du transfert');
 
         const txHash = response.data.txHash;
+        trackTransaction({ txHash, net: 'bitcoin', token: 'BTC', amount: sendAmount, kind: 'Envoi' });
         playTone('success');
         showAlert(
           '✅ Transaction Soumise!',
@@ -5853,7 +5935,7 @@ function AppContent({ themeMode, changeTheme }) {
 
       const txHash = response.data.txHash;
       playTone('success');
-      trackSendConfirmation({ txHash, net: network, token: sendToken, amount: sendAmount });
+      trackTransaction({ txHash, net: network, token: sendToken, amount: sendAmount, kind: 'Envoi' });
       showAlert(
         '✅ Transaction Soumise!',
         `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}\n\nTu seras prévenu dès qu'elle est confirmée.`,
@@ -5984,6 +6066,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
 
       const txHash = swapResp.data.txHash;
+      trackTransaction({ txHash, net: network, token: swapFrom, amount: swapAmt, kind: 'Swap' });
       playTone('success');
       showAlert(
         '✅ Swap Soumis !',
@@ -8353,6 +8436,25 @@ function AppContent({ themeMode, changeTheme }) {
 
           <Text style={[st.form_label, { marginTop: 24 }]}>Nouveau stake</Text>
           <Text style={{ color: T.text3, fontSize: 12, marginBottom: 8 }}>Validateur (triés par stake total, commission ≤ 10%)</Text>
+          {validatorsLoading && !validators.length && (
+            <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+              <ActivityIndicator color={T.gold} />
+              <Text style={{ color: T.text3, fontSize: 12, marginTop: 8 }}>Chargement des validateurs…</Text>
+            </View>
+          )}
+          {!validatorsLoading && validatorsError && !validators.length && (
+            <ErrorState
+              compact
+              title="Liste des validateurs indisponible"
+              message="Le réseau Solana n'a pas répondu. Tes SOL ne sont pas concernés."
+              onRetry={openStaking}
+            />
+          )}
+          {!validatorsLoading && !validatorsError && !validators.length && (
+            <Text style={{ color: T.text3, fontSize: 13, paddingVertical: 16, textAlign: 'center' }}>
+              Aucun validateur ne correspond aux critères pour le moment.
+            </Text>
+          )}
           {validators.map(v => (
             <TouchableOpacity
               key={v.votePubkey}
@@ -8376,7 +8478,10 @@ function AppContent({ themeMode, changeTheme }) {
             keyboardType="decimal-pad"
           />
           {!!stakeError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{stakeError}</Text>}
-          <AnimPressable style={[st.green_btn, { opacity: stakeLoading ? 0.7 : 1 }]} disabled={stakeLoading} onPress={handleCreateStake}>
+          {/* Inactif tant qu'aucun validateur n'est proposé : sinon le bouton
+              invitait à cliquer pour répondre « Choisis un validateur » alors
+              qu'il n'y en avait aucun à choisir. */}
+          <AnimPressable style={[st.green_btn, { opacity: (stakeLoading || !selectedValidator) ? 0.6 : 1 }]} disabled={stakeLoading || !selectedValidator} onPress={handleCreateStake}>
             {stakeLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Staker</Text>}
           </AnimPressable>
         </ScrollView>
@@ -9646,7 +9751,7 @@ function AppContent({ themeMode, changeTheme }) {
               )}
               <View style={st.section_hdr}>
                 <SectionTitle>Tous les cours</SectionTitle>
-                <Text style={st.section_sub}>{filteredCoins.length} cryptos • live</Text>
+                <Text style={st.section_sub}>{filteredCoins.length} cryptos • {marketFreshness}</Text>
               </View>
             </>
           }
@@ -9663,15 +9768,19 @@ function AppContent({ themeMode, changeTheme }) {
   //  produit à effet de levier (perpétuels) ni pari (prédictions) : hors de
   //  portée réglementaire/technique pour ce wallet non-custodial.
   // ════════════════════════════════════════════════════════
+  // Logos EMBARQUÉS (assets/dapps/) plutôt qu'appelés sur un CDN : ils
+  // s'affichent même hors ligne, et aucun service tiers ne voit passer les
+  // utilisateurs qui ouvrent cet onglet. La lettre colorée reste en secours
+  // si une image manquait.
   const DISCOVER_DAPPS = [
-    { name: 'Uniswap',     cat: 'dex',     url: 'https://app.uniswap.org',    color: '#FF007A', letter: 'U', desc: 'Le plus gros échange décentralisé (DEX).' },
-    { name: 'PancakeSwap', cat: 'dex',     url: 'https://pancakeswap.finance',color: '#D1884F', letter: 'P', desc: 'Le DEX n°1 sur BNB Smart Chain.' },
-    { name: '1inch',       cat: 'dex',     url: 'https://app.1inch.io',       color: '#1B314F', letter: '1', desc: 'Agrégateur : trouve le meilleur taux de swap.' },
-    { name: 'Curve',       cat: 'dex',     url: 'https://curve.fi',           color: '#3465A4', letter: 'C', desc: 'Échange de stablecoins à faible slippage.' },
-    { name: 'Aave',        cat: 'lending', url: 'https://app.aave.com',       color: '#B6509E', letter: 'A', desc: 'Prête tes cryptos et gagne des intérêts.' },
-    { name: 'Lido',        cat: 'yield',   url: 'https://stake.lido.fi',      color: '#00A3FF', letter: 'L', desc: "Staking liquide d'ETH — reçois du stETH." },
-    { name: 'OpenSea',     cat: 'nft',     url: 'https://opensea.io',         color: '#2081E2', letter: 'O', desc: 'La plus grande place de marché NFT.' },
-    { name: 'Blur',        cat: 'nft',     url: 'https://blur.io',            color: '#FF7A00', letter: 'B', desc: 'Marketplace NFT rapide pour traders.' },
+    { name: 'Uniswap',     cat: 'dex',     url: 'https://app.uniswap.org',    color: '#FF007A', letter: 'U', logo: require('./assets/dapps/uniswap.png'),     desc: 'Le plus gros échange décentralisé (DEX).' },
+    { name: 'PancakeSwap', cat: 'dex',     url: 'https://pancakeswap.finance',color: '#D1884F', letter: 'P', logo: require('./assets/dapps/pancakeswap.png'), desc: 'Le DEX n°1 sur BNB Smart Chain.' },
+    { name: '1inch',       cat: 'dex',     url: 'https://app.1inch.io',       color: '#1B314F', letter: '1', logo: require('./assets/dapps/1inch.png'),       desc: 'Agrégateur : trouve le meilleur taux de swap.' },
+    { name: 'Curve',       cat: 'dex',     url: 'https://curve.fi',           color: '#3465A4', letter: 'C', logo: require('./assets/dapps/curve.png'),       desc: 'Échange de stablecoins à faible slippage.' },
+    { name: 'Aave',        cat: 'lending', url: 'https://app.aave.com',       color: '#B6509E', letter: 'A', logo: require('./assets/dapps/aave.png'),        desc: 'Prête tes cryptos et gagne des intérêts.' },
+    { name: 'Lido',        cat: 'yield',   url: 'https://stake.lido.fi',      color: '#00A3FF', letter: 'L', logo: require('./assets/dapps/lido.png'),        desc: "Staking liquide d'ETH — reçois du stETH." },
+    { name: 'OpenSea',     cat: 'nft',     url: 'https://opensea.io',         color: '#2081E2', letter: 'O', logo: require('./assets/dapps/opensea.png'),     desc: 'La plus grande place de marché NFT.' },
+    { name: 'Blur',        cat: 'nft',     url: 'https://blur.io',            color: '#FF7A00', letter: 'B', logo: require('./assets/dapps/blur.png'),        desc: 'Marketplace NFT rapide pour traders.' },
   ];
   const DISCOVER_CATS = [
     { id: 'all', label: 'Tout' },
@@ -9740,9 +9849,7 @@ function AppContent({ themeMode, changeTheme }) {
               onPress={() => { handleDappBrowserOpen(d.url); setDappBrowserFromSettings(false); setShowDappBrowser(true); }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 14, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: T.border }}
             >
-              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: d.color, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 17 }}>{d.letter}</Text>
-              </View>
+              <DappLogo dapp={d} />
               <View style={{ flex: 1, marginLeft: 13 }}>
                 <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{d.name}</Text>
                 <Text style={{ color: T.text3, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{d.desc}</Text>
@@ -9780,7 +9887,14 @@ function AppContent({ themeMode, changeTheme }) {
         style={{ flex: 1, padding: 16 }}
         contentContainerStyle={isWideWeb ? { maxWidth: 480, width: '100%', alignSelf: 'center' } : undefined}
       >
-        <Text style={st.tab_title}>⇄ Achat / Vente live</Text>
+        {/* Ce titre annonçait « Achat / Vente live » : c'est faux et ça prête
+            à confusion avec les boutons Acheter / Vendre de l'accueil, qui
+            passent par carte bancaire en euros. Ici on échange un jeton
+            contre un autre, sans euros. */}
+        <Text style={st.tab_title}>⇄ Échanger</Text>
+        <Text style={{ color: T.text3, fontSize: 13, marginTop: -6, marginBottom: 12 }}>
+          Échange un jeton contre un autre, directement depuis ton wallet — sans euros.
+        </Text>
         <GasIndicatorBadge gasIndicator={gasIndicator} nativeSymbol={nativeSymbol} />
         <View style={st.swap_card}>
           <Text style={st.swap_lbl}>Tu paies</Text>

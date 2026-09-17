@@ -119,10 +119,34 @@ async function guetter(page, titre, contenu, delaiMs) {
   return false;
 }
 
-async function nouvelleSession(browser, { eth, bsc }) {
+// Nœud Solana simulé : solde, empreinte de bloc (nécessaire pour signer) et
+// état d'une signature (pour la confirmation).
+function noeudSolana(etat) {
+  const repondre = ({ method }) => {
+    switch (method) {
+      case 'getBalance': return { context: { slot: 1 }, value: etat.lamports };
+      case 'getLatestBlockhash': return { context: { slot: 1 }, value: { blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 1000 } };
+      case 'getSignatureStatuses':
+        return { context: { slot: 1 }, value: [etat.confirmee ? { slot: 1, confirmations: 10, err: null, confirmationStatus: 'confirmed' } : null] };
+      case 'getVersion': return { 'solana-core': '1.18.0' };
+      default: return null;
+    }
+  };
+  return async (route) => {
+    let corps = null;
+    try { corps = JSON.parse(route.request().postData() || 'null'); } catch { /* corps illisible */ }
+    if (!corps) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    const une = (r) => ({ jsonrpc: '2.0', id: r.id, result: repondre(r) });
+    const sortie = Array.isArray(corps) ? corps.map(une) : une(corps);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sortie) });
+  };
+}
+
+async function nouvelleSession(browser, { eth, bsc, sol }) {
   const context = await browser.newContext({ viewport: { width: 400, height: 860 }, hasTouch: true, locale: 'fr-FR' });
   await context.route(/ethereum-rpc\.publicnode\.com/, noeudSimule(eth));
   if (bsc) await context.route(/bsc-rpc\.publicnode\.com/, noeudSimule(bsc));
+  if (sol) await context.route(/solana-rpc\.publicnode\.com/, noeudSolana(sol));
   const page = await context.newPage();
   const erreurs = [];
   page.on('pageerror', (e) => {
@@ -230,6 +254,44 @@ const etatNoeud = (chainId, solde, extra = {}) => ({ chainId, solde, soldeJeton:
       eth.recu = 'succes';
       const confirme = await guetter(page, 'Envoi confirmé', '0.01 ETH', 30000);
       verifier(confirme, 'notification « Envoi confirmé 0.01 ETH » dès que le réseau confirme');
+      verifier(erreurs.length === 0, `aucune erreur JavaScript${erreurs.length ? ` (${erreurs[0].slice(0, 100)})` : ''}`);
+    } catch (e) {
+      verifier(false, `scénario interrompu : ${e.message.split('\n')[0]}`);
+    } finally { await context.close(); }
+  }
+
+  // ── 4 ────────────────────────────────────────────────────────────────
+  // Solana n'est pas un réseau EVM : son suivi passe par l'état de la
+  // signature, pas par un reçu de transaction.
+  console.log("\n4. Un envoi de SOL est suivi jusqu'à sa confirmation");
+  {
+    const eth = etatNoeud('0x1', ETH(0));
+    const sol = { lamports: 2_000_000_000, confirmee: false }; // 2 SOL
+    const { context, page, erreurs } = await nouvelleSession(browser, { eth, sol });
+    let diffusions = 0;
+    await context.route(`https://${BACKEND}/wallet/tx/broadcast-solana`, (route) => {
+      diffusions += 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, txHash: '5Xk9mQ7bTt4mWZ8m6L3vQxMjKcJ2v8nP1sR6yF4dA9hE3uV7wC2xB5nT8qY1zL6kM' }) });
+    });
+    try {
+      await wait(4000);
+      verifier(await cliquer(page, { role: 'button', texte: 'Envoyer' }), 'écran Envoyer ouvert');
+      await wait(1500);
+      verifier(await cliquer(page, { texte: 'SOL' }), 'jeton SOL choisi');
+      await wait(900);
+      await page.getByPlaceholder('Adresse Solana (base58)').fill('8wyRx8JZMDqSsr55VMS3hBBDHJSuXSvrsmaXNqC3Cf9p');
+      await page.getByPlaceholder('0.00', { exact: true }).fill('0.02');
+      await wait(600);
+      verifier(await cliquer(page, { texte: 'Continuer' }), 'Continuer');
+      await wait(2500);
+      verifier(await cliquer(page, { texte: "✅ Confirmer l'envoi" }), "Confirmer l'envoi");
+      const soumise = await guetter(page, 'Transaction Soumise', null, 15000);
+      verifier(soumise && diffusions === 1, `transaction Solana signée et diffusée (diffusions : ${diffusions})`);
+      await cliquer(page, { texte: 'OK' });
+      await wait(3000);
+      verifier(!(await texteDansLaPage(page, 'Envoi confirmé')), "rien n'est annoncé tant que Solana n'a pas confirmé");
+      sol.confirmee = true;
+      verifier(await guetter(page, 'Envoi confirmé', '0.02 SOL', 30000), 'notification « Envoi confirmé 0.02 SOL » dès que Solana confirme');
       verifier(erreurs.length === 0, `aucune erreur JavaScript${erreurs.length ? ` (${erreurs[0].slice(0, 100)})` : ''}`);
     } catch (e) {
       verifier(false, `scénario interrompu : ${e.message.split('\n')[0]}`);
