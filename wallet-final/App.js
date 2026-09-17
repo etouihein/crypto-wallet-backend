@@ -2742,10 +2742,10 @@ function AppContent({ themeMode, changeTheme }) {
   // `subtitle` optionnel (3e argument, rétrocompatible avec tous les appels
   // existants qui ne passent que message+type) : deuxième ligne grise sous le
   // titre, comme "Envoyé !" / "0,19 USDT" dans la pilule de notification.
-  const showToast = useCallback((message, type = 'info', subtitle = null) => {
+  const showToast = useCallback((message, type = 'info', subtitle = null, durationMs = 2600) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type, subtitle });
-    toastTimerRef.current = setTimeout(() => setToast(null), 2600);
+    toastTimerRef.current = setTimeout(() => setToast(null), durationMs);
   }, []);
 
   // Indicateur de gas en direct sur Envoyer/Swap ("bon ou mauvais moment
@@ -3137,6 +3137,93 @@ function AppContent({ themeMode, changeTheme }) {
 
   // Lecture directe des RPC publics — aucune clé nécessaire pour consulter un
   // solde (donnée publique de la blockchain), donc aucun appel backend ici.
+  // ═══ NOTIFICATIONS — fonds reçus, envoi confirmé ═══
+  // Choix validé par Pablo le 17/09/2026 (option A) : tout se passe sur
+  // l'appareil. Aucun serveur ne surveille les adresses — il apprendrait
+  // celles de tous les utilisateurs, à l'opposé de la promesse « aucune
+  // donnée personnelle ». Limite assumée : rien n'est détecté app fermée.
+  //
+  // Avant : une seule notification, sur natif uniquement, pour la crypto
+  // native du réseau actif — rien pour USDT, USDC, SOL, BTC, rien sur le web,
+  // rien à l'envoi.
+  //
+  // Affichage : toujours dans l'app (fonctionne partout, iPhone compris), et
+  // en notification système quand l'app n'est pas au premier plan, là où
+  // c'est possible (natif ; navigateur si l'autorisation est déjà accordée).
+  const NOTIFY_TOAST_MS = 6000;
+  const notify = useCallback(({ title, body, type = 'success' }) => {
+    showToast(title, type, body, NOTIFY_TOAST_MS);
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted'
+          && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          new Notification(title, { body, icon: '/icon.png' });
+        }
+      } else if (AppState.currentState !== 'active') {
+        Notifications.scheduleNotificationAsync({ content: { title, body }, trigger: null }).catch(() => {});
+      }
+    } catch { /* notification système indisponible : l'affichage dans l'app suffit */ }
+  }, [showToast]);
+
+  // Dernier solde vu, par compte + réseau + actif. Les soldes affichés
+  // (`tokens`) ne sont PAS rangés par réseau : au changement de réseau, le
+  // solde USDT devient celui de l'autre réseau. Comparer `tokens` d'un relevé
+  // à l'autre crierait donc « fonds reçus » à chaque changement. On compare
+  // au contraire chaque relevé, au moment où il est fait, au précédent relevé
+  // de la MÊME clé. Le premier relevé d'une clé sert de référence, sans
+  // notification (sinon tout le solde « arriverait » au déverrouillage).
+  const balanceSeenRef = useRef({});
+  const noteBalance = useCallback((key, symbol, value, placeLabel) => {
+    const v = typeof value === 'number' ? value : parseFloat(value);
+    if (!Number.isFinite(v)) return;
+    const prev = balanceSeenRef.current[key];
+    balanceSeenRef.current[key] = v;
+    if (prev === undefined) return;
+    const delta = v - prev;
+    if (delta > 1e-9) {
+      const amount = Number(delta.toPrecision(6)).toString();
+      notify({ title: 'Fonds reçus', body: `+${amount} ${symbol}${placeLabel ? ` sur ${placeLabel}` : ''}` });
+    }
+  }, [notify]);
+
+  // Suivi d'un envoi EVM jusqu'à sa confirmation : avant, l'app disait
+  // « Transaction soumise » puis plus rien. On interroge le réseau toutes les
+  // 10 s, 30 min au plus, et l'on arrête tout au verrouillage.
+  const sendTrackersRef = useRef(new Set());
+  const trackSendConfirmation = useCallback(({ txHash, net, token, amount }) => {
+    if (!txHash) return;
+    const placeLabel = NETWORK_INFO[net]?.label || net;
+    const provider = localWallet.getProvider(net);
+    const startedAt = Date.now();
+    const tracker = { stopped: false, timer: null };
+    const stop = () => { tracker.stopped = true; if (tracker.timer) clearTimeout(tracker.timer); sendTrackersRef.current.delete(stop); };
+    sendTrackersRef.current.add(stop);
+    const check = async () => {
+      if (tracker.stopped) return;
+      try {
+        const receipt = await provider.getTransactionReceipt(txHash);
+        if (tracker.stopped) return;
+        if (receipt && receipt.blockNumber) {
+          if (receipt.status === 1) notify({ title: '✅ Envoi confirmé', body: `${amount} ${token} sur ${placeLabel}` });
+          else notify({ title: '❌ Envoi échoué', body: `Le réseau a rejeté l'envoi de ${amount} ${token}.`, type: 'error' });
+          stop();
+          return;
+        }
+      } catch { /* nœud momentanément injoignable : on retente */ }
+      if (Date.now() - startedAt > 30 * 60 * 1000) { stop(); return; }
+      tracker.timer = setTimeout(check, 10000);
+    };
+    tracker.timer = setTimeout(check, 8000);
+  }, [notify]);
+
+  useEffect(() => {
+    // Verrouillage ou changement de compte : on arrête les suivis d'envoi. Les
+    // références de soldes, elles, restent (clés par adresse) : des fonds
+    // arrivés pendant le verrouillage seront signalés au déverrouillage.
+    const trackers = sendTrackersRef.current;
+    return () => { trackers.forEach((stop) => stop()); };
+  }, [walletAddr]);
+
   const refreshPortfolio = useCallback(async (selectedNetwork = network) => {
     if (!walletAddr) return;
     // Mode détresse : ne JAMAIS récupérer le vrai solde, sinon il finirait
@@ -3147,6 +3234,7 @@ function AppContent({ themeMode, changeTheme }) {
       const nativeSymbol = { bsc: 'BNB', polygon: 'MATIC' }[selectedNetwork] || 'ETH';
       const nativeBalance = await localWallet.getNativeBalance(walletAddr, selectedNetwork);
       setWalletBalance(nativeBalance);
+      noteBalance(`${walletAddr}:${selectedNetwork}:${nativeSymbol}`, nativeSymbol, nativeBalance, NETWORK_INFO[selectedNetwork]?.label);
       setTokens(prev => ({
         ...prev,
         [nativeSymbol]: { ...prev[nativeSymbol], balance: parseFloat(nativeBalance) },
@@ -3158,6 +3246,7 @@ function AppContent({ themeMode, changeTheme }) {
         try {
           const balance = await localWallet.getErc20Balance(walletAddr, sym, selectedNetwork);
           erc20Balances[sym] = parseFloat(balance);
+          noteBalance(`${walletAddr}:${selectedNetwork}:${sym}`, sym, balance, NETWORK_INFO[selectedNetwork]?.label);
           setTokens(prev => ({
             ...prev,
             [sym]: { ...prev[sym], balance: parseFloat(balance) },
@@ -3192,7 +3281,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
       setIsOffline(true);
     }
-  }, [network, walletAddr, isDuressMode]);
+  }, [network, walletAddr, isDuressMode, noteBalance]);
 
   // Solde SOL — même principe (RPC public direct, pas de clé nécessaire),
   // mais indépendant du sélecteur réseau EVM (Solana n'en fait pas partie).
@@ -3202,10 +3291,11 @@ function AppContent({ themeMode, changeTheme }) {
       const balance = await localWallet.getSolanaBalance(solanaAddr);
       setSolanaBalance(balance);
       setTokens(prev => ({ ...prev, SOL: { ...prev.SOL, balance: parseFloat(balance) } }));
+      if (!isDuressMode) noteBalance(`${solanaAddr}:solana:SOL`, 'SOL', balance, 'Solana');
     } catch (err) {
       console.warn('refreshSolanaBalance error', err.message);
     }
-  }, [solanaAddr]);
+  }, [solanaAddr, isDuressMode, noteBalance]);
 
   useEffect(() => { refreshSolanaBalance(); }, [refreshSolanaBalance]);
 
@@ -3216,12 +3306,26 @@ function AppContent({ themeMode, changeTheme }) {
       const balance = await localWallet.getBitcoinBalance(bitcoinAddr);
       setBitcoinBalance(balance);
       setTokens(prev => ({ ...prev, BTC: { ...prev.BTC, balance: parseFloat(balance) } }));
+      if (!isDuressMode) noteBalance(`${bitcoinAddr}:bitcoin:BTC`, 'BTC', balance, 'Bitcoin');
     } catch (err) {
       console.warn('refreshBitcoinBalance error', err.message);
     }
-  }, [bitcoinAddr]);
+  }, [bitcoinAddr, isDuressMode, noteBalance]);
 
   useEffect(() => { refreshBitcoinBalance(); }, [refreshBitcoinBalance]);
+
+  // SOL et BTC n'étaient relevés qu'au chargement (et après un envoi de
+  // l'utilisateur) : des SOL ou BTC reçus pendant que l'app est ouverte ne
+  // mettaient même pas le solde à jour, et ne pouvaient donc pas être
+  // signalés. Relevé toutes les 60 s, hors mode détresse.
+  useEffect(() => {
+    if (isDuressMode || (!solanaAddr && !bitcoinAddr)) return;
+    const id = setInterval(() => {
+      refreshSolanaBalance();
+      refreshBitcoinBalance();
+    }, 60000);
+    return () => clearInterval(id);
+  }, [isDuressMode, solanaAddr, bitcoinAddr, refreshSolanaBalance, refreshBitcoinBalance]);
 
   // Historique — données publiques de la blockchain (Etherscan), aucune clé
   // impliquée. Chargé à la demande, à l'ouverture de la modale "Activité".
@@ -4356,23 +4460,10 @@ function AppContent({ themeMode, changeTheme }) {
     return () => clearInterval(id);
   }, [walletAddr, network, refreshPortfolio]);
 
-  const previousBalanceRef = useRef(null);
-  useEffect(() => {
-    if (!walletBalance || Platform.OS === 'web') { previousBalanceRef.current = walletBalance; return; }
-    const prev = previousBalanceRef.current;
-    const current = parseFloat(walletBalance);
-    if (prev != null && current > parseFloat(prev) + 1e-12) {
-      const received = current - parseFloat(prev);
-      Notifications.scheduleNotificationAsync({
-        content: {
-          title: '💰 Fonds reçus',
-          body: `+${received.toFixed(6)} ${nativeSymbol} sur ${activeNetwork.label}`,
-        },
-        trigger: null, // immédiat
-      }).catch(() => { /* notifications refusées, pas grave */ });
-    }
-    previousBalanceRef.current = walletBalance;
-  }, [walletBalance, nativeSymbol, activeNetwork]);
+  // (L'ancienne notification de réception — natif seulement, crypto native du
+  // réseau actif seulement, et fausse alerte possible au changement de réseau
+  // puisqu'elle comparait walletBalance d'un réseau à l'autre — est remplacée
+  // par noteBalance, appelé à chaque relevé de solde.)
 
   useEffect(() => {
     loadDuressPinRecord().then(record => setDuressPinConfigured(!!record));
@@ -5762,9 +5853,10 @@ function AppContent({ themeMode, changeTheme }) {
 
       const txHash = response.data.txHash;
       playTone('success');
+      trackSendConfirmation({ txHash, net: network, token: sendToken, amount: sendAmount });
       showAlert(
         '✅ Transaction Soumise!',
-        `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}`,
+        `${sendToken} envoyé avec succès !\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}\n\nTu seras prévenu dès qu'elle est confirmée.`,
         [
           { text: 'Copier Hash', onPress: () => copyToClipboard(txHash, 'Hash copié'), style: 'default' },
           { text: 'OK' }
