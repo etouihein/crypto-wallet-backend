@@ -251,3 +251,88 @@ test('une erreur définitive ne déclenche aucun réessai inutile', async () => 
   // le retenter 3 fois (on en compterait 12).
   assert.equal(appels, 4, 'un appel par action et par API, sans réessai');
 });
+
+// ── Dernier filet : api.blockscout.com (DevPortal, payant) ───────────────────
+// Blockscout annonce le retrait de Base, Polygon et ZkSync de son offre DevPortal
+// gratuite au 01/10/2026. Les instances publiques par réseau, elles, restent
+// gratuites et sans clé (vérifié le 18/09/2026 : 200 sur base.blockscout.com et
+// explorer.optimism.io). Ce niveau n'existe que pour le jour où ça changerait.
+
+const KEY = 'cle-devportal-de-test';
+const estMultichaine = (u) => String(u).includes('api.blockscout.com');
+
+test("le chemin normal n'appelle JAMAIS l'API payante", async () => {
+  for (const network of ['optimism', 'base']) {
+    const called = [];
+    const sources = createHistorySources({
+      env: { BLOCKSCOUT_API_KEY: KEY }, // clé présente : elle ne doit rien changer
+      fetchImpl: async (url) => {
+        called.push(String(url));
+        return json(fixture(`blockscout-${network}-${new URL(url).searchParams.get('action')}`));
+      },
+    });
+    const result = await sources.fetchRawHistory({ network, address: ADDRESS, limit: 25 });
+    assert.equal(result.source, 'blockscout', `${network} : l'instance publique doit servir`);
+    assert.ok(!called.some(estMultichaine), `${network} : aucun crédit consommé tant que le gratuit répond`);
+  }
+});
+
+test("instance publique morte et clé présente : api.blockscout.com prend le relais, au bon format", async () => {
+  const called = [];
+  const sources = createHistorySources({
+    retries: 1,
+    env: { BLOCKSCOUT_API_KEY: KEY },
+    fetchImpl: async (url) => {
+      called.push(String(url));
+      // Le jour redouté : l'instance publique passe au payant, sur ses deux API.
+      if (!estMultichaine(url)) return new Response('{"error":"Proceed with API key"}', { status: 402 });
+      return json(fixture(`blockscout-base-${new URL(url).searchParams.get('action')}`));
+    },
+  });
+  const result = await sources.fetchRawHistory({ network: 'base', address: ADDRESS, limit: 25 });
+
+  assert.equal(result.source, 'blockscout-devportal');
+  assert.ok(result.native.length > 0, 'un historique réel, pas une liste vide déguisée');
+  assertShape(result.native, NATIVE_FIELDS, 'devportal natif');
+  assertShape(result.tokens, TOKEN_FIELDS, 'devportal jetons');
+
+  const payants = called.filter(estMultichaine);
+  assert.ok(payants.length > 0, 'le secours a bien été tenté');
+  // Adressage par identifiant de chaîne, et la clé est transmise — sans elle
+  // l'API répond 402 et le secours ne servirait à rien.
+  for (const u of payants) {
+    assert.ok(u.includes('api.blockscout.com/8453/api?'), `chaîne 8453 attendue dans ${u}`);
+    assert.equal(new URL(u).searchParams.get('apikey'), KEY);
+  }
+});
+
+test("sans clé, c'est la panne réelle qui remonte, pas l'absence d'un secours facultatif", async () => {
+  const called = [];
+  const sources = createHistorySources({
+    retries: 1,
+    env: {}, // aucune BLOCKSCOUT_API_KEY
+    fetchImpl: async (url) => {
+      called.push(String(url));
+      return new Response('{"error":"Proceed with API key"}', { status: 402 });
+    },
+  });
+  await assert.rejects(
+    () => sources.fetchRawHistory({ network: 'base', address: ADDRESS, limit: 25 }),
+    (err) => {
+      assert.match(err.message, /402/, 'le message doit décrire la vraie panne');
+      assert.doesNotMatch(err.message, /BLOCKSCOUT_API_KEY/, "ne pas masquer la panne derrière une variable manquante");
+      return true;
+    },
+  );
+  assert.ok(!called.some(estMultichaine), 'sans clé, ne pas frapper une porte qui répondra 402');
+});
+
+test("BNB Chain n'emprunte jamais ce chemin : api.blockscout.com ne la couvre pas", async () => {
+  // « Network not supported » sur api.blockscout.com/56, vérifié le 18/09/2026.
+  assert.equal(PRIMARY_SOURCE.bsc, 'nodereal');
+  const sources = createHistorySources({ env: { BLOCKSCOUT_API_KEY: KEY }, fetchImpl: async () => { throw new Error('aucun appel attendu'); } });
+  await assert.rejects(
+    () => sources.blockscoutDevPortal('bsc', ADDRESS, 25),
+    /ne couvre pas le reseau bsc/,
+  );
+});

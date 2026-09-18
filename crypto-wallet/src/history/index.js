@@ -21,6 +21,10 @@
 //     gasUsed, gasPrice et receiptsStatus : les frais de gaz payés et les
 //     transactions échouées sont connus sans appel supplémentaire.
 //
+// Si l'instance publique d'un réseau tombe, un dernier niveau payant prend le
+// relais : api.blockscout.com, l'API multichaîne du DevPortal, qui exige une
+// clé. Elle n'est jamais appelée tant que le gratuit répond.
+//
 // Toutes les sources rendent la même chose : deux listes brutes au format
 // Etherscan, { native, tokens }. La route reste seule responsable de la mise
 // en forme envoyée à l'app.
@@ -37,6 +41,20 @@ const BLOCKSCOUT_HOSTS = {
   optimism: 'https://explorer.optimism.io',
   base: 'https://base.blockscout.com',
 };
+
+// Dernier recours, payant : l'API multichaîne du DevPortal, adressée par
+// identifiant de chaîne (https://api.blockscout.com/8453/api...). Sans clé elle
+// répond 402. Elle n'entre en jeu que si l'instance publique du réseau tombe —
+// le jour où Blockscout mettrait ses instances gratuites derrière le même
+// compteur (annoncé pour Base, Polygon et ZkSync au 1er octobre 2026 sur
+// l'offre DevPortal), l'écran Activité continuerait de fonctionner.
+const BLOCKSCOUT_MULTICHAIN = 'https://api.blockscout.com';
+
+// Couverture vérifiée une chaîne à la fois le 18/09/2026. BNB Chain en est
+// ABSENTE (« Network not supported ») : c'est pourquoi cette table est distincte
+// d'ETHERSCAN_CHAIN_IDS, qui elle contient 56. Sans conséquence, BNB Chain passe
+// par NodeReal et n'emprunte jamais ce chemin.
+const BLOCKSCOUT_MULTICHAIN_CHAIN_IDS = { ethereum: 1, polygon: 137, arbitrum: 42161, optimism: 10, base: 8453 };
 
 // Source principale par réseau. Un réseau absent de cette table (sepolia...)
 // garde exactement le comportement d'avant : Etherscan, chainid 1 par défaut.
@@ -101,14 +119,32 @@ function createHistorySources({ fetchImpl, env = process.env, logger = console, 
   // et sur Arbitrum (bloc 505 000 000) elle le figeait à juin 2023. Vérifié le
   // 16/09/2026 : la même requête sans borne renvoie bien les transactions
   // récentes. Sans borne, le défaut des deux API est « toute la chaîne ».
-  async function blockscoutLegacy(network, address, limit) {
-    const host = BLOCKSCOUT_HOSTS[network];
-    if (!host) throw new Error(`Blockscout ne couvre pas le reseau ${network}`);
-    const apiKey = env.BLOCKSCOUT_API_KEY;
+  // Un seul lecteur pour les deux hôtes possibles : l'instance publique du
+  // réseau et, en dernier recours, l'API multichaîne payante. Les deux servent
+  // le même format « compatible Etherscan », seul l'hôte change.
+  async function legacyAt(host, address, limit, apiKey, source) {
     const base = { module: 'account', address, page: 1, offset: limit, sort: 'desc', ...(apiKey ? { apikey: apiKey } : {}) };
     const call = async (action) => readList(await getJson(`${host}/api?${new URLSearchParams({ ...base, action })}`), `Blockscout ${action}`);
     const [native, tokens] = await Promise.all([call('txlist'), call('tokentx')]);
-    return { native, tokens, source: 'blockscout' };
+    return { native, tokens, source };
+  }
+
+  async function blockscoutLegacy(network, address, limit) {
+    const host = BLOCKSCOUT_HOSTS[network];
+    if (!host) throw new Error(`Blockscout ne couvre pas le reseau ${network}`);
+    // Vérifié le 18/09/2026 : les instances publiques acceptent le paramètre
+    // apikey sans broncher (200), qu'elles s'en servent ou non.
+    return legacyAt(host, address, limit, env.BLOCKSCOUT_API_KEY, 'blockscout');
+  }
+
+  // Dernier recours, payant : n'est atteint que si les deux niveaux gratuits
+  // ont échoué, donc ne consomme aucun crédit en temps normal.
+  async function blockscoutDevPortal(network, address, limit) {
+    const apiKey = env.BLOCKSCOUT_API_KEY;
+    if (!apiKey) throw new Error('BLOCKSCOUT_API_KEY manquante dans .env');
+    const chainId = BLOCKSCOUT_MULTICHAIN_CHAIN_IDS[network];
+    if (!chainId) throw new Error(`api.blockscout.com ne couvre pas le reseau ${network}`);
+    return legacyAt(`${BLOCKSCOUT_MULTICHAIN}/${chainId}`, address, limit, apiKey, 'blockscout-devportal');
   }
 
   const isoToSeconds = (v) => String(Math.floor(Date.parse(v) / 1000) || 0);
@@ -157,7 +193,15 @@ function createHistorySources({ fetchImpl, env = process.env, logger = console, 
       return await blockscoutLegacy(network, address, limit);
     } catch (error) {
       logger.warn(`Historique ${network} : API Blockscout classique indisponible (${error.message}), passage à l'API REST v2.`);
-      return blockscoutRest(network, address, limit);
+      try {
+        return await blockscoutRest(network, address, limit);
+      } catch (restError) {
+        // Sans clé, on remonte l'erreur de l'instance publique : c'est elle qui
+        // décrit la vraie panne, pas l'absence d'un secours facultatif.
+        if (!env.BLOCKSCOUT_API_KEY) throw restError;
+        logger.warn(`Historique ${network} : instance publique injoignable (${restError.message}), repli sur api.blockscout.com (payant).`);
+        return blockscoutDevPortal(network, address, limit);
+      }
     }
   }
 
@@ -247,7 +291,7 @@ function createHistorySources({ fetchImpl, env = process.env, logger = console, 
     }
   }
 
-  return { fetchRawHistory, etherscan, blockscout, blockscoutLegacy, blockscoutRest, nodereal };
+  return { fetchRawHistory, etherscan, blockscout, blockscoutLegacy, blockscoutRest, blockscoutDevPortal, nodereal };
 }
 
-module.exports = { createHistorySources, ETHERSCAN_CHAIN_IDS, BLOCKSCOUT_HOSTS, PRIMARY_SOURCE };
+module.exports = { createHistorySources, ETHERSCAN_CHAIN_IDS, BLOCKSCOUT_HOSTS, BLOCKSCOUT_MULTICHAIN, BLOCKSCOUT_MULTICHAIN_CHAIN_IDS, PRIMARY_SOURCE };
