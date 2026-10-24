@@ -53,6 +53,7 @@ import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
+import { DESIGN_TOKENS } from './lib/designTokens';
 import { ethers } from 'ethers';
 import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -2463,6 +2464,16 @@ function AppContent({ themeMode, changeTheme }) {
   // au chargement) se met à jour quand la fenêtre est redimensionnée.
   const { width: winWidth } = useWindowDimensions();
   const isWideWeb = Platform.OS === 'web' && winWidth >= 860;
+  // Phase 1 — navigation de la page d'accueil : positions des sections
+  // vitrine, mesurées au rendu, pour un défilement sans nouvel état.
+  const landingScrollRef = useRef(null);
+  const landingSectionY = useRef({});
+  const scrollToLandingSection = (key) => {
+    const y = landingSectionY.current[key];
+    if (landingScrollRef.current && typeof y === 'number') {
+      landingScrollRef.current.scrollTo({ y: Math.max(0, y - 12), animated: true });
+    }
+  };
   const [pinCode, setPinCode]         = useState('');
   const [isUnlocked, setIsUnlocked]   = useState(false);
   const [isDuressMode, setIsDuressMode] = useState(false); // voir hashDuressPin — wallet à solde nul, jamais la vraie clé
@@ -6352,28 +6363,40 @@ function AppContent({ themeMode, changeTheme }) {
     // Palette claire et épurée, indépendante du thème (l'accueil est public,
     // vu avant tout choix de thème). Accent vert = positif, pas le violet
     // "startup IA". Volontairement minimal : marque, phrase, bouton, 3 repères.
+    // Phase 1 : la palette claire de la page d'accueil vient des tokens
+    // partagés (lib/designTokens.js) — le blanc n'y est écrit qu'une fois.
     const L = {
-      bg: '#FFFFFF',
-      text: '#0B1215',
-      soft: '#5B6672',
-      accent: '#10B981',
-      chip: '#F2F5F7',
-      border: '#E4E9EC',
+      bg: DESIGN_TOKENS.white,
+      text: DESIGN_TOKENS.ink,
+      soft: DESIGN_TOKENS.soft,
+      accent: DESIGN_TOKENS.accent,
+      chip: DESIGN_TOKENS.chip,
+      border: DESIGN_TOKENS.border,
     };
-    const impInput = { borderWidth: 1, borderColor: L.border, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 12, fontSize: 14, color: L.text, backgroundColor: '#fff', minHeight: 46 };
+    const impInput = { borderWidth: 1, borderColor: L.border, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 12, fontSize: 14, color: L.text, backgroundColor: DESIGN_TOKENS.white, minHeight: 46 };
     const primaryBtn = { backgroundColor: L.accent, borderRadius: 16, paddingVertical: 17, alignItems: 'center', width: '100%' };
     return (
       <SafeAreaView style={[st.land_screen, { backgroundColor: L.bg }, isWideWeb && st.land_screen_wide]}>
         <StatusBar barStyle="dark-content" />
-        <ScrollView style={st.land_scroll_flex} contentContainerStyle={{ paddingBottom: 40, alignItems: 'center' }} showsVerticalScrollIndicator={false}>
-          <View style={{ width: '100%', maxWidth: 420, paddingHorizontal: 24, paddingTop: 30, alignItems: 'center' }}>
+        <ScrollView ref={landingScrollRef} style={st.land_scroll_flex} contentContainerStyle={{ paddingBottom: 40, alignItems: 'center' }} showsVerticalScrollIndicator={false}>
+          <View style={{ width: '100%', maxWidth: isWideWeb ? 860 : 420, paddingHorizontal: isWideWeb ? 48 : 24, paddingTop: 30, alignItems: 'center' }}>
 
-            {/* Marque */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 44 }}>
-              <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: L.accent, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                <Text style={{ fontSize: 17 }}>🛡️</Text>
+            {/* Phase 1 — barre de navigation minimale : logo, sections
+                de la page (défilement interne) et contact. Aucun lien
+                vers un téléchargement d'app, qui n'existe pas encore. */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 44, gap: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: L.accent, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                  <Ionicons name="shield-checkmark" size={18} color={DESIGN_TOKENS.white} />
+                </View>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: L.text }}>NexiaWallet</Text>
               </View>
-              <Text style={{ fontSize: 17, fontWeight: '800', color: L.text }}>NexiaWallet</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+                <TouchableOpacity onPress={() => scrollToLandingSection('produit')}><Text style={{ fontSize: 13, fontWeight: '700', color: L.text }}>{t('landing_nav_produit')}</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => scrollToLandingSection('reseaux')}><Text style={{ fontSize: 13, fontWeight: '700', color: L.text }}>{t('landing_nav_reseaux')}</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => scrollToLandingSection('securite')}><Text style={{ fontSize: 13, fontWeight: '700', color: L.text }}>{t('landing_nav_securite')}</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => Linking.openURL('mailto:contact@nexiawallet.com')}><Text style={{ fontSize: 13, fontWeight: '700', color: L.text }}>{t('landing_nav_contact')}</Text></TouchableOpacity>
+              </View>
             </View>
 
             {/* Accroche */}
@@ -6384,6 +6407,9 @@ function AppContent({ themeMode, changeTheme }) {
               {t('landing_subtitle')}
             </Text>
 
+            {/* Onboarding, visuellement séparé de la vitrine ci-dessous */}
+            <Text style={{ fontSize: 12, fontWeight: '800', letterSpacing: 1.2, color: L.soft, marginTop: 20, marginBottom: 12, textAlign: 'center' }}>{t('landing_onboarding_title')}</Text>
+            <View style={{ width: '100%', borderWidth: 1, borderColor: L.border, borderRadius: 18, padding: 16, backgroundColor: DESIGN_TOKENS.white }}>
             {/* Boutons — tout en haut */}
             <View style={{ width: '100%', marginTop: 30 }}>
               <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
@@ -6398,9 +6424,9 @@ function AppContent({ themeMode, changeTheme }) {
 
             {/* 3 repères */}
             <View style={{ flexDirection: 'row', marginTop: 24, width: '100%' }}>
-              {[['🔒', t('landing_chip_noncustodial')], ['⚡', t('landing_chip_instant')], ['🌍', t('landing_chip_networks')]].map(([ic, lb], i) => (
+              {[['lock-closed-outline', t('landing_chip_noncustodial')], ['flash-outline', t('landing_chip_instant')], ['globe-outline', t('landing_chip_networks')]].map(([ic, lb], i) => (
                 <View key={lb} style={{ flex: 1, backgroundColor: L.chip, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginLeft: i ? 8 : 0 }}>
-                  <Text style={{ fontSize: 18 }}>{ic}</Text>
+                  <Ionicons name={ic} size={20} color={L.accent} />
                   <Text style={{ fontSize: 12, fontWeight: '700', color: L.text, marginTop: 6 }}>{lb}</Text>
                 </View>
               ))}
@@ -6419,7 +6445,7 @@ function AppContent({ themeMode, changeTheme }) {
                     autoCapitalize="characters"
                   />
                   <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 10 }} onPress={() => applyReferralCode(referralInputValue)}>
-                    <Text style={{ color: '#fff', fontWeight: '800' }}>{t('common_validate')}</Text>
+                    <Text style={{ color: DESIGN_TOKENS.white, fontWeight: '800' }}>{t('common_validate')}</Text>
                   </AnimPressable>
                   <TouchableOpacity onPress={() => { setReferralInputMode(false); setReferralInputValue(''); }} style={{ marginTop: 10 }}>
                     <Text style={{ color: L.soft, fontSize: 12, textAlign: 'center' }}>{t('common_cancel')}</Text>
@@ -6435,10 +6461,10 @@ function AppContent({ themeMode, changeTheme }) {
             {/* Import */}
             {importMode && (
               <View style={{ width: '100%', marginTop: 16, backgroundColor: L.chip, borderRadius: 16, padding: 16 }}>
-                <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: 10, padding: 3, marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', backgroundColor: DESIGN_TOKENS.white, borderRadius: 10, padding: 3, marginBottom: 12 }}>
                   {[['mnemonic', t('import_tab_words')], ['privateKey', t('import_tab_private_key')], ['keystore', t('import_tab_keystore')]].map(([tp, lb]) => (
                     <TouchableOpacity key={tp} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: importType === tp ? L.accent : 'transparent' }} onPress={() => setImportType(tp)}>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: importType === tp ? '#fff' : L.soft }}>{lb}</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: importType === tp ? DESIGN_TOKENS.white : L.soft }}>{lb}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -6464,14 +6490,73 @@ function AppContent({ themeMode, changeTheme }) {
                 )}
                 {importError ? <Text style={st.import_error}>{importError}</Text> : null}
                 <AnimPressable style={{ backgroundColor: L.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 12 }} onPress={importWallet}>
-                  <Text style={{ color: '#fff', fontWeight: '800' }}>{t('import_button')}</Text>
+                  <Text style={{ color: DESIGN_TOKENS.white, fontWeight: '800' }}>{t('import_button')}</Text>
                 </AnimPressable>
               </View>
             )}
 
+            </View>
+
+            {/* ── Vitrine (Phase 1) : distincte de l'onboarding ci-dessus.
+                Contenu repris du README et des CGU, sans chiffre inventé. */}
+            <View style={{ width: '100%', height: 1, backgroundColor: L.border, marginTop: 36, marginBottom: 8 }} />
+
+            <View style={{ width: '100%', marginTop: 24 }} onLayout={(e) => { landingSectionY.current.produit = e.nativeEvent.layout.y; }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: L.text, textAlign: isWideWeb ? 'left' : 'center' }}>{t('landing_showcase_title')}</Text>
+              <Text style={{ fontSize: 14, lineHeight: 21, color: L.soft, marginTop: 10, textAlign: isWideWeb ? 'left' : 'center' }}>{t('landing_showcase_sub')}</Text>
+              <View style={{ flexDirection: isWideWeb ? 'row' : 'column', gap: 12, marginTop: 18 }}>
+                {[
+                  ['key-outline', t('landing_feature_keys_title'), t('landing_feature_keys_desc')],
+                  ['flash-outline', t('landing_feature_instant_title'), t('landing_feature_instant_desc')],
+                  ['globe-outline', t('landing_feature_networks_title'), t('landing_feature_networks_desc')],
+                ].map(([ic, ti, de]) => (
+                  <View key={ti} style={{ flex: 1, backgroundColor: L.chip, borderRadius: 14, padding: 16 }}>
+                    <Ionicons name={ic} size={22} color={L.accent} />
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: L.text, marginTop: 10 }}>{ti}</Text>
+                    <Text style={{ fontSize: 13, lineHeight: 19, color: L.soft, marginTop: 6 }}>{de}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={{ width: '100%', marginTop: 32 }} onLayout={(e) => { landingSectionY.current.reseaux = e.nativeEvent.layout.y; }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: L.text, textAlign: isWideWeb ? 'left' : 'center' }}>{t('landing_networks_title')}</Text>
+              <Text style={{ fontSize: 13, lineHeight: 20, color: L.soft, marginTop: 10 }}>{t('landing_networks_desc')}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+                {['Ethereum', 'BNB Smart Chain', 'Polygon', 'Arbitrum', 'Optimism', 'Base', 'Solana', 'Bitcoin'].map((n) => (
+                  <View key={n} style={{ backgroundColor: L.chip, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: L.text }}>{n}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
+                <Ionicons name="flash-outline" size={18} color={L.accent} />
+                <Text style={{ flex: 1, fontSize: 12, lineHeight: 18, color: L.soft }}>{t('landing_instant_note')}</Text>
+              </View>
+            </View>
+
+            <View style={{ width: '100%', marginTop: 32 }} onLayout={(e) => { landingSectionY.current.securite = e.nativeEvent.layout.y; }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: L.text, textAlign: isWideWeb ? 'left' : 'center' }}>{t('landing_security_title')}</Text>
+              <View style={{ gap: 14, marginTop: 14 }}>
+                {[
+                  [t('landing_security_1_title'), t('landing_security_1_desc')],
+                  [t('landing_security_2_title'), t('landing_security_2_desc')],
+                  [t('landing_security_3_title'), t('landing_security_3_desc')],
+                ].map(([ti, de]) => (
+                  <View key={ti} style={{ flexDirection: 'row', gap: 10 }}>
+                    <Ionicons name="checkmark-circle-outline" size={20} color={L.accent} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: L.text }}>{ti}</Text>
+                      <Text style={{ fontSize: 13, lineHeight: 19, color: L.soft, marginTop: 4 }}>{de}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+
             {/* Anti-phishing */}
-            <View style={{ width: '100%', marginTop: 28, backgroundColor: '#FFF7ED', borderRadius: 12, padding: 12 }}>
-              <Text style={{ color: '#9A6B2E', fontSize: 11.5, lineHeight: 17 }}>
+            <View style={{ width: '100%', alignSelf: 'stretch', marginTop: 28, backgroundColor: DESIGN_TOKENS.warningBg, borderRadius: 12, padding: 14 }}>
+              <Text style={{ flexShrink: 1, color: DESIGN_TOKENS.warningText, fontSize: 12, lineHeight: 18 }}>
                 {t('landing_antiphishing')}
               </Text>
             </View>
@@ -6490,6 +6575,10 @@ function AppContent({ themeMode, changeTheme }) {
               ))}
             </View>
             <Text style={{ color: L.soft, fontSize: 11, marginTop: 12, letterSpacing: 0.4 }}>{t('landing_footer_tagline')}</Text>
+            <TouchableOpacity onPress={() => Linking.openURL('mailto:contact@nexiawallet.com')} style={{ marginTop: 12 }}>
+              <Text style={{ color: L.soft, fontSize: 11, textDecorationLine: 'underline' }}>contact@nexiawallet.com</Text>
+            </TouchableOpacity>
+            <Text style={{ color: L.soft, fontSize: 11, lineHeight: 16, marginTop: 10, textAlign: 'center' }}>{t('landing_footer_app')}</Text>
 
           </View>
         </ScrollView>
