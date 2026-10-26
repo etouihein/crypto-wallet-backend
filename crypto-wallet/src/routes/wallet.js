@@ -594,30 +594,61 @@ router.get('/coin/:cgId/candles', async (req, res) => {
   }
 });
 
-// News crypto — flux RSS CoinDesk, public et gratuit, pas de clé requise.
+// Actus — agrégation multi-sources, flux RSS publics et gratuits, pas de clé.
+// Crypto : CoinDesk, CoinTelegraph. Économie mondiale : BBC Business, Le Monde
+// Économie. Cache 5 min côté backend, rafraîchissement 5 min côté client.
+// Une source en panne ne casse pas les autres : chaque flux est récupéré
+// séparément, les échecs sont ignorés, le tri se fait par date décroissante.
+const NEWS_SOURCES = [
+  { name: 'CoinDesk', category: 'crypto', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+  { name: 'CoinTelegraph', category: 'crypto', url: 'https://cointelegraph.com/rss' },
+  { name: 'BBC Business', category: 'economy', url: 'https://feeds.bbci.co.uk/news/business/rss.xml' },
+  { name: 'Le Monde Économie', category: 'economy', url: 'https://www.lemonde.fr/economie/rss_full.xml' },
+];
+
 async function fetchCryptoNews() {
   return cachedFetch('news', 5 * 60_000, fetchCryptoNewsUncached);
 }
 
 async function fetchCryptoNewsUncached() {
-  const response = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss/');
-  if (!response.ok) throw new Error(`RSS error ${response.status}`);
-  const xml = await response.text();
   const decodeEntities = (s) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
   const pick = (block, tag) => {
     const m = block.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`));
     return m ? decodeEntities(m[1].trim()) : '';
   };
-  const pickImage = (block) => decodeEntities(block.match(/<media:content url="([^"]+)"/)?.[1] || '');
-  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
-    .slice(0, 20)
-    .map(([, block]) => ({
-      title: pick(block, 'title'),
-      link: pick(block, 'link'),
-      pubDate: pick(block, 'pubDate'),
-      description: pick(block, 'description').replace(/<[^>]+>/g, '').slice(0, 220),
-      image: pickImage(block),
-    }));
+  const pickImage = (block) => decodeEntities(
+    block.match(/<media:content url="([^"]+)"/)?.[1]
+    || block.match(/<enclosure url="([^"]+)"[^>]*type="image\/[^"]+"/)?.[1]
+    || ''
+  );
+  const fetchOne = async (source) => {
+    const response = await fetch(source.url, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(`RSS error ${response.status} for ${source.name}`);
+    const xml = await response.text();
+    return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+      .slice(0, 15)
+      .map(([, block]) => ({
+        title: pick(block, 'title'),
+        link: pick(block, 'link'),
+        pubDate: pick(block, 'pubDate'),
+        description: pick(block, 'description').replace(/<[^>]+>/g, '').slice(0, 220),
+        image: pickImage(block),
+        source: source.name,
+        category: source.category,
+      }))
+      .filter((item) => item.title && item.link);
+  };
+  const settled = await Promise.allSettled(NEWS_SOURCES.map(fetchOne));
+  const items = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+  const seen = new Set();
+  return items
+    .filter((item) => {
+      if (seen.has(item.link)) return false;
+      seen.add(item.link);
+      return true;
+    })
+    .sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0))
+    .slice(0, 30);
 }
 
 router.get('/news', async (req, res) => {
