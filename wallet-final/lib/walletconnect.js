@@ -33,7 +33,13 @@ const SUPPORTED_EVM_CHAINS = {
   'eip155:8453': 'base',
 };
 
-const SUPPORTED_METHODS = ['personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'eth_sendTransaction'];
+// Phase 6 (audit H3) : eth_sign RETIRÉ — signer un hash brut de 32 octets
+// peut équivaloir à signer une transaction ou un ordre (ex. listing NFT)
+// sans que l'UI puisse l'expliquer. personal_sign suffit pour 99 % des
+// dApps légitimes. Toute demande eth_sign tombe désormais sur l'erreur
+// "Méthode non supportée" dans executeSessionRequest, et la modale WC/dApp
+// l'affiche comme refusée avec un avertissement rouge.
+const SUPPORTED_METHODS = ['personal_sign', 'eth_signTypedData', 'eth_signTypedData_v4', 'eth_sendTransaction'];
 const SUPPORTED_EVENTS = ['chainChanged', 'accountsChanged'];
 
 let walletKitInstance = null;
@@ -166,12 +172,8 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
     return wallet.signMessage(message);
   }
 
-  if (method === 'eth_sign') {
-    const [address, messageHex] = params;
-    if (address.toLowerCase() !== wallet.address.toLowerCase()) throw new Error('Adresse demandée différente du compte actif.');
-    return wallet.signMessage(ethers.utils.arrayify(messageHex));
-  }
-
+  // eth_sign : retiré en Phase 6 (voir SUPPORTED_METHODS) — on laisse
+  // tomber dans l'erreur "Méthode non supportée" ci-dessous, jamais signer.
   if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
     const [, typedDataJson] = params;
     const typedData = typeof typedDataJson === 'string' ? JSON.parse(typedDataJson) : typedDataJson;

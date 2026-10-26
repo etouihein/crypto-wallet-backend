@@ -53,8 +53,30 @@ const FRONTEND_URL = SINGLE_WELL_FORMED_ORIGIN_RE.test(rawFrontendUrl) ? rawFron
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/;
 const EXPO_TUNNEL_ORIGIN_RE = /^https:\/\/[a-z0-9-]+\.exp\.direct$/i;
 
+// M6 (audit sécurité 2026-10-26) — en production, isTrustedOrigin REFUSE les
+// tunnels *.exp.direct et les origines localhost / IP privées, y compris pour
+// returnUrl (routes /payments/* dans src/routes/wallet.js) : n'importe qui
+// peut créer son propre tunnel Expo, obtenir une URL de paiement légitime,
+// puis rediriger la victime après paiement vers son tunnel imitant
+// NexiaWallet. Ces origines ne sont trustées qu'en développement, où elles
+// sont indispensables (Expo web sur port variable, test sur téléphone en
+// LAN, tunnel qui change à chaque session). En production, seules les
+// origines publiques survivent : les domaines de PRODUCTION_ORIGINS plus
+// toute origine publique éventuellement ajoutée via FRONTEND_URLS — la
+// valeur par défaut 'http://localhost:8083' et toute IP privée/tunnel
+// présente dans FRONTEND_URLS sont filtrées ici, sinon le durcissement
+// serait contourné par la liste elle-même. NODE_ENV est lu à chaque appel
+// (pas figé au chargement) pour que le comportement suive l'environnement
+// réel du process. Conséquence assumée : ce durcissement s'applique aussi
+// au CORS (server.js utilise la même fonction) — en production, le site
+// public servi depuis nexiawallet.com / nexiawallet.fr reste accepté.
 function isTrustedOrigin(origin) {
   if (!origin) return false;
+  if (process.env.NODE_ENV === 'production') {
+    if (PRODUCTION_ORIGINS.includes(origin)) return true;
+    if (FRONTEND_URLS.includes(origin) && !LOCAL_ORIGIN_RE.test(origin) && !EXPO_TUNNEL_ORIGIN_RE.test(origin)) return true;
+    return false;
+  }
   if (FRONTEND_URLS.includes(origin)) return true;
   return LOCAL_ORIGIN_RE.test(origin) || EXPO_TUNNEL_ORIGIN_RE.test(origin);
 }

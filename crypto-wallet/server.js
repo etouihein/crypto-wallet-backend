@@ -55,14 +55,15 @@ if (ENV === 'production') {
 
 // Origines autorisées en CORS. En dev, Expo change souvent de port/IP (web
 // sur 8081, parfois 8083, IP LAN pour le téléphone, tunnel *.exp.direct qui
-// change de sous-domaine à chaque session...) — plutôt que de se faire
-// bloquer silencieusement à chaque changement, on accepte toujours
-// localhost/IP privée et les tunnels Expo, même en production : ce backend
-// sert à la fois de backend de dev et de prod, et ces routes sont déjà
-// protégées par x-api-key, donc l'origine n'est pas la seule barrière.
-// En plus de ça, la liste explicite FRONTEND_URLS (voir
-// src/config/allowedOrigins.js, partagé avec la validation de returnUrl
-// dans src/routes/wallet.js) reste vérifiée pour un vrai domaine de prod.
+// change de sous-domaine à chaque session...) — on accepte localhost/IP
+// privée et les tunnels Expo EN DÉVELOPPEMENT seulement. Depuis le
+// durcissement M6 (audit 2026-10-26, voir src/config/allowedOrigins.js),
+// la production les REFUSE (un attaquant peut créer son propre tunnel
+// Expo) ; les routes restent par ailleurs protégées par x-api-key, mais
+// l'origine n'est plus la seule barrière ET n'est plus ouverte aux tunnels
+// en prod. La liste explicite FRONTEND_URLS (partagée avec la validation
+// de returnUrl dans src/routes/wallet.js) reste vérifiée pour un vrai
+// domaine de prod.
 const { isTrustedOrigin } = require('./src/config/allowedOrigins');
 
 function corsOriginCheck(origin, callback) {
@@ -92,6 +93,12 @@ require('./src/admin/router').mountAdminFromEnv(app);
 // Configuration des Middlewares globaux
 app.use(cors({ origin: corsOriginCheck }));
 app.use(express.json({
+  // Hygiène basse (audit 2026-10-26) — limite explicite : aucun corps
+  // légitime de ce backend ne dépasse quelques Ko (rawTx signée, email,
+  // paramètres de swap/paiement), un corps de plusieurs Mo ne peut être
+  // qu'un abus ou une erreur. Le webhook MoonPay n'est pas concerné en
+  // pratique (petit JSON d'événement).
+  limit: '100kb',
   // Garde le corps brut pour vérifier la signature des webhooks MoonPay
   // (le HMAC se calcule sur les octets exacts reçus, pas sur du JSON re-sérialisé).
   verify: (req, res, buf) => { req.rawBody = buf.toString('utf8'); },

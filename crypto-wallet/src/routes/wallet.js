@@ -58,6 +58,56 @@ function saveEmailProfile(address, email) {
   fs.writeFileSync(EMAIL_PROFILES_FILE, JSON.stringify(profiles, null, 2));
 }
 
+function deleteEmailProfile(address) {
+  const profiles = loadEmailProfiles();
+  const key = address.toLowerCase();
+  const existed = Object.prototype.hasOwnProperty.call(profiles, key);
+  if (existed) {
+    delete profiles[key];
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(EMAIL_PROFILES_FILE, JSON.stringify(profiles, null, 2));
+  }
+  return existed;
+}
+
+// M12 (audit 2026-10-26), voie NON CASSANTE — message exact que le client
+// devra signer un jour pour prouver la possession de l'adresse :
+// `NexiaWallet: lier cet email au wallet <adresse en minuscules>`.
+// Aujourd'hui la signature est OPTIONNELLE : si `signature` est fournie et
+// invalide (ou ne correspond pas à l'adresse) => rejet 400 ; si elle est
+// absente => comportement actuel conservé, pour ne pas casser le flux
+// existant qui ne signe rien. Rendre la signature OBLIGATOIRE serait une
+// évolution cassante (tout client actuel serait rejeté) : c'est une
+// décision utilisateur, pas un changement silencieux — voir le commentaire
+// sur la route POST /profile/email. La vérification n'est possible que
+// pour une adresse EVM (ethers verifyMessage) ; une signature fournie avec
+// une adresse non-EVM est donc rejetée plutôt que silencieusement ignorée.
+// L'email reste stocké EN CLAIR dans email-profiles.json : AUCUN
+// chiffrement ajouté ici, car chiffrer avec une clé inventée sans gestion
+// de clé (rotation, sauvegarde, séparation) serait du faux sentiment de
+// sécurité — le chiffrement au repos est une décision d'architecture à
+// part, avec une vraie gestion de clé.
+function emailLinkMessage(address) {
+  return `NexiaWallet: lier cet email au wallet ${String(address).toLowerCase()}`;
+}
+
+function verifyOptionalEmailSignature(address, signature) {
+  if (signature === undefined || signature === null || signature === '') return { ok: true };
+  if (typeof signature !== 'string') return { ok: false, error: 'Signature invalide.' };
+  if (!ethers.utils.isAddress(address || '')) {
+    return { ok: false, error: 'La signature ne peut être vérifiée que pour une adresse EVM.' };
+  }
+  try {
+    const recovered = ethers.utils.verifyMessage(emailLinkMessage(address), signature);
+    if (recovered.toLowerCase() !== String(address).toLowerCase()) {
+      return { ok: false, error: 'Signature invalide pour cette adresse.' };
+    }
+  } catch {
+    return { ok: false, error: 'Signature invalide pour cette adresse.' };
+  }
+  return { ok: true };
+}
+
 // MoonPay — achat de crypto par carte, livré directement à l'adresse du wallet.
 // Le wallet a une adresse EVM (0x...) et, depuis l'ajout du support Solana,
 // une adresse Solana dérivée de la même mnémonique (voir getSolanaAddress
@@ -376,8 +426,24 @@ function normalizeNetwork(network = 'ethereum') {
   return NETWORK_ALIASES[network?.toLowerCase()] || network?.toLowerCase() || 'ethereum';
 }
 
+// Hygiène basse (audit 2026-10-26) — l'ancien getProvider retombait
+// silencieusement sur Ethereum pour un réseau inconnu : une transaction
+// signée pour une autre chaîne aurait pu être diffusée sur Ethereum.
+// Désormais il échoue proprement (throw) ; son seul appelant est
+// /tx/broadcast, qui valide le réseau AVANT l'appel (voir cette route),
+// donc aucun appelant existant ne dépend du repli.
+// getNetworkConfig, lui, CONSERVE son repli Ethereum, délibérément et
+// documenté ici plutôt que cassé : ses deux appelants sont des affichages
+// déjà validés en amont — /swap/quote restreint network à
+// ['ethereum', 'bsc'] avant l'appel, et fetchTxHistory affiche juste le
+// symbole natif (l'historique lui-même a son propre repli dans
+// src/history/). Ne pas utiliser getNetworkConfig pour décider où
+// diffuser une transaction : passer par la validation explicite de
+// /tx/broadcast.
 function getProvider(network = 'ethereum') {
-  return providers[normalizeNetwork(network)] || providers.ethereum;
+  const provider = providers[normalizeNetwork(network)];
+  if (!provider) throw new Error(`Réseau inconnu : ${network}`);
+  return provider;
 }
 
 function getNetworkConfig(network = 'ethereum') {
@@ -479,7 +545,13 @@ async function fetchCoinGeckoMarket(limit = 50) {
       return mapped;
     } catch (error) {
       console.warn('CoinGecko unavailable, using fallback market data:', error.message);
-      return FALLBACK_MARKET_DATA;
+      // M11 (audit 2026-10-26) — ces prix sont codés en dur et FIGÉS, pas
+      // des prix live : chaque entrée porte stale:true (copies, jamais
+      // l'original FALLBACK_MARKET_DATA muté) et /market expose aussi
+      // stale:true au niveau de la réponse, pour que le client affiche
+      // « prix différés » au lieu de prix présentés comme frais. Les
+      // données live, elles, ne portent aucun drapeau stale.
+      return FALLBACK_MARKET_DATA.map((item) => ({ ...item, stale: true }));
     }
   });
 }
@@ -566,7 +638,8 @@ router.post('/webhooks/moonpay', (req, res) => {
 router.get('/market', async (req, res) => {
   try {
     const tokens = await fetchCoinGeckoMarket();
-    res.json({ success: true, tokens });
+    // M11 : stale:true si au moins un prix vient du fallback codé en dur.
+    res.json({ success: true, tokens, stale: tokens.some((t) => t.stale === true) });
   } catch (error) {
     console.error('Wallet route error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
@@ -575,7 +648,11 @@ router.get('/market', async (req, res) => {
 
 router.get('/coin/:cgId', async (req, res) => {
   try {
-    const coin = await fetchCoinDetail(req.params.cgId);
+    // Hygiène basse (audit 2026-10-26) — cgId encodé avant tout usage
+    // (clé de cache + URL CoinGecko) : un id contenant des caractères
+    // spéciaux ne peut plus polluer le cache ni sortir du segment d'URL
+    // prévu. Pour les ids normaux (ex. 'ethereum'), c'est une no-op.
+    const coin = await fetchCoinDetail(encodeURIComponent(req.params.cgId));
     res.json({ success: true, coin });
   } catch (error) {
     console.error('Wallet route error:', error);
@@ -586,7 +663,8 @@ router.get('/coin/:cgId', async (req, res) => {
 router.get('/coin/:cgId/candles', async (req, res) => {
   try {
     const timeframe = (req.query.timeframe || '1J').toUpperCase();
-    const candles = await fetchCoinOhlc(req.params.cgId, timeframe);
+    // Même encodage que /coin/:cgId (voir commentaire là-bas).
+    const candles = await fetchCoinOhlc(encodeURIComponent(req.params.cgId), timeframe);
     res.json({ success: true, candles });
   } catch (error) {
     console.error('Wallet route error:', error);
@@ -755,9 +833,25 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     if (!apiKey) {
       return res.status(503).json({ success: false, error: 'Swap non configuré (ZEROX_API_KEY manquante dans .env).' });
     }
-    const { network = 'ethereum', sellToken, buyToken, sellAmount, taker } = req.query;
+    const { network = 'ethereum', sellToken, buyToken, sellAmount, taker, slippageBps } = req.query;
     const isValidTokenAddress = (addr) => typeof addr === 'string' && ethers.utils.isAddress(addr);
     const isValidAmount = typeof sellAmount === 'string' && /^[1-9][0-9]*$/.test(sellAmount);
+    // Slippage optionnel (complément mission 2026-10-26, volet M8 de
+    // l'audit : aucun slippage n'était transmis à 0x) : entier en points
+    // de base, 0 à 5000 (0 % à 50 %), défaut 100 (1 %) si absent. Un
+    // slippage invalide est rejeté ici, comme les autres paramètres ;
+    // si 0x rejette la valeur malgré tout, son erreur remonte par le
+    // chemin existant ci-dessous, inchangé. Paramètres existants intacts.
+    let slippageBpsValue = 100;
+    if (slippageBps !== undefined) {
+      if (typeof slippageBps !== 'string' || !/^\d+$/.test(slippageBps)) {
+        return res.status(400).json({ success: false, error: 'Paramètres de swap invalides.' });
+      }
+      slippageBpsValue = parseInt(slippageBps, 10);
+      if (slippageBpsValue < 0 || slippageBpsValue > 5000) {
+        return res.status(400).json({ success: false, error: 'Paramètres de swap invalides.' });
+      }
+    }
     if (
       !isValidTokenAddress(sellToken) ||
       !isValidTokenAddress(buyToken) ||
@@ -769,7 +863,7 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     }
 
     const chainId = getNetworkConfig(network).chainId;
-    const quoteParams = { chainId, sellToken, buyToken, sellAmount, taker };
+    const quoteParams = { chainId, sellToken, buyToken, sellAmount, taker, slippageBps: String(slippageBpsValue) };
     // Commission NexiaWallet : 0x prélève swapFeeBps sur le buyToken et
     // l'envoie directement on-chain à swapFeeRecipient à chaque swap réglé
     // (aucune custody de notre côté). N'est ajouté que si l'adresse de
@@ -1380,12 +1474,41 @@ router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
     if (!rawTx || typeof rawTx !== 'string') {
       return res.status(400).json({ success: false, error: 'Transaction signée (rawTx) requise.' });
     }
+    // Hygiène basse (audit 2026-10-26) — plus de repli silencieux sur
+    // Ethereum : (1) un réseau inconnu est rejeté proprement au lieu
+    // d'être diffusé sur Ethereum ; (2) le chainId décodé de la rawTx
+    // signée (EIP-155, ethers v5 parseTransaction) doit correspondre au
+    // réseau demandé, sinon rejet — une tx signée pour une autre chaîne
+    // ne doit jamais partir sur celle-ci. Si la rawTx n'est pas décodable
+    // (ou sans chainId exploitable, ex. legacy pré-EIP-155), rejet propre
+    // également : on ne diffuse pas ce qu'on ne peut pas vérifier.
+    // Le client signe toujours en EIP-155, donc ce rejet ne concerne que
+    // des rawTx malformées ou inter-chaînes.
+    const requestedNetwork = normalizeNetwork(network);
+    const networkConfig = NETWORKS[requestedNetwork];
+    if (!networkConfig) {
+      return res.status(400).json({ success: false, error: 'Réseau inconnu.' });
+    }
+    let decodedChainId;
+    try {
+      // Number() : parseTransaction peut rendre chainId sous forme
+      // numérique ou BigNumber selon le type de transaction — la
+      // comparaison avec le chainId attendu (nombre) doit être homogène.
+      decodedChainId = Number(ethers.utils.parseTransaction(rawTx).chainId);
+    } catch {
+      return res.status(400).json({ success: false, error: 'Transaction invalide ou réseau incompatible.' });
+    }
+    if (!decodedChainId || decodedChainId !== networkConfig.chainId) {
+      return res.status(400).json({ success: false, error: 'Transaction invalide ou réseau incompatible.' });
+    }
     const transactionResponse = await getProvider(network).sendTransaction(rawTx);
     res.json({ success: true, txHash: transactionResponse.hash, network });
     revenueHooks.onBroadcast({ rawTx, txHash: transactionResponse.hash });
   } catch (error) {
+    // Message générique côté client : le message brut du provider (RPC)
+    // ne remonte plus dans la réponse (il reste dans les logs serveur).
     console.error('Broadcast error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction impossible.' });
+    res.status(400).json({ success: false, error: 'Diffusion de la transaction impossible.' });
   }
 });
 
@@ -1403,8 +1526,10 @@ router.post('/tx/broadcast-solana', sensitiveLimiter, async (req, res) => {
     const signature = await solanaConnection.sendRawTransaction(Buffer.from(rawTx, 'base64'));
     res.json({ success: true, txHash: signature, network: 'solana' });
   } catch (error) {
+    // Phase 6 : message générique au client, détail dans les logs serveur
+    // uniquement (comme /tx/broadcast) — pas de fuite d'infra.
     console.error('Solana broadcast error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Solana impossible.' });
+    res.status(400).json({ success: false, error: 'Diffusion de la transaction Solana impossible.' });
   }
 });
 
@@ -1423,12 +1548,15 @@ router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
     const response = await fetch(`${BLOCKSTREAM_API_URL}/tx`, { method: 'POST', body: rawTx });
     const text = await response.text();
     if (!response.ok) {
-      return res.status(400).json({ success: false, error: text || 'Diffusion de la transaction Bitcoin impossible.' });
+      // Phase 6 : message générique au client, détail dans les logs serveur
+      // uniquement (comme /tx/broadcast) — pas de fuite d'infra.
+      console.error('Bitcoin broadcast error (Blockstream):', text);
+      return res.status(400).json({ success: false, error: 'Diffusion de la transaction Bitcoin impossible.' });
     }
     res.json({ success: true, txHash: text.trim(), network: 'bitcoin' });
   } catch (error) {
     console.error('Bitcoin broadcast error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Diffusion de la transaction Bitcoin impossible.' });
+    res.status(400).json({ success: false, error: 'Diffusion de la transaction Bitcoin impossible.' });
   }
 });
 
@@ -1438,13 +1566,27 @@ router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
 // secret, et on accepte qu'un tiers puisse en théorie soumettre un email
 // pour une adresse qui n'est pas la sienne (impact nul : ni fonds ni accès
 // au wallet ne dépendent de ce profil).
+// M12 (audit 2026-10-26) — correctif NON CASSANT, en deux parties :
+// (1) signature de possession OPTIONNELLE : le client peut joindre
+// `signature` (signature EIP-191 du message emailLinkMessage, voir
+// verifyOptionalEmailSignature) ; invalide => 400, absente => flux actuel
+// inchangé. La signature OBLIGATOIRE est une évolution cassante à décider
+// par l'utilisateur (elle rejetterait tous les clients actuels qui ne
+// signent pas) — elle n'est PAS activée ici. (2) suppression RGPD :
+// DELETE /profile/email ci-dessous, idempotente (succès même si aucun
+// profil n'existait). L'email reste stocké en clair : aucun chiffrement
+// avec une clé inventée (voir le commentaire sur verifyOptionalEmailSignature).
 router.post('/profile/email', sensitiveLimiter, (req, res) => {
-  const { address, email } = req.body || {};
+  const { address, email, signature } = req.body || {};
   if (!address || typeof address !== 'string' || address.length > 100) {
     return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
   }
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254) {
     return res.status(400).json({ success: false, error: 'Adresse email invalide.' });
+  }
+  const ownership = verifyOptionalEmailSignature(address, signature);
+  if (!ownership.ok) {
+    return res.status(400).json({ success: false, error: ownership.error });
   }
   try {
     saveEmailProfile(address, email.trim().toLowerCase());
@@ -1452,6 +1594,32 @@ router.post('/profile/email', sensitiveLimiter, (req, res) => {
   } catch (error) {
     console.error('Email profile save error:', error);
     res.status(500).json({ success: false, error: 'Impossible d\'enregistrer l\'email pour le moment.' });
+  }
+});
+
+// M12 — suppression RGPD du profil email lié à une adresse. Adresse lue
+// dans le corps JSON ou, à défaut, dans la query (?address=...) car
+// certains clients HTTP envoient mal un corps avec DELETE. Idempotente :
+// { success: true, deleted: false } si aucun profil n'existait, sans
+// erreur. Même preuve de possession optionnelle que pour POST : signature
+// fournie et invalide => rejet, absente => suppression effectuée.
+router.delete('/profile/email', sensitiveLimiter, (req, res) => {
+  const body = req.body || {};
+  const address = body.address || req.query.address;
+  const signature = body.signature !== undefined ? body.signature : req.query.signature;
+  if (!address || typeof address !== 'string' || address.length > 100) {
+    return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
+  }
+  const ownership = verifyOptionalEmailSignature(address, signature);
+  if (!ownership.ok) {
+    return res.status(400).json({ success: false, error: ownership.error });
+  }
+  try {
+    const deleted = deleteEmailProfile(address);
+    res.json({ success: true, deleted });
+  } catch (error) {
+    console.error('Email profile delete error:', error);
+    res.status(500).json({ success: false, error: 'Impossible de supprimer l\'email pour le moment.' });
   }
 });
 

@@ -80,7 +80,12 @@ function createAdminRouter({ passwordHash, getServices, now = () => Date.now(), 
     if (auth.isSameOrigin(req)) return next();
     return res.status(403).type('html').send(views.errorPage({ nonce: res.locals.nonce, message: 'Requête refusée (origine).' }));
   };
-  const tooMany = (message) => (req, res) => res.status(429).type('html').send(views.loginPage({ base: req.baseUrl, nonce: res.locals.nonce, error: message }));
+  // M13 : une tentative bloquée par le rate-limit est aussi une connexion
+  // échouée — elle est journalisée comme telle (sans mot de passe).
+  const tooMany = (message) => (req, res) => {
+    auth.logAdminLogin({ result: 'blocked_rate_limit', ip: req.ip });
+    return res.status(429).type('html').send(views.loginPage({ base: req.baseUrl, nonce: res.locals.nonce, error: message }));
+  };
 
   // Limites de connexion : seuls les échecs comptent (skipSuccessfulRequests).
   const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: loginMax, standardHeaders: true, legacyHeaders: false, skipSuccessfulRequests: true, handler: tooMany('Trop de tentatives. Réessaie dans 15 minutes.') });
@@ -93,8 +98,12 @@ function createAdminRouter({ passwordHash, getServices, now = () => Date.now(), 
 
   router.post('/login', requireSameOrigin, globalLoginLimiter, loginLimiter, (req, res) => {
     if (!auth.verifyPassword(req.body && req.body.password, passwordHash)) {
+      // M13 : échec journalisé (horodatage + résultat + IP, jamais le mot
+      // de passe tenté ni aucun token). Voir auth.logAdminLogin.
+      auth.logAdminLogin({ result: 'failure', ip: req.ip });
       return res.status(401).type('html').send(views.loginPage({ base: req.baseUrl, nonce: res.locals.nonce, error: 'Mot de passe incorrect.' }));
     }
+    auth.logAdminLogin({ result: 'success', ip: req.ip });
     res.setHeader('Set-Cookie', auth.sessionCookie(sessions().create()));
     return res.redirect(303, `${req.baseUrl}/`);
   });

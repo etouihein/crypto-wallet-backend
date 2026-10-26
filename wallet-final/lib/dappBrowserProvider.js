@@ -30,7 +30,8 @@ const READ_ONLY_METHODS = new Set([
 const CONFIRMATION_METHODS = new Set([
   'eth_requestAccounts',
   'personal_sign',
-  'eth_sign',
+  // Phase 6 (audit H3) : eth_sign retiré — une demande eth_sign n'est
+  // plus relayée comme demande de confirmation signable.
   'eth_signTypedData',
   'eth_signTypedData_v4',
   'eth_sendTransaction',

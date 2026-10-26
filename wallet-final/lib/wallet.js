@@ -92,7 +92,13 @@ const ERC20_METADATA_ABI = [
 ];
 
 function getNetworkConfig(network = 'ethereum') {
-  return NETWORKS[network] || NETWORKS.ethereum;
+  // Phase 6 (audit sécurité) : un réseau inconnu ÉCHOUE proprement au lieu
+  // de retomber silencieusement sur Ethereum — un repli silencieux aurait
+  // pu faire signer sur une autre chaîne que celle vérifiée par l'UI.
+  // Tous les appelants passent des clés EVM valides (ethereum/bsc/polygon/
+  // arbitrum/optimism/base) ; un réseau hors de cette liste est un bug.
+  if (!NETWORKS[network]) throw new Error(`Réseau inconnu : ${String(network)}`);
+  return NETWORKS[network];
 }
 
 function getProvider(network = 'ethereum') {
@@ -144,10 +150,15 @@ function walletFromPrivateKey(privateKey, network) {
 // wallet a une mnémonique associée (créé via createRandom/fromMnemonic),
 // ethers l'embarque automatiquement dans le keystore (extension "x-ethers")
 // et la restitue telle quelle au déchiffrement.
-// N réduit (16384 au lieu des 131072 par défaut) : reste largement assez
-// coûteux contre le brute-force pour un PIN à 6 chiffres, mais évite un
-// déchiffrement de plusieurs secondes sur un mobile bas de gamme.
-const KEYSTORE_SCRYPT_OPTS = { scrypt: { N: 1 << 14 } };
+// Phase 6 (audit sécurité H4) : N = 131072, le défaut d'ethers. L'ancien
+// N = 16384 rendait le keystore cassable hors ligne en quelques heures
+// une fois exfiltré (1 000 000 de PIN à ~115 ms/essai). Le déchiffrement
+// des ANCIENS keystores n'est pas affecté : ethers lit les paramètres
+// scrypt stockés dans le keystore lui-même au déchiffrement, pas ces
+// options (elles ne servent qu'au chiffrement des NOUVEAUX keystores).
+// Coût accepté : un déchiffrement un peu plus long, surtout sur mobile
+// bas de gamme — c'est le prix d'un PIN à 6 chiffres qui tient.
+const KEYSTORE_SCRYPT_OPTS = { scrypt: { N: 1 << 17 } };
 
 async function encryptWalletKeystore({ privateKey, mnemonic }, pin) {
   const wallet = mnemonic ? ethers.Wallet.fromMnemonic(mnemonic) : new ethers.Wallet(privateKey);
@@ -789,6 +800,7 @@ module.exports = {
   getBitcoinBalance,
   getBitcoinTxStatus,
   signBitcoinTransferTx,
+  getBitcoinFeeRate,
   signSolanaSwapTx,
   signBitcoinSwapPsbt,
   getCustomTokenInfo,

@@ -98,6 +98,26 @@ function clearedCookie() {
   return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
+// M13 (audit 2026-10-26) — journalisation des connexions admin, réussies
+// et échouées : horodatage + résultat + IP si disponible, RIEN d'autre.
+// Ne JAMAIS logger ici le mot de passe tenté, le hash stocké, ni le token
+// de session (un log qui fuit un token valide annulerait toute la
+// protection par session hashée). Ces lignes vont dans les logs serveur
+// standard (console) : elles permettent de repérer un brute-force ou une
+// connexion inhabituelle après coup, sans nouvelle infrastructure.
+// PROCHAINE ÉTAPE RECOMMANDÉE (non implémentée ici, volontairement) : un
+// second facteur TOTP ou une allowlist IP. La 2FA complète n'est pas
+// ajoutée dans ce correctif car elle casserait l'admin existante : elle
+// exigerait une phase d'enrôlement (secret TOTP à stocker de façon sûre,
+// codes de secours, page de saisie du code) et une migration de la
+// configuration — c'est une décision + un chantier à part, pas un flag
+// qu'on active en une ligne. En attendant, ce journal + le rate-limit
+// existant sur /login + le mot de passe scrypt restent les protections.
+function logAdminLogin({ result, ip } = {}) {
+  const at = new Date().toISOString();
+  console.log(`Admin login: result=${result} at=${at}${ip ? ` ip=${ip}` : ''}`);
+}
+
 // Une requête POST légitime vient de la page admin elle-même : son en-tête
 // Origin doit être exactement l'origine de ce serveur.
 //
@@ -131,4 +151,5 @@ module.exports = {
   COOKIE_NAME, SESSION_TTL_MS, SESSION_IDLE_MS,
   hashPassword, verifyPassword, parseStoredHash, createSessionStore,
   parseCookies, sessionCookie, clearedCookie, isSameOrigin, isValidAdminPath,
+  logAdminLogin,
 };

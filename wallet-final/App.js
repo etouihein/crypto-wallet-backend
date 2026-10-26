@@ -48,6 +48,7 @@ import { buildInjectedProvider } from './lib/dappBrowserProvider';
 import { simulateTransaction, decodeKnownCall, analyzeTypedData } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
+import * as swapSecurity from './lib/swapSecurity';
 import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
@@ -762,8 +763,25 @@ const hashDuressPin = (pin, saltHex) => pbkdf2(
   'sha256'
 );
 
+// Phase 6 (audit M10) : le hash de détresse vit en SecureStore sur mobile
+// (comme le keystore principal), pas en AsyncStorage lisible par tout
+// script/backup. Migration transparente : un hash ancien en AsyncStorage
+// est lu une dernière fois puis déplacé en SecureStore. Sur le web,
+// SecureStore n'a pas de protection matérielle : on garde AsyncStorage,
+// avec la même limite documentée que pour le keystore principal.
 const loadDuressPinRecord = async () => {
   try {
+    if (Platform.OS !== 'web') {
+      const raw = await SecureStore.getItemAsync(DURESS_PIN_HASH_KEY);
+      if (raw) return JSON.parse(raw);
+      const legacy = await AsyncStorage.getItem(DURESS_PIN_HASH_KEY);
+      if (legacy) {
+        await SecureStore.setItemAsync(DURESS_PIN_HASH_KEY, legacy);
+        await AsyncStorage.removeItem(DURESS_PIN_HASH_KEY);
+        return JSON.parse(legacy);
+      }
+      return null;
+    }
     const raw = await AsyncStorage.getItem(DURESS_PIN_HASH_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
@@ -773,12 +791,60 @@ const saveDuressPin = async (pin) => {
   try {
     const salt = ethers.utils.hexlify(ethers.utils.randomBytes(16));
     const hash = hashDuressPin(pin, salt);
-    await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, JSON.stringify({ salt, hash }));
+    const value = JSON.stringify({ salt, hash });
+    if (Platform.OS !== 'web') await SecureStore.setItemAsync(DURESS_PIN_HASH_KEY, value);
+    else await AsyncStorage.setItem(DURESS_PIN_HASH_KEY, value);
   } catch { /* rien à faire */ }
 };
 
 const clearDuressPin = async () => {
-  try { await AsyncStorage.removeItem(DURESS_PIN_HASH_KEY); } catch { /* rien à faire */ }
+  try {
+    if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(DURESS_PIN_HASH_KEY);
+    await AsyncStorage.removeItem(DURESS_PIN_HASH_KEY);
+  } catch { /* rien à faire */ }
+};
+
+// Phase 6 (audit M9) : PIN faibles rejetés à la création. Un PIN à 6
+// chiffres n'a que 1 000 000 de valeurs possibles ; les plus courants
+// (000000, 123456, années de naissance…) se devinent en quelques essais
+// dès que le keystore est exfiltré. On rejette : chiffres identiques,
+// suites croissantes/décroissantes, répétitions, années 19xx/20xx en
+// préfixe, et une liste de classiques.
+const WEAK_PINS = new Set([
+  '000000', '111111', '222222', '333333', '444444', '555555', '666666', '777777', '888888', '999999',
+  '123456', '654321', '012345', '543210', '987654', '456789', '121212', '123123', '112233', '101010',
+  '000123', '123000', '111222', '123321', '147258', '258369', '741852', '159753', '000001', '100000',
+]);
+const isWeakPin = (pin) => {
+  if (!/^\d{6}$/.test(pin || '')) return true;
+  if (WEAK_PINS.has(pin)) return true;
+  if (/^(\d)\1{5}$/.test(pin)) return true; // chiffres identiques
+  const digits = pin.split('').map(Number);
+  const ascending = digits.every((d, i) => i === 0 || d === (digits[i - 1] + 1) % 10);
+  const descending = digits.every((d, i) => i === 0 || d === (digits[i - 1] + 9) % 10);
+  if (ascending || descending) return true;
+  if (/^(19|20)\d\d/.test(pin)) return true; // année de naissance probable
+  if (/^(\d\d)\1\1$/.test(pin)) return true; // répétition d'un couple
+  return false;
+};
+
+// Phase 6 (audit M9) : compteur d'échecs PIN persisté (AsyncStorage, pas
+// de donnée sensible : juste un compteur + un horodatage). Avant, le
+// compteur vivait en mémoire React seulement — recharger l'app remettait
+// le délai anti-brute-force à zéro.
+const PIN_FAIL_KEY = 'wallet-pro-pin-fail-v1';
+const loadPinFailRecord = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PIN_FAIL_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : { count: 0, lockedUntil: 0 };
+  } catch { return { count: 0, lockedUntil: 0 }; }
+};
+const savePinFailRecord = async (record) => {
+  try { await AsyncStorage.setItem(PIN_FAIL_KEY, JSON.stringify(record)); } catch { /* rien à faire */ }
+};
+const clearPinFailRecord = async () => {
+  try { await AsyncStorage.removeItem(PIN_FAIL_KEY); } catch { /* rien à faire */ }
 };
 
 const saveRecentAddresses = async (list) => {
@@ -2593,6 +2659,25 @@ function AppContent({ themeMode, changeTheme }) {
   const [swapAmt, setSwapAmt]             = useState('');
   const [swapRes, setSwapRes]             = useState('0');
   const [swapLoading, setSwapLoading]     = useState(false);
+  // Phase 6 (audit H1/H2/M8) : slippage du swap (défaut 1 %) + devis en
+  // attente de confirmation explicite (null = pas de modale ouverte).
+  const [swapSlippageBps, setSwapSlippageBps] = useState(swapSecurity.DEFAULT_SLIPPAGE_BPS);
+  const [swapQuoteConfirm, setSwapQuoteConfirm] = useState(null);
+  // Phase 6 (audit M5) : réseau figé au moment de prepareSend, affiché
+  // dans l'écran de confirmation et re-vérifié avant signature.
+  const [sendNetworkLocked, setSendNetworkLocked] = useState(null);
+  const [sendDestIsContract, setSendDestIsContract] = useState(false);
+  // Phase 6 (audit M3) : adresse pour laquelle l'utilisateur a déjà
+  // confirmé explicitement malgré un avertissement d'adresse piégée.
+  const [sendPoisonConfirmedFor, setSendPoisonConfirmedFor] = useState('');
+  // Phase 6 (audit M9) : quiz de sauvegarde de la phrase (null = pas de
+  // quiz en cours ; sinon { indices, reponses }).
+  const [seedQuiz, setSeedQuiz] = useState(null);
+  const [seedQuizError, setSeedQuizError] = useState(null);
+  // Phase 6 (audit M1) : simulation WC/dApp expirée (délai max 5 s) — le
+  // bouton Signer est alors réactivé avec un avertissement explicite.
+  const [wcSimExpired, setWcSimExpired] = useState(false);
+  const [dappSimExpired, setDappSimExpired] = useState(false);
   const [buyToken, setBuyToken]           = useState('ETH');
   const [buyAmount, setBuyAmount]         = useState('10');
   const [buyLoading, setBuyLoading]       = useState(false);
@@ -2988,7 +3073,11 @@ function AppContent({ themeMode, changeTheme }) {
   // de prix figés ou repris du cache — malhonnête envers l'utilisateur.
   const MARKET_FRESH_MS = 120000;
   const [lastUpdateTime, setLastUpdateTime] = useState(Date.now()); // mis à jour par fetchMarket
-  const marketFreshness = (apiError || !lastUpdateTime || (Date.now() - lastUpdateTime) > MARKET_FRESH_MS)
+  // Phase 6 (audit M11) : le backend signale désormais stale:true quand
+  // CoinGecko est tombé et que les prix affichés sont des prix de secours
+  // figés — ils ne doivent plus s'afficher comme "live".
+  const [marketStale, setMarketStale] = useState(false);
+  const marketFreshness = (marketStale || apiError || !lastUpdateTime || (Date.now() - lastUpdateTime) > MARKET_FRESH_MS)
     ? 'prix différés'
     : 'live';
   const [realCandles, setRealCandles]     = useState({}); // `${symbol}_${timeframe}` -> vraies bougies CoinGecko
@@ -3151,6 +3240,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
 
       const tokensData = res.data.tokens;
+      setMarketStale(!!res.data.stale || tokensData.some((tok) => tok?.stale));
       setMarketCoins(tokensData);
       setTokens(prev => {
         const next = { ...prev };
@@ -3707,6 +3797,15 @@ function AppContent({ themeMode, changeTheme }) {
   // le SEUL moment où quelque chose touche le disque pour un nouveau wallet.
   const finalizePinSetup = useCallback(async (pin) => {
     if (!pendingWalletForPin) return;
+    // Phase 6 (audit M9) : un PIN faible ne chiffre rien — on refuse avant
+    // toute persistance, l'utilisateur recommence la création de PIN.
+    if (isWeakPin(pin)) {
+      setPinError('Ce code est trop facile à deviner (suite, répétition, année…). Choisis un code moins prévisible.');
+      setPinCode('');
+      setPendingPinDigits('');
+      setPinStage('choose');
+      return;
+    }
     setIsVerifyingPin(true);
     try {
       const encryptedKeystore = await localWallet.encryptWalletKeystore(pendingWalletForPin, pin);
@@ -3791,10 +3890,21 @@ function AppContent({ themeMode, changeTheme }) {
     try {
       const duressRecord = await loadDuressPinRecord();
       if (duressRecord && hashDuressPin(pin, duressRecord.salt) === duressRecord.hash) {
+        // Phase 6 (audit M10) : le code de détresse ne doit JAMAIS être le
+        // vrai PIN — sinon le vrai wallet devient inaccessible. Le test
+        // est ici, à l'usage, en plus du refus au paramétrage : si le
+        // code déchiffre le keystore, c'est le vrai PIN, pas un leurre.
+        try {
+          await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, pin);
+          setPinError('Ce code est ton vrai PIN, pas un code de détresse : il ouvre le vrai wallet. Change ton code de détresse dans Paramètres.');
+          setPinCode('');
+          return;
+        } catch { /* le code ne déchiffre pas : c'est bien un leurre */ }
         // Code de détresse : jamais de déchiffrement, jamais la vraie clé —
         // juste un état "déverrouillé" avec un solde à zéro.
         setPinFailCount(0);
         setPinLockedUntil(0);
+        await clearPinFailRecord();
         setIsDuressMode(true);
         setIsUnlocked(true);
         setWalletBalance('0');
@@ -3809,6 +3919,7 @@ function AppContent({ themeMode, changeTheme }) {
       }
       setPinFailCount(0);
       setPinLockedUntil(0);
+      await clearPinFailRecord();
       setUnlockedPrivateKey(result.privateKey);
       setUnlockedMnemonic(result.mnemonic);
       setIsDuressMode(false);
@@ -3823,7 +3934,11 @@ function AppContent({ themeMode, changeTheme }) {
       // normale), le frein n'arrive qu'ensuite.
       setPinFailCount(prev => {
         const next = prev + 1;
-        if (next >= 3) setPinLockedUntil(Date.now() + Math.min(5000 * (2 ** (next - 3)), 60000));
+        const lockedUntil = next >= 3 ? Date.now() + Math.min(5000 * (2 ** (next - 3)), 60000) : 0;
+        if (next >= 3) setPinLockedUntil(lockedUntil);
+        // Phase 6 (audit M9) : persister le compteur, sinon recharger
+        // l'app remettait le délai anti-brute-force à zéro.
+        savePinFailRecord({ count: next, lockedUntil });
         return next;
       });
       setPinError('Code incorrect');
@@ -3958,6 +4073,10 @@ function AppContent({ themeMode, changeTheme }) {
               await clearAccountsList();
               await clearActiveAccountId();
               await clearBiometricPin();
+              // Phase 6 (audit M10) : le code de détresse ne doit pas
+              // survivre à la suppression du dernier compte.
+              await clearDuressPin();
+              await clearPinFailRecord();
               setBiometricEnabled(false);
               setWalletSession(null);
               setWalletAddr('');
@@ -4260,6 +4379,12 @@ function AppContent({ themeMode, changeTheme }) {
   const handleDappBrowserOpen = useCallback((url) => {
     const trimmed = (url || '').trim();
     if (!trimmed) return;
+    // Phase 6 (audit basse) : HTTPS uniquement — une dApp en HTTP est
+    // modifiable par un attaquant réseau, et le provider injecté avec.
+    if (/^http:\/\//i.test(trimmed)) {
+      showAlert('HTTP refusé', 'Les dApps doivent être en HTTPS. Une page HTTP peut être modifiée en transit et piéger tes signatures.');
+      return;
+    }
     const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     setDappCurrentUrl(withScheme);
     setDappDisplayUrl(withScheme);
@@ -4305,8 +4430,10 @@ function AppContent({ themeMode, changeTheme }) {
     if (method === 'eth_accounts') {
       return dappBridgeRespond(id, null, dappConnectedOrigins.includes(origin) && walletAddr ? [walletAddr] : []);
     }
-    // eth_requestAccounts / personal_sign / eth_sign / eth_signTypedData(_v4)
+    // eth_requestAccounts / personal_sign / eth_signTypedData(_v4)
     // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
+    // eth_sign est retiré en Phase 6 : la modale l'affiche comme refusée
+    // (bouton Signer désactivé) et executeSessionRequest le rejette.
     setDappBridgeError(null);
     setDappBridgeRequest({ id, method, params, origin });
   }, [dappConnectedOrigins, walletAddr, network, dappBridgeRespond, dappTrustedOrigin]);
@@ -4376,7 +4503,12 @@ function AppContent({ themeMode, changeTheme }) {
     simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network: net })
       .then((res) => { if (!cancelled) setWcSimResult(res); })
       .catch(() => { if (!cancelled) setWcSimResult(null); });
-    return () => { cancelled = true; };
+    // Phase 6 (audit M1) : délai max 5 s — au-delà, on n'attend plus, mais
+    // on affiche "vérification impossible" au lieu de laisser signer à
+    // l'aveugle sans le dire.
+    setWcSimExpired(false);
+    const timer = setTimeout(() => { if (!cancelled) setWcSimExpired(true); }, 5000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [wcRequest]);
 
   useEffect(() => {
@@ -4387,7 +4519,9 @@ function AppContent({ themeMode, changeTheme }) {
     simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network })
       .then((res) => { if (!cancelled) setDappSimResult(res); })
       .catch(() => { if (!cancelled) setDappSimResult(null); });
-    return () => { cancelled = true; };
+    setDappSimExpired(false);
+    const timer = setTimeout(() => { if (!cancelled) setDappSimExpired(true); }, 5000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [dappBridgeRequest, network]);
 
   // ── Staking natif Solana ──
@@ -4603,6 +4737,16 @@ function AppContent({ themeMode, changeTheme }) {
     if (!/^\d{6}$/.test(duressSetupInput)) {
       setDuressSetupError('Le code de détresse doit faire exactement 6 chiffres.');
       return;
+    }
+    // Phase 6 (audit M10) : refuser un code de détresse qui déchiffre le
+    // keystore — sinon ce serait le vrai PIN, et le vrai wallet ne
+    // s'ouvrirait plus jamais (le leurre est testé avant le déchiffrement).
+    if (walletSession?.encryptedKeystore) {
+      try {
+        await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, duressSetupInput);
+        setDuressSetupError('Ce code est ton vrai PIN : il ouvrirait le vrai wallet, pas un leurre. Choisis un code différent.');
+        return;
+      } catch { /* ne déchiffre pas : bon candidat pour un leurre */ }
     }
     // Un code de détresse identique au vrai PIN n'aurait aucun sens (on ne
     // peut pas les distinguer à la saisie) — on ne peut pas comparer au
@@ -4934,7 +5078,10 @@ function AppContent({ themeMode, changeTheme }) {
       const match = (text || '').match(/0x[a-fA-F0-9]{40}/);
       if (match) {
         setSendAddress(match[0]);
-        showToast('✓ Adresse collée', 'success');
+        // Phase 6 (audit M4) : avertissement systématique — un malware
+        // "clipper" peut remplacer l'adresse copiée par celle d'un
+        // attaquant ; seul l'utilisateur peut vérifier ce qu'il a copié.
+        showToast('Adresse collée — vérifie qu\'elle est bien celle que tu as copiée (un logiciel malveillant peut la remplacer).', 'info', null, 5000);
       } else {
         showToast('Aucune adresse valide dans le presse-papier', 'error');
       }
@@ -4974,6 +5121,13 @@ function AppContent({ themeMode, changeTheme }) {
 
   const clearAllFavorites = useCallback(() => setFavorites([]), []);
 
+  // Phase 6 (audit M9) : restaurer le compteur d'échecs PIN persisté.
+  useEffect(() => {
+    loadPinFailRecord().then((rec) => {
+      if (rec.count > 0) setPinFailCount(rec.count);
+      if (rec.lockedUntil > Date.now()) setPinLockedUntil(rec.lockedUntil);
+    }).catch(() => {});
+  }, []);
   // Vérifie une seule fois au montage si un PIN biométrique est déjà
   // enregistré sur cet appareil (natif uniquement).
   useEffect(() => {
@@ -5770,6 +5924,10 @@ function AppContent({ themeMode, changeTheme }) {
     setBridgeError(null);
     try {
       const tx = bridgeQuote.transactionRequest;
+      // Phase 6 (audit H1) : le pont doit viser le diamant LI.FI officiel
+      // de la chaîne de départ, sinon on ne signe pas.
+      const bridgeCheck = swapSecurity.validateLifiEvmTx({ tx, fromChainId: bridge.CHAIN_IDS[bridgeFromNetwork], toChainId: null, expectedToChainId: null });
+      if (!bridgeCheck.ok) throw new Error(`Devis de pont rejeté pour ta sécurité : ${bridgeCheck.errors.join(' ')}`);
       const { rawTx } = await localWallet.signRawTx({
         privateKey: unlockedPrivateKey,
         to: tx.to,
@@ -5829,7 +5987,11 @@ function AppContent({ themeMode, changeTheme }) {
   // Étape 1 : valide et bascule vers l'écran "relis avant d'envoyer" — rien
   // n'est signé ni diffusé ici, juste une estimation des frais pour que
   // l'utilisateur voie tout (adresse, montant, frais) avant de confirmer.
-  const prepareSend = async () => {
+  // Phase 6 (audit M3/M5) : prepareSend fige le réseau, vérifie
+  // l'adresse piégée (avec confirmation explicite si ressemblance), et
+  // signale si la destination est un contrat. `forcePoison` = l'utilisateur
+  // a déjà confirmé explicitement POUR CETTE adresse précise.
+  const prepareSend = async (forcePoison = false) => {
     if (!sendAddress || !sendAmount) { showAlert('Champs manquants', 'Renseigne une adresse de destination et un montant.'); return; }
 
     const amt = parseFloat(sendAmount);
@@ -5844,6 +6006,8 @@ function AppContent({ themeMode, changeTheme }) {
       }
       const solBal = parseFloat(solanaBalance || '0');
       if (amt > solBal) { showAlert('Solde insuffisant', `Tu as ${solBal.toFixed(6)} SOL`); return; }
+      setSendNetworkLocked('solana');
+      setSendDestIsContract(false);
       setSendStep('confirm');
       setSendFeeEstimate({ feeNative: '0.000005', nativeSymbol: 'SOL', approximate: true, tiers: null });
       setSendFeeLoading(false);
@@ -5861,8 +6025,19 @@ function AppContent({ themeMode, changeTheme }) {
       }
       const btcBal = parseFloat(bitcoinBalance || '0');
       if (amt > btcBal) { showAlert('Solde insuffisant', `Tu as ${btcBal.toFixed(8)} BTC`); return; }
+      setSendNetworkLocked('bitcoin');
+      setSendDestIsContract(false);
       setSendStep('confirm');
-      setSendFeeEstimate({ feeNative: '0.00005', nativeSymbol: 'BTC', approximate: true, tiers: null });
+      // Phase 6 (audit basse) : frais BTC estimés avec le VRAI taux du
+      // moment (Blockstream, via getBitcoinFeeRate) et la taille estimée
+      // d'une tx P2WPKH (1 entrée, 2 sorties), au lieu du 0,00005 codé en dur.
+      try {
+        const rate = await localWallet.getBitcoinFeeRate();
+        const estSats = Math.ceil((10 + 68 + 2 * 31) * rate);
+        setSendFeeEstimate({ feeNative: (estSats / 1e8).toFixed(8), nativeSymbol: 'BTC', approximate: true, tiers: null });
+      } catch {
+        setSendFeeEstimate({ feeNative: '0.00005', nativeSymbol: 'BTC', approximate: true, tiers: null });
+      }
       setSendFeeLoading(false);
       return;
     }
@@ -5882,6 +6057,39 @@ function AppContent({ themeMode, changeTheme }) {
       return;
     }
 
+    // Phase 6 (audit M3) : adresse piégée — comparée aux adresses récentes
+    // (carnet) ET aux propres adresses du wallet (un leurre peut imiter ta
+    // propre adresse). Sans confirmation explicite pour CETTE adresse, on
+    // bloque ici ; le bouton "continuer" relance prepareSend(true).
+    if (!forcePoison) {
+      const knownAddrs = [
+        ...recentAddresses.map(a => a.address),
+        walletAddr, solanaAddr, bitcoinAddr,
+      ].filter(Boolean);
+      const poisoned = looksLikePoisonedAddress(sendAddress, knownAddrs);
+      if (poisoned && sendPoisonConfirmedFor.toLowerCase() !== sendAddress.toLowerCase()) {
+        showAlert(
+          'Adresse piégée ?',
+          `Cette adresse ressemble énormément à une adresse connue (${poisoned.slice(0, 8)}…${poisoned.slice(-6)}) mais N'EST PAS la même. C'est la technique de l'adresse piégée : vérifie chaque caractère avant d'envoyer.`,
+          [
+            { text: 'Annuler', style: 'cancel' },
+            { text: "J'ai vérifié chaque caractère, continuer", onPress: () => { setSendPoisonConfirmedFor(sendAddress.toLowerCase()); prepareSend(true); } },
+          ]
+        );
+        return;
+      }
+    }
+
+    // Phase 6 (audit basse) : destination = contrat ? Envoyer des fonds
+    // directement à un contrat (ex. adresse d'un token) les perd en général
+    // définitivement — avertissement seulement, certains cas sont légitimes.
+    let destIsContract = false;
+    try {
+      const code = await localWallet.getProvider(network).getCode(sendAddress);
+      destIsContract = !!code && code !== '0x';
+    } catch { /* RPC indisponible : on ne bloque pas l'envoi */ }
+    setSendDestIsContract(destIsContract);
+    setSendNetworkLocked(network);
     setSendStep('confirm');
     setSendFeeLoading(true);
     setSendFeeEstimate(null);
@@ -5984,6 +6192,15 @@ function AppContent({ themeMode, changeTheme }) {
       return;
     }
 
+    // Phase 6 (audit M5) : le réseau a-t-il changé depuis la
+    // vérification ? Si oui, on refuse — signer sur une autre chaîne que
+    // celle vérifiée serait une faille.
+    if (sendNetworkLocked && sendNetworkLocked !== network) {
+      showAlert('Réseau changé', 'Le réseau a changé depuis la vérification de cet envoi. Recommence depuis le formulaire.');
+      setSendStep('form');
+      setSendLoading(false);
+      return;
+    }
     const isNative = sendToken === nativeSymbol;
     // Prix du gas du niveau choisi (Lent/Normal/Rapide) — absent si
     // l'estimation a échoué ou pour le niveau 'normal' (comportement par
@@ -6064,7 +6281,16 @@ function AppContent({ themeMode, changeTheme }) {
   }, [solanaBalance, bitcoinBalance, walletBalance, nativeSymbol, tokens]);
   const estEchangeInterEcosysteme = (de, vers) => de === 'SOL' || de === 'BTC' || vers === 'SOL' || vers === 'BTC';
 
-  const confirmerEchangeInterEcosysteme = async () => {
+  // ── ÉCHANGE ENTRE ÉCOSYSTÈMES (SOL, BTC) ───────────────────────────────
+  // Phase 6 (audit H1/M8) : l'échange se fait désormais en DEUX temps —
+  // 1) on récupère le devis, on le vérifie et on l'AFFICHE dans une modale
+  // de confirmation (voir renderSwapQuoteModal), 2) seulement si
+  // l'utilisateur confirme, on signe et on diffuse. Avant, le devis LI.FI
+  // (Solana base64, PSBT Bitcoin, ou tx EVM) était signé à l'aveugle au
+  // premier clic "Confirmer". Pour Solana/BTC, le contenu décodable est
+  // affiché mais ne peut pas prouver la légitimité de l'adresse de dépôt
+  // du pont — d'où l'avertissement rouge explicite dans la modale.
+  const fetchCrossQuoteForConfirm = async () => {
     const reseauDepart = reseauDuJeton(swapFrom);
     const reseauArrivee = reseauDuJeton(swapTo);
     const decimales = decimalesDuJeton(swapFrom);
@@ -6072,7 +6298,6 @@ function AppContent({ themeMode, changeTheme }) {
     const toAddress = adresseDuReseau(reseauArrivee);
     if (!fromAddress || !toAddress) throw new Error('Adresse de wallet indisponible pour ce réseau.');
     const montantUnites = ethers.utils.parseUnits(parseFloat(swapAmt).toFixed(decimales), decimales).toString();
-
     const devis = await axios.get(`${API_BASE}/swap/cross-quote`, {
       params: {
         fromNetwork: reseauDepart, toNetwork: reseauArrivee,
@@ -6085,7 +6310,34 @@ function AppContent({ themeMode, changeTheme }) {
     if (!devis.data?.success) throw new Error(devis.data?.error || 'Aucune route disponible pour cet échange.');
     const { quote, ecosystemeDepart } = devis.data;
     const tx = quote?.transactionRequest || {};
+    const errors = [];
+    let decoded = null;
+    if (ecosystemeDepart === 'evm') {
+      const check = swapSecurity.validateLifiEvmTx({ tx, fromChainId: tx.chainId, toChainId: quote.toChainId, expectedToChainId: null });
+      errors.push(...check.errors);
+      // La chaîne de départ doit aussi correspondre au réseau actif choisi.
+      if (tx.chainId !== undefined && tx.chainId !== null) {
+        const expected = { ethereum: 1, bsc: 56, polygon: 137, arbitrum: 42161, optimism: 10, base: 8453 }[reseauDepart];
+        if (expected !== undefined && Number(tx.chainId) !== expected) errors.push('Le devis LI.FI porte sur une autre chaîne de départ que celle demandée.');
+      }
+    } else if (ecosystemeDepart === 'solana') {
+      decoded = swapSecurity.decodeSolanaTx(tx.data);
+    } else if (ecosystemeDepart === 'bitcoin') {
+      decoded = swapSecurity.decodeBitcoinPsbtOutputs(tx.data, bitcoinAddr);
+    }
+    if (errors.length) throw new Error(`Devis rejeté pour ta sécurité : ${errors.join(' ')}`);
+    const toAmountRaw = quote?.estimate?.toAmount;
+    const toAmount = toAmountRaw ? ethers.utils.formatUnits(toAmountRaw, decimalesDuJeton(swapTo)) : null;
+    setSwapQuoteConfirm({
+      kind: 'cross', ecosystemeDepart, quote, tx, decoded,
+      fromSymbol: swapFrom, toSymbol: swapTo, fromAmount: swapAmt, toAmount,
+      fromNetwork: reseauDepart, toNetwork: reseauArrivee, fromAddress, toAddress,
+      largeAmount: ((parseFloat(swapAmt) || 0) * (tokens[swapFrom]?.price || 0)) >= swapSecurity.LARGE_SWAP_USD_HINT,
+    });
+  };
 
+  const executeCrossFromQuote = async (confirm) => {
+    const { quote, ecosystemeDepart, tx } = confirm;
     let rawTx;
     let routeDiffusion;
     let corps;
@@ -6098,27 +6350,27 @@ function AppContent({ themeMode, changeTheme }) {
       routeDiffusion = '/tx/broadcast-bitcoin';
       corps = { rawTx };
     } else {
+      const check = swapSecurity.validateLifiEvmTx({ tx, fromChainId: tx.chainId, toChainId: null, expectedToChainId: null });
+      if (!check.ok) throw new Error(`Devis rejeté pour ta sécurité : ${check.errors.join(' ')}`);
       ({ rawTx } = await localWallet.signRawTx({
         privateKey: unlockedPrivateKey,
         to: tx.to,
         data: tx.data,
         value: ethers.BigNumber.from(tx.value || '0x0').toString(),
         gasLimit: tx.gasLimit ? ethers.BigNumber.from(tx.gasLimit).toString() : undefined,
-        network: reseauDepart,
+        network: confirm.fromNetwork,
       }));
       routeDiffusion = '/tx/broadcast';
-      corps = { rawTx, network: reseauDepart };
+      corps = { rawTx, network: confirm.fromNetwork };
     }
-
     const diffusion = await axios.post(`${API_BASE}${routeDiffusion}`, corps, { timeout: 25000, headers: API_HEADERS });
     if (!diffusion.data?.success) throw new Error(diffusion.data?.error || "Échec de la diffusion de l'échange.");
-
     const txHash = diffusion.data.txHash;
-    trackTransaction({ txHash, net: reseauDepart, token: swapFrom, amount: swapAmt, kind: 'Échange' });
+    trackTransaction({ txHash, net: confirm.fromNetwork, token: confirm.fromSymbol, amount: confirm.fromAmount, kind: 'Échange' });
     playTone('success');
     showAlert(
       '✅ Échange lancé',
-      `${swapAmt} ${swapFrom} → ${swapTo}.\nHash : ${txHash?.slice(0, 10)}…\n\nL'arrivée peut prendre quelques minutes ; tu seras prévenu.`,
+      `${confirm.fromAmount} ${confirm.fromSymbol} → ${confirm.toSymbol}.\nHash : ${txHash?.slice(0, 10)}…\n\nL'arrivée peut prendre quelques minutes ; tu seras prévenu.`,
       [{ text: 'OK' }],
     );
     setSwapAmt('');
@@ -6127,29 +6379,7 @@ function AppContent({ themeMode, changeTheme }) {
     refreshBitcoinBalance();
   };
 
-  const handleSwapConfirm = async () => {
-    if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
-    if (swapFrom === swapTo) { showAlert('Tokens identiques', 'Choisis deux tokens différents.'); return; }
-
-    const available = soldeDuJeton(swapFrom);
-    if (parseFloat(swapAmt) > available) {
-      showAlert('Solde insuffisant', `Tu n'as pas assez de ${swapFrom} pour cette opération.`);
-      return;
-    }
-
-    if (estEchangeInterEcosysteme(swapFrom, swapTo)) {
-      setSwapLoading(true);
-      try {
-        await confirmerEchangeInterEcosysteme();
-      } catch (e) {
-        console.warn('échange inter-écosystèmes échoué', e.message);
-        showAlert('❌ Erreur', humanizeTxError(e) || 'Échange impossible');
-      } finally {
-        setSwapLoading(false);
-      }
-      return;
-    }
-
+  const fetchZeroXQuoteForConfirm = async () => {
     const resolveTokenAddress = (symbol) => {
       if (symbol === nativeSymbol) return localWallet.NATIVE_PLACEHOLDER;
       const cfg = localWallet.ERC20_TOKENS[network]?.[symbol];
@@ -6159,102 +6389,237 @@ function AppContent({ themeMode, changeTheme }) {
       if (symbol === nativeSymbol) return 18;
       return localWallet.ERC20_TOKENS[network]?.[symbol]?.decimals ?? 18;
     };
-
     const sellAddress = resolveTokenAddress(swapFrom);
     const buyAddress = resolveTokenAddress(swapTo);
     if (!sellAddress || !buyAddress) {
       showAlert('Token non supporté', `Le swap ${swapFrom} → ${swapTo} n'est pas encore supporté sur ${activeNetwork.label}.`);
       return;
     }
+    const sellAmountUnits = ethers.utils.parseUnits(
+      parseFloat(swapAmt).toFixed(resolveDecimals(swapFrom)),
+      resolveDecimals(swapFrom)
+    ).toString();
+    const quoteRes = await axios.get(`${API_BASE}/swap/quote`, {
+      params: {
+        network,
+        sellToken: sellAddress,
+        buyToken: buyAddress,
+        sellAmount: sellAmountUnits,
+        taker: walletAddr,
+        slippageBps: String(swapSlippageBps),
+      },
+      headers: API_HEADERS,
+      timeout: 20000,
+    });
+    if (!quoteRes.data?.success) {
+      throw new Error(quoteRes.data?.error || 'Devis de swap impossible.');
+    }
+    const quote = quoteRes.data.quote;
+    // Phase 6 (audit H1/H2) : vérification du devis AVANT toute signature
+    // ni approbation — buyToken/sellToken/taker/chainId == demande, et le
+    // spender d'approbation == AllowanceHolder officiel (jamais le Settler).
+    const validation = swapSecurity.validateZeroXQuote({
+      quote, sellAddress, buyAddress, taker: walletAddr,
+      chainId: activeNetwork.chainId, slippageBps: swapSlippageBps,
+    });
+    if (!validation.ok) {
+      throw new Error(`Devis rejeté pour ta sécurité : ${validation.errors.join(' ')}`);
+    }
+    const buyDecimals = resolveDecimals(swapTo);
+    const buyFormatted = validation.buyAmount ? ethers.utils.formatUnits(validation.buyAmount, buyDecimals) : null;
+    const minBuyFormatted = validation.minBuyAmount ? ethers.utils.formatUnits(validation.minBuyAmount, buyDecimals) : null;
+    setSwapQuoteConfirm({
+      kind: '0x', quote, validation, sellAddress, buyAddress, sellAmountUnits,
+      spender: quote.issues?.allowance?.spender || null,
+      fromSymbol: swapFrom, toSymbol: swapTo, fromAmount: swapAmt,
+      toAmount: buyFormatted, minBuyAmount: minBuyFormatted,
+      fromNetwork: network, slippageBps: swapSlippageBps,
+      largeAmount: ((parseFloat(swapAmt) || 0) * (tokens[swapFrom]?.price || 0)) >= swapSecurity.LARGE_SWAP_USD_HINT,
+    });
+  };
 
-    setSwapLoading(true);
-    try {
-      const sellAmountUnits = ethers.utils.parseUnits(
-        parseFloat(swapAmt).toFixed(resolveDecimals(swapFrom)),
-        resolveDecimals(swapFrom)
-      ).toString();
-
-      const quoteRes = await axios.get(`${API_BASE}/swap/quote`, {
-        params: {
-          network,
-          sellToken: sellAddress,
-          buyToken: buyAddress,
-          sellAmount: sellAmountUnits,
-          taker: walletAddr,
-        },
-        headers: API_HEADERS,
-        timeout: 20000,
-      });
-      if (!quoteRes.data?.success) {
-        throw new Error(quoteRes.data?.error || 'Devis de swap impossible.');
-      }
-      const quote = quoteRes.data.quote;
-
-      // Si le contrat du swap n'a pas encore l'autorisation de dépenser ce
-      // token ERC20, on signe et diffuse d'abord une approbation, puis on
-      // attend sa confirmation on-chain avant de tenter le swap lui-même.
-      // Approuve UNIQUEMENT le montant de ce swap, jamais MaxUint256: notre
-      // propre simulation anti-arnaque (voir txSimulation.js) signale une
-      // autorisation quasi-illimitée comme un risque ÉLEVÉ quand c'est une
-      // dApp tierce qui la demande — appliquer le même risque à nos propres
-      // swaps serait incohérent, et exposerait tout le solde du token (pas
-      // seulement le montant échangé) si jamais le contrat du swap était un
-      // jour compromis. Coût : une nouvelle approbation à chaque swap du même
-      // token, accepté comme contrepartie normale de cette protection.
-      const spender = quote.issues?.allowance?.spender;
-      if (spender) {
-        const { rawTx: approveRawTx } = await localWallet.signApproveTx({
-          privateKey: unlockedPrivateKey,
-          tokenAddress: sellAddress,
-          spender,
-          amount: sellAmountUnits,
-          network,
-        });
-        const approveResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: approveRawTx, network }, { timeout: 25000, headers: API_HEADERS });
-        if (!approveResp.data?.success) {
-          throw new Error(approveResp.data?.error || "Échec de l'approbation du token.");
-        }
-        await localWallet.waitForTx(approveResp.data.txHash, network);
-        let approveTokenSymbol = swapFrom;
-        try { approveTokenSymbol = (await localWallet.getCustomTokenInfo(sellAddress, walletAddr, network)).symbol; } catch { /* garde swapFrom en repli */ }
-        approvals.recordApproval(walletAddr, {
-          network, tokenAddress: sellAddress, tokenSymbol: approveTokenSymbol, spender,
-          amount: sellAmountUnits, isNft: false, txHash: approveResp.data.txHash,
-        }).catch(() => {});
-      }
-
-      const { rawTx: swapRawTx } = await localWallet.signRawTx({
+  const executeZeroXFromQuote = async (confirm) => {
+    const { quote, sellAddress, spender, sellAmountUnits } = confirm;
+    // L'approbation n'est signée qu'APRÈS la confirmation du devis par
+    // l'utilisateur — et uniquement pour le montant de ce swap, jamais
+    // MaxUint256 (voir commentaire d'origine, conservé).
+    if (spender) {
+      const { rawTx: approveRawTx } = await localWallet.signApproveTx({
         privateKey: unlockedPrivateKey,
-        to: quote.transaction.to,
-        data: quote.transaction.data,
-        value: quote.transaction.value || '0',
-        gasLimit: quote.transaction.gas,
+        tokenAddress: sellAddress,
+        spender,
+        amount: sellAmountUnits,
         network,
       });
-
-      const swapResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: swapRawTx, network }, { timeout: 25000, headers: API_HEADERS });
-      if (!swapResp.data?.success) {
-        throw new Error(swapResp.data?.error || 'Échec du swap.');
+      const approveResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: approveRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+      if (!approveResp.data?.success) {
+        throw new Error(approveResp.data?.error || "Échec de l'approbation du token.");
       }
+      await localWallet.waitForTx(approveResp.data.txHash, network);
+      let approveTokenSymbol = confirm.fromSymbol;
+      try { approveTokenSymbol = (await localWallet.getCustomTokenInfo(sellAddress, walletAddr, network)).symbol; } catch { /* garde swapFrom en repli */ }
+      approvals.recordApproval(walletAddr, {
+        network, tokenAddress: sellAddress, tokenSymbol: approveTokenSymbol, spender,
+        amount: sellAmountUnits, isNft: false, txHash: approveResp.data.txHash,
+      }).catch(() => {});
+    }
+    // Re-vérification au moment de signer : le devis stocké ne doit pas
+    // avoir été altéré entre la modale et la signature.
+    const revalidation = swapSecurity.validateZeroXQuote({
+      quote, sellAddress: confirm.sellAddress, buyAddress: confirm.buyAddress, taker: walletAddr,
+      chainId: activeNetwork.chainId, slippageBps: confirm.slippageBps,
+    });
+    if (!revalidation.ok) throw new Error(`Devis rejeté pour ta sécurité : ${revalidation.errors.join(' ')}`);
+    const { rawTx: swapRawTx } = await localWallet.signRawTx({
+      privateKey: unlockedPrivateKey,
+      to: quote.transaction.to,
+      data: quote.transaction.data,
+      value: quote.transaction.value || '0',
+      gasLimit: quote.transaction.gas,
+      network,
+    });
+    const swapResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: swapRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+    if (!swapResp.data?.success) {
+      throw new Error(swapResp.data?.error || 'Échec du swap.');
+    }
+    const txHash = swapResp.data.txHash;
+    trackTransaction({ txHash, net: network, token: confirm.fromSymbol, amount: confirm.fromAmount, kind: 'Swap' });
+    playTone('success');
+    showAlert(
+      '✅ Swap Soumis !',
+      `${confirm.fromAmount} ${confirm.fromSymbol} → ${confirm.toSymbol}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}`,
+      [{ text: 'OK' }]
+    );
+    await refreshPortfolio(network);
+    setSwapAmt('');
+    fetchMarket();
+  };
 
-      const txHash = swapResp.data.txHash;
-      trackTransaction({ txHash, net: network, token: swapFrom, amount: swapAmt, kind: 'Swap' });
-      playTone('success');
-      showAlert(
-        '✅ Swap Soumis !',
-        `${swapAmt} ${swapFrom} → ${swapTo}\nHash: ${txHash?.slice(0, 10)}...\nRéseau: ${activeNetwork.label}`,
-        [{ text: 'OK' }]
-      );
-
-      await refreshPortfolio(network);
-      setSwapAmt('');
-      fetchMarket();
+  const handleSwapConfirm = async () => {
+    if (!swapAmt || parseFloat(swapAmt) <= 0) { showAlert('Montant invalide'); return; }
+    if (swapFrom === swapTo) { showAlert('Tokens identiques', 'Choisis deux tokens différents.'); return; }
+    const available = soldeDuJeton(swapFrom);
+    if (parseFloat(swapAmt) > available) {
+      showAlert('Solde insuffisant', `Tu n'as pas assez de ${swapFrom} pour cette opération.`);
+      return;
+    }
+    // Étape 1 : récupérer + vérifier + afficher le devis. La signature
+    // n'a lieu qu'à l'étape 2, dans executeSwapFromQuote, après la modale.
+    setSwapLoading(true);
+    try {
+      if (estEchangeInterEcosysteme(swapFrom, swapTo)) {
+        await fetchCrossQuoteForConfirm();
+      } else {
+        await fetchZeroXQuoteForConfirm();
+      }
     } catch (e) {
       playTone('error');
       showAlert('❌ Erreur', humanizeTxError(e) || 'Swap échoué');
+    } finally {
+      setSwapLoading(false);
     }
-    setSwapLoading(false);
   };
+
+  const executeSwapFromQuote = async () => {
+    if (!swapQuoteConfirm) return;
+    const confirm = swapQuoteConfirm;
+    setSwapQuoteConfirm(null);
+    setSwapLoading(true);
+    try {
+      if (confirm.kind === 'cross') await executeCrossFromQuote(confirm);
+      else await executeZeroXFromQuote(confirm);
+    } catch (e) {
+      playTone('error');
+      showAlert('❌ Erreur', humanizeTxError(e) || 'Swap échoué');
+    } finally {
+      setSwapLoading(false);
+    }
+  };
+
+  // Modale de confirmation du devis (Phase 6, H1/H2/M8) : affiche ce qui
+  // sera VRAIMENT signé — montants issus du devis (pas de l'estimation
+  // CoinGecko), routeur, gas, slippage et montant minimum reçu. Pour le
+  // cross-chain Solana/BTC, le contenu décodable est affiché avec un
+  // avertissement rouge explicite (contenu non vérifié intégralement).
+  const renderSwapQuoteModal = () => {
+    if (!swapQuoteConfirm) return null;
+    const c = swapQuoteConfirm;
+    return (
+      <Modal visible animationType="slide" transparent>
+        <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+          <View style={st.modal_hdr}>
+            <TouchableOpacity onPress={() => setSwapQuoteConfirm(null)} style={st.back_btn} accessibilityRole="button" accessibilityLabel="Annuler">
+              <Text style={{ color: T.text, fontSize: 22 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={st.modal_title}>Confirme le swap</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView style={{ flex: 1, padding: 16 }}>
+            <View style={st.confirm_box}>
+              <Text style={st.confirm_label}>Tu paies</Text>
+              <Text style={st.confirm_amount}>{c.fromAmount} {c.fromSymbol}</Text>
+              <Text style={st.confirm_sub}>Réseau : {c.fromNetwork}{c.toNetwork && c.toNetwork !== c.fromNetwork ? ` → ${c.toNetwork}` : ''}</Text>
+            </View>
+            <View style={st.confirm_box}>
+              <Text style={st.confirm_label}>Tu reçois (selon le devis, pas une estimation)</Text>
+              <Text style={st.confirm_amount}>{c.toAmount ? `${parseFloat(c.toAmount).toFixed(8)} ${c.toSymbol}` : 'Estimation seulement — le devis ne donne pas de montant précis'}</Text>
+              {c.minBuyAmount && (
+                <Text style={st.confirm_sub}>Minimum reçu avec un slippage de {(c.slippageBps / 100).toFixed(1)} % : {parseFloat(c.minBuyAmount).toFixed(8)} {c.toSymbol}</Text>
+              )}
+            </View>
+            {c.kind === '0x' && (
+              <View style={st.send_info_box}>
+                <Text style={st.send_info_line}>Routeur (contrat qui exécutera le swap) :</Text>
+                <Text style={[st.send_info_line, { fontFamily: T.fontMono, fontSize: 11 }]} selectable>{c.validation?.router || 'inconnu'}</Text>
+                {c.validation?.gas && <Text style={st.send_info_line}>Gas estimé : {c.validation.gas} unités</Text>}
+                {c.spender && <Text style={st.send_info_line}>Approbation : uniquement le montant de ce swap, vers le contrat AllowanceHolder officiel de 0x.</Text>}
+                <Text style={[st.send_info_line, { color: T.text3 }]}>Vérifié : token vendu, token reçu, destinataire et chaîne correspondent à ta demande. Si le routeur ne t'inspire pas confiance, annule.</Text>
+              </View>
+            )}
+            {c.kind === 'cross' && c.ecosystemeDepart === 'evm' && (
+              <View style={st.send_info_box}>
+                <Text style={st.send_info_line}>Routeur LI.FI (diamant officiel vérifié) :</Text>
+                <Text style={[st.send_info_line, { fontFamily: T.fontMono, fontSize: 11 }]} selectable>{c.tx?.to || 'inconnu'}</Text>
+              </View>
+            )}
+            {c.kind === 'cross' && c.ecosystemeDepart === 'solana' && (
+              <View style={[st.warning_box, { borderColor: T.red }]}>
+                <Text style={st.warning_txt}>⚠️ Contenu non vérifié intégralement, signé à l'aveugle : cette transaction Solana appelle les programmes ci-dessous, mais l'app ne peut pas prouver que la route du pont est légitime. Ne confirme que si tu fais confiance à LI.FI et au réseau demandé.</Text>
+                {c.decoded?.ok
+                  ? <Text style={[st.warning_txt, { marginTop: 8 }]}>Programmes appelés : {(c.decoded.programs || []).join(', ') || 'aucun décodé'} ({c.decoded.accountCount} comptes).</Text>
+                  : <Text style={[st.warning_txt, { marginTop: 8 }]}>Décodage impossible : {c.decoded?.error || 'inconnu'}.</Text>}
+              </View>
+            )}
+            {c.kind === 'cross' && c.ecosystemeDepart === 'bitcoin' && (
+              <View style={[st.warning_box, { borderColor: T.red }]}>
+                <Text style={st.warning_txt}>⚠️ Contenu non vérifié intégralement, signé à l'aveugle : ce PSBT Bitcoin dépense tes BTC vers les sorties ci-dessous. Une sortie vers un tiers est normale pour un pont (adresse de dépôt du protocole), mais vérifie les montants — ils quittent ton wallet.</Text>
+                {c.decoded?.ok
+                  ? c.decoded.outputs.map((o, i) => (
+                    <Text key={i} style={[st.warning_txt, { marginTop: 6 }]}>{o.isOwn ? '↩ Monnaie rendue vers toi' : '→ Sortie'} : {o.address || 'adresse indécodable'} — {o.valueSats} sats</Text>
+                  ))
+                  : <Text style={[st.warning_txt, { marginTop: 8 }]}>Décodage impossible : {c.decoded?.error || 'inconnu'}.</Text>}
+              </View>
+            )}
+            {c.largeAmount && (
+              <View style={st.warning_box}>
+                <Text style={st.warning_txt}>⚠️ Gros montant (plus de ~1 000 $) : en mempool publique, un swap important peut être "sandwiché" (un bot achète avant toi et revend après, ce qui dégrade ton prix). Vérifie le montant minimum reçu ci-dessus avant de signer.</Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', marginTop: 16 }}>
+              <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={() => setSwapQuoteConfirm(null)}>
+                <Text style={{ color: T.red, fontWeight: '700' }}>Annuler</Text>
+              </TouchableOpacity>
+              <AnimPressable style={[st.green_btn, { flex: 1 }]} onPress={executeSwapFromQuote} disabled={swapLoading}>
+                {swapLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Signer et envoyer</Text>}
+              </AnimPressable>
+            </View>
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
 
   const renderMnemonicReauth = () => (
     <Modal visible={showMnemonicReauth} animationType="fade" transparent>
@@ -6301,9 +6666,70 @@ function AppContent({ themeMode, changeTheme }) {
   // ════════════════════════════════════════════════════════
   //  SAUVEGARDE OBLIGATOIRE DE LA PHRASE DE RÉCUPÉRATION
   // ════════════════════════════════════════════════════════
+  // Phase 6 (audit M9) : la sauvegarde de la phrase ne se valide plus
+  // par un simple clic ("Je l'ai notée") — un clic par habitude, puis une
+  // perte d'appareil, = perte définitive. On demande 3 mots tirés au
+  // hasard (la phrase est masquée pendant le quiz) ; seuls 3/3 corrects
+  // valident la sauvegarde.
   const renderMnemonicBackup = () => {
     if (!pendingMnemonic) return null;
     const words = pendingMnemonic.trim().split(/\s+/);
+    const finishBackup = () => {
+      setSeedQuiz(null);
+      setSeedQuizError(null);
+      setPendingMnemonic(null);
+      setSeedBackedUp(true);
+      saveFlag(SEED_BACKED_UP_KEY);
+      if (isFirstTimeMnemonicBackup) {
+        setIsFirstTimeMnemonicBackup(false);
+        setOnboardingStep(0);
+        setShowOnboarding(true);
+      } else {
+        setShowSettings(true);
+      }
+    };
+    if (seedQuiz) {
+      return (
+        <Modal visible animationType="fade" transparent>
+          <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
+              <Text style={st.modal_title_lg}>Vérifie ta sauvegarde</Text>
+              <View style={st.warning_box}>
+                <Text style={st.warning_txt}>Sans regarder ta phrase, tape les 3 mots demandés. Si tu ne les connais pas, revois ta phrase et recommence — c'est le seul moyen de la récupérer plus tard.</Text>
+              </View>
+              {seedQuiz.indices.map((idx, k) => (
+                <View key={idx} style={{ marginTop: 16 }}>
+                  <Text style={st.form_label}>Mot n°{idx + 1}</Text>
+                  <TextInput
+                    style={st.form_input}
+                    value={seedQuiz.reponses[k]}
+                    onChangeText={(v) => setSeedQuiz((prev) => ({ ...prev, reponses: prev.reponses.map((r, j) => (j === k ? v : r)) }))}
+                    placeholder={`Mot n°${idx + 1}`}
+                    placeholderTextColor={T.text3}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              ))}
+              {!!seedQuizError && <Text style={[st.auth_error, { marginTop: 12 }]}>{seedQuizError}</Text>}
+              <AnimPressable
+                style={[st.green_btn, { marginTop: 24 }]}
+                onPress={() => {
+                  const ok = seedQuiz.indices.every((idx, k) => seedQuiz.reponses[k].trim().toLowerCase() === words[idx].toLowerCase());
+                  if (ok) finishBackup();
+                  else setSeedQuizError('Au moins un mot est incorrect. Revois ta phrase et recommence.');
+                }}
+              >
+                <Text style={st.green_btn_txt}>Valider ma sauvegarde</Text>
+              </AnimPressable>
+              <TouchableOpacity onPress={() => { setSeedQuiz(null); setSeedQuizError(null); }} style={{ marginTop: 16 }}>
+                <Text style={{ color: T.text2, fontSize: 13, textAlign: 'center' }}>← Revoir ma phrase</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+      );
+    }
     return (
       <Modal visible animationType="fade" transparent>
         <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -6324,16 +6750,13 @@ function AppContent({ themeMode, changeTheme }) {
             <AnimPressable
               style={[st.green_btn, { marginTop: 24 }]}
               onPress={() => {
-                setPendingMnemonic(null);
-                setSeedBackedUp(true);
-                saveFlag(SEED_BACKED_UP_KEY);
-                if (isFirstTimeMnemonicBackup) {
-                  setIsFirstTimeMnemonicBackup(false);
-                  setOnboardingStep(0);
-                  setShowOnboarding(true);
-                } else {
-                  setShowSettings(true);
+                const indices = [];
+                while (indices.length < 3) {
+                  const idx = Math.floor(Math.random() * words.length);
+                  if (!indices.includes(idx)) indices.push(idx);
                 }
+                setSeedQuizError(null);
+                setSeedQuiz({ indices, reponses: ['', '', ''] });
               }}
             >
               <Text style={st.green_btn_txt}>{t('mnemonic_saved_button')}</Text>
@@ -6475,6 +6898,13 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={{ width: '100%', borderWidth: 1, borderColor: L.border, borderRadius: 18, padding: 16, backgroundColor: DESIGN_TOKENS.white }}>
             {/* Boutons — tout en haut */}
             <View style={{ width: '100%', marginTop: 30 }}>
+              {Platform.OS === 'web' && (
+                <View style={{ borderWidth: 1, borderColor: '#c9605f', borderRadius: 14, padding: 12, marginBottom: 12, backgroundColor: 'rgba(201,96,95,0.08)' }}>
+                  <Text style={{ color: L.text, fontSize: 12, lineHeight: 17 }}>
+                    ⚠️ Version web : ton wallet chiffré est stocké dans ce navigateur, lisible par tout script de ce site si une faille apparaît, et cassable hors ligne si quelqu'un le récupère. Utilise cette version web pour de petits montants ou pour découvrir NexiaWallet — pour des montants importants, préfère l'app mobile (stockage matériel du téléphone).
+                  </Text>
+                </View>
+              )}
               <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
                 <Text style={{ color: '#062219', fontSize: 16, fontWeight: '800' }}>{t('onboarding_create')}</Text>
               </AnimPressable>
@@ -7063,10 +7493,32 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.confirm_sub}>≈ {fmt((parseFloat(sendAmount) || 0) * (tokens[sendToken]?.price || 0))}</Text>
             </View>
 
+            <Text style={st.form_label}>Réseau (figé à la vérification)</Text>
+            <View style={st.send_info_box}>
+              <Text style={[st.send_info_line, { fontWeight: '700' }]}>
+                {sendNetworkLocked === 'solana' ? 'Solana' : sendNetworkLocked === 'bitcoin' ? 'Bitcoin' : (sendNetworkLocked || activeNetwork.label)}
+              </Text>
+              <Text style={[st.send_info_line, { color: T.text3 }]}>Si le réseau change avant la signature, l'envoi est refusé et tu dois recommencer la vérification.</Text>
+            </View>
+
             <Text style={st.form_label}>À l'adresse</Text>
             <View style={st.confirm_addr_box}>
-              <Text style={st.confirm_addr_txt} selectable>{sendAddress}</Text>
+              <Text style={[st.confirm_addr_txt, { fontFamily: T.fontMono }]} selectable>
+                <Text style={{ fontWeight: '800' }}>{sendAddress.slice(0, 10)}</Text>
+                <Text>{sendAddress.slice(10, -6)}</Text>
+                <Text style={{ fontWeight: '800' }}>{sendAddress.slice(-6)}</Text>
+              </Text>
             </View>
+            {sendDestIsContract && (
+              <View style={[st.warning_box, { borderColor: T.red }]}>
+                <Text style={st.warning_txt}>⚠️ Cette destination est un CONTRAT, pas un portefeuille. Envoyer des fonds directement à un contrat les perd en général définitivement — annule si tu voulais envoyer à une personne.</Text>
+              </View>
+            )}
+            {sendToken === 'BTC' && (
+              <View style={st.send_info_box}>
+                <Text style={[st.send_info_line, { color: T.text3 }]}>Frais estimés avec le taux réseau du moment. Règle dust Bitcoin : si la monnaie rendue est ≤ 546 sats, elle part en frais réseau au lieu de te revenir.</Text>
+              </View>
+            )}
 
             <Text style={st.form_label}>Frais de réseau</Text>
             {sendFeeLoading ? (
@@ -7257,7 +7709,7 @@ function AppContent({ themeMode, changeTheme }) {
             })()}
 
             {!!sendAddress && sendAddress.length === 42 && (() => {
-              const poisonedMatch = looksLikePoisonedAddress(sendAddress, recentAddresses.map(a => a.address));
+              const poisonedMatch = looksLikePoisonedAddress(sendAddress, [...recentAddresses.map(a => a.address), walletAddr, solanaAddr, bitcoinAddr].filter(Boolean));
               if (poisonedMatch) {
                 return (
                   <View style={[st.warning_box, { marginTop: 12, borderColor: T.red }]}>
@@ -7308,7 +7760,10 @@ function AppContent({ themeMode, changeTheme }) {
     const isSolana = receiveChain === 'solana';
     const isBitcoin = receiveChain === 'bitcoin';
     const isEvm = !isSolana && !isBitcoin;
-    const displayAddr = isSolana ? solanaAddr : isBitcoin ? bitcoinAddr : walletAddr;
+    // Phase 6 (audit M10) : en mode détresse, l'adresse réelle ne doit
+    // pas fuiter — elle est vérifiable sur un explorateur et trahirait le
+    // leurre "solde nul". On masque adresse, QR et copie.
+    const displayAddr = isDuressMode ? '' : (isSolana ? solanaAddr : isBitcoin ? bitcoinAddr : walletAddr);
     const amt = parseFloat(receiveAmount);
     let qrValue = displayAddr;
     let paymentUri = null;
@@ -7348,15 +7803,23 @@ function AppContent({ themeMode, changeTheme }) {
                 : 'Valable pour Ethereum, Polygon, BNB Chain, Arbitrum, Optimism et Base'}
             </Text>
           </View>
-          <View style={st.qr_wrap}><QRCodeMock address={qrValue} /></View>
-          <Text style={st.receive_title}>Adresse Publique</Text>
-          <View style={st.receive_addr_box}>
-            <Text style={st.receive_addr} selectable>{displayAddr}</Text>
-          </View>
-          <AnimPressable style={[st.green_btn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }]} onPress={() => copyToClipboard(displayAddr, 'Adresse copiée')}>
-            <Ionicons name="copy-outline" size={16} color="#000" />
-            <Text style={st.green_btn_txt}>Copier</Text>
-          </AnimPressable>
+          {isDuressMode ? (
+            <View style={st.warning_box}>
+              <Text style={st.warning_txt}>Adresse masquée en mode détresse : recevoir des fonds ici révélerait ton vrai wallet. Désactive le mode détresse (déverrouille avec ton vrai PIN) pour afficher ton adresse.</Text>
+            </View>
+          ) : (
+            <>
+              <View style={st.qr_wrap}><QRCodeMock address={qrValue} /></View>
+              <Text style={st.receive_title}>Adresse Publique</Text>
+              <View style={st.receive_addr_box}>
+                <Text style={st.receive_addr} selectable>{displayAddr}</Text>
+              </View>
+              <AnimPressable style={[st.green_btn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }]} onPress={() => copyToClipboard(displayAddr, 'Adresse copiée')}>
+                <Ionicons name="copy-outline" size={16} color="#000" />
+                <Text style={st.green_btn_txt}>Copier</Text>
+              </AnimPressable>
+            </>
+          )}
 
           {isEvm && (
             <View style={{ width: '100%', marginTop: 20 }}>
@@ -7915,14 +8378,28 @@ function AppContent({ themeMode, changeTheme }) {
     } else if (method === 'eth_sendTransaction') {
       title = 'Demande de transaction';
       const tx = reqParams[0] || {};
+      // Phase 6 (audit M2) : un transfer() ERC20 ne doit plus s'afficher
+      // comme "0 ETH" — on affiche le transfert décodé dès que la
+      // simulation l'a fourni (montant brut, décimales du token inconnues
+      // ici : vérifie le token sur l'explorateur si tu ne le reconnais pas).
+      const decodedTransfer = activeSimResult?.decodedTransfer;
       detail = (
         <View style={{ width: '100%' }}>
           <Text style={st.settings_row_sub}>Vers</Text>
           <Text style={{ color: T.text, marginBottom: 10 }}>{tx.to}</Text>
-          <Text style={st.settings_row_sub}>Montant</Text>
-          <Text style={{ color: T.text, marginBottom: 10 }}>
-            {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
-          </Text>
+          {decodedTransfer ? (
+            <>
+              <Text style={st.settings_row_sub}>Transfert de token décodé</Text>
+              <Text style={{ color: T.text, marginBottom: 10 }}>Tu envoies {decodedTransfer.amount} unités brutes à {decodedTransfer.to} (contrat : {tx.to})</Text>
+            </>
+          ) : (
+            <>
+              <Text style={st.settings_row_sub}>Montant</Text>
+              <Text style={{ color: T.text, marginBottom: 10 }}>
+                {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+              </Text>
+            </>
+          )}
           {!!tx.data && tx.data !== '0x' && (
             <>
               <Text style={st.settings_row_sub}>Données</Text>
@@ -7944,8 +8421,16 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]}>Réseau : {network}</Text>
             <View style={st.alert_form}>{detail}</View>
-            {method === 'eth_sendTransaction' && !wcSimResult && (
-              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            {method === 'eth_sendTransaction' && !wcSimResult && !wcSimExpired && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction… (le bouton Signer reste désactivé tant qu'elle n'a pas fini)</Text>
+            )}
+            {method === 'eth_sendTransaction' && !wcSimResult && wcSimExpired && (
+              <Text style={[st.settings_row_sub, { marginTop: 10, color: T.red }]}>⚠️ Vérification impossible (délai dépassé ou simulation indisponible) — signe à tes risques, ou refuse.</Text>
+            )}
+            {method === 'eth_sign' && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: T.red }]}>
+                <Text style={st.warning_txt}>🚫 Méthode eth_sign retirée : signer un hash brut peut équivaloir à signer une transaction ou un ordre sans que l'écran puisse l'expliquer. Cette demande sera refusée — demande au site d'utiliser personal_sign.</Text>
+              </View>
             )}
             {!!activeSimResult?.warnings?.length && (
               <View style={[st.warning_box, { marginTop: 10, borderColor: activeSimResult.risk === 'high' ? T.red : T.gold }]}>
@@ -7959,7 +8444,7 @@ function AppContent({ themeMode, changeTheme }) {
               <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleWcRejectRequest} disabled={wcRequestLoading}>
                 <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
               </TouchableOpacity>
-              <AnimPressable style={[st.green_btn, { flex: 1, opacity: wcRequestLoading ? 0.7 : 1 }]} onPress={handleWcApproveRequest} disabled={wcRequestLoading}>
+              <AnimPressable style={[st.green_btn, { flex: 1, opacity: (wcRequestLoading || method === 'eth_sign' || (method === 'eth_sendTransaction' && !wcSimResult && !wcSimExpired)) ? 0.7 : 1 }]} onPress={handleWcApproveRequest} disabled={wcRequestLoading || method === 'eth_sign' || (method === 'eth_sendTransaction' && !wcSimResult && !wcSimExpired)}>
                 {wcRequestLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Signer</Text>}
               </AnimPressable>
             </View>
@@ -8056,7 +8541,7 @@ function AppContent({ themeMode, changeTheme }) {
                   })}
                   javaScriptEnabled
                   domStorageEnabled
-                  originWhitelist={['https://*', 'http://*']}
+                  originWhitelist={['https://*']}
                 />
               </>
             )}
@@ -8096,14 +8581,24 @@ function AppContent({ themeMode, changeTheme }) {
     } else if (method === 'eth_sendTransaction') {
       title = 'Demande de transaction';
       const tx = params[0] || {};
+      const decodedTransferDapp = activeDappSimResult?.decodedTransfer;
       detail = (
         <View style={{ width: '100%' }}>
           <Text style={st.settings_row_sub}>Vers</Text>
           <Text style={{ color: T.text, marginBottom: 10 }}>{tx.to}</Text>
-          <Text style={st.settings_row_sub}>Montant</Text>
-          <Text style={{ color: T.text, marginBottom: 10 }}>
-            {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
-          </Text>
+          {decodedTransferDapp ? (
+            <>
+              <Text style={st.settings_row_sub}>Transfert de token décodé</Text>
+              <Text style={{ color: T.text, marginBottom: 10 }}>Tu envoies {decodedTransferDapp.amount} unités brutes à {decodedTransferDapp.to} (contrat : {tx.to})</Text>
+            </>
+          ) : (
+            <>
+              <Text style={st.settings_row_sub}>Montant</Text>
+              <Text style={{ color: T.text, marginBottom: 10 }}>
+                {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+              </Text>
+            </>
+          )}
           {!!tx.data && tx.data !== '0x' && (
             <>
               <Text style={st.settings_row_sub}>Données</Text>
@@ -8125,8 +8620,16 @@ function AppContent({ themeMode, changeTheme }) {
           <ScrollView style={{ flex: 1, padding: 16 }}>
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]} numberOfLines={1}>{origin}</Text>
             <View style={st.alert_form}>{detail}</View>
-            {method === 'eth_sendTransaction' && !dappSimResult && (
-              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction…</Text>
+            {method === 'eth_sendTransaction' && !dappSimResult && !dappSimExpired && (
+              <Text style={[st.settings_row_sub, { marginTop: 10 }]}>⏳ Vérification de la transaction… (le bouton Signer reste désactivé tant qu'elle n'a pas fini)</Text>
+            )}
+            {method === 'eth_sendTransaction' && !dappSimResult && dappSimExpired && (
+              <Text style={[st.settings_row_sub, { marginTop: 10, color: T.red }]}>⚠️ Vérification impossible (délai dépassé ou simulation indisponible) — signe à tes risques, ou refuse.</Text>
+            )}
+            {method === 'eth_sign' && (
+              <View style={[st.warning_box, { marginTop: 10, borderColor: T.red }]}>
+                <Text style={st.warning_txt}>🚫 Méthode eth_sign retirée : signer un hash brut peut équivaloir à signer une transaction ou un ordre sans que l'écran puisse l'expliquer. Cette demande sera refusée — demande au site d'utiliser personal_sign.</Text>
+              </View>
             )}
             {!!activeDappSimResult?.warnings?.length && (
               <View style={[st.warning_box, { marginTop: 10, borderColor: activeDappSimResult.risk === 'high' ? T.red : T.gold }]}>
@@ -8140,7 +8643,7 @@ function AppContent({ themeMode, changeTheme }) {
               <TouchableOpacity style={[st.settings_row, { flex: 1, justifyContent: 'center', marginRight: 8 }]} onPress={handleDappBridgeReject} disabled={dappBridgeLoading}>
                 <Text style={{ color: T.red, fontWeight: '700' }}>Refuser</Text>
               </TouchableOpacity>
-              <AnimPressable style={[st.green_btn, { flex: 1, opacity: dappBridgeLoading ? 0.7 : 1 }]} onPress={handleDappBridgeApprove} disabled={dappBridgeLoading}>
+              <AnimPressable style={[st.green_btn, { flex: 1, opacity: (dappBridgeLoading || method === 'eth_sign' || (method === 'eth_sendTransaction' && !dappSimResult && !dappSimExpired)) ? 0.7 : 1 }]} onPress={handleDappBridgeApprove} disabled={dappBridgeLoading || method === 'eth_sign' || (method === 'eth_sendTransaction' && !dappSimResult && !dappSimExpired)}>
                 {dappBridgeLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>{method === 'eth_requestAccounts' ? 'Connecter' : method === 'wallet_switchEthereumChain' ? 'Changer' : 'Signer'}</Text>}
               </AnimPressable>
             </View>
@@ -10022,6 +10525,11 @@ function AppContent({ themeMode, changeTheme }) {
 
     return (
       <View style={{ flex: 1 }}>
+        {marketStale && (
+          <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 12 }]}>
+            <Text style={st.warning_txt}>⚠️ Prix différés : CoinGecko est indisponible, les prix affichés sont des prix de secours figés, pas des prix en direct. Ne décide pas d'un échange sur ces seuls prix.</Text>
+          </View>
+        )}
         <View style={st.search_wrap}>
           <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
             placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
@@ -10226,7 +10734,7 @@ function AppContent({ themeMode, changeTheme }) {
     // (soldeDuJeton), SOL et BTC compris — chacun a son propre solde.
     const swapAvailable = soldeDuJeton(swapFrom);
     // SOL et BTC s'ajoutent aux jetons EVM du réseau actif : l'échange passe
-    // alors par LI.FI (voir confirmerEchangeInterEcosysteme) au lieu de 0x.
+    // alors par LI.FI (voir fetchCrossQuoteForConfirm) au lieu de 0x.
     const jetonsEchangeables = [...(SWAPPABLE_TOKENS[network] || []), 'SOL', 'BTC'];
     return (
       <ScrollView
@@ -10325,6 +10833,17 @@ function AppContent({ themeMode, changeTheme }) {
             ? "Échange entre réseaux via LI.FI — la meilleure route est cherchée automatiquement.\nL'arrivée peut prendre quelques minutes ; le taux affiché ici est une estimation."
             : `Swap réel via agrégateur DEX (0x) — la meilleure route est cherchée automatiquement.\nFrais NexiaWallet de ${(SWAP_FEE_BPS / 100).toFixed(2)} % inclus dans le taux affiché.`}
         </Text>
+
+        <Text style={{ color: T.text3, fontSize: 11, marginTop: 12, textAlign: 'center' }}>
+          Tolérance de slippage (écart de prix accepté) : le devis est vérifié contre ce seuil et le montant minimum reçu s'affiche dans la confirmation.
+        </Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+          {[50, 100, 200].map((bps) => (
+            <TouchableOpacity key={bps} style={[st.quick_pct_btn, swapSlippageBps === bps && { borderColor: T.gold }]} onPress={() => setSwapSlippageBps(bps)}>
+              <Text style={[st.quick_pct_txt, swapSlippageBps === bps && { color: T.text }]}>{(bps / 100).toFixed(1)} %</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         <AnimPressable style={[st.green_btn, { marginTop: 16 }, swapLoading && { opacity: 0.6 }]}
           disabled={swapLoading}
@@ -10678,6 +11197,7 @@ function AppContent({ themeMode, changeTheme }) {
       {renderRecurringBuy()}
       {renderDuressSetup()}
       {renderBridge()}
+      {renderSwapQuoteModal()}
       {renderDefiPositions()}
       {renderFaq()}
       {renderReferral()}

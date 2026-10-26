@@ -16,6 +16,9 @@ const { ethers } = require('ethers');
 const { getProvider } = require('./wallet');
 
 const KNOWN_SELECTORS = {
+  // Phase 6 (audit M2) : transfer() décodé pour que la modale WalletConnect
+  // / dApp affiche "Tu envoies X TOKEN à 0x…" au lieu de "0 ETH" + hex brut.
+  '0xa9059cbb': { name: 'transfer', abi: 'function transfer(address to, uint256 amount)' },
   '0x095ea7b3': { name: 'approve', abi: 'function approve(address spender, uint256 amount)' },
   '0x39509351': { name: 'increaseAllowance', abi: 'function increaseAllowance(address spender, uint256 addedValue)' },
   '0xa22cb465': { name: 'setApprovalForAll', abi: 'function setApprovalForAll(address operator, bool approved)' },
@@ -27,11 +30,13 @@ const KNOWN_SELECTORS = {
 // arrondie (ex. 2^255) comme approbation "illimitée" — on détecte large.
 const UNLIMITED_THRESHOLD = ethers.BigNumber.from(2).pow(200);
 
-// Décode un appel connu (approve/increaseAllowance/setApprovalForAll/
-// transferFrom/safeTransferFrom) à partir du calldata brut, ou null si le
-// sélecteur n'est pas reconnu / le calldata est malformé. Exporté pour être
-// réutilisé ailleurs (ex: enregistrement des approbations, voir lib/approvals.js
-// et son point d'appel dans App.js) sans redupliquer la table de sélecteurs.
+// Décode un appel connu (transfer/approve/increaseAllowance/
+// setApprovalForAll/transferFrom/safeTransferFrom) à partir du calldata
+// brut, ou null si le sélecteur n'est pas reconnu / le calldata est
+// malformé. Exporté pour être réutilisé ailleurs (ex: enregistrement des
+// approbations, voir lib/approvals.js et son point d'appel dans App.js,
+// et affichage des transferts dans les modales WC/dApp) sans redupliquer
+// la table de sélecteurs.
 function decodeKnownCall(data) {
   const selector = (data || '0x').slice(0, 10);
   const known = data && data.length >= 10 ? KNOWN_SELECTORS[selector] : null;
@@ -115,6 +120,10 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
     risk = 'high';
     warnings.push('Donne le contrôle de TOUS tes NFT de cette collection à un tiers.');
   }
+  if (known && known.name === 'transfer') {
+    warnings.push('Transfert de token : le destinataire et le montant décodés sont affichés dans la modale — vérifie-les avant de signer.');
+    if (risk === 'none') risk = 'medium';
+  }
   if (known && (known.name === 'transferFrom' || known.name === 'safeTransferFrom')) {
     warnings.push('Déplace des fonds/NFT depuis une adresse déjà autorisée (normal pour un swap/marketplace connu, à vérifier sinon).');
     if (risk === 'none') risk = 'medium';
@@ -135,7 +144,14 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
     if (risk === 'none') risk = 'medium';
   }
 
-  return { risk, warnings, willLikelyRevert, revertReason, decodedMethod: known?.name || null };
+  // Phase 6 (audit M2) : pour un transfer(), exposer le destinataire et
+  // le montant brut décodés, afin que la modale WC/dApp les affiche au
+  // lieu de "0 ETH". Montant BRUT (unités du token, décimales inconnues
+  // ici) — l'UI le dit explicitement, pour ne pas inventer une valeur.
+  const decodedTransfer = known && known.name === 'transfer'
+    ? { to: known.args[0], amount: known.args[1]?.toString?.() ?? String(known.args[1]) }
+    : null;
+  return { risk, warnings, willLikelyRevert, revertReason, decodedMethod: known?.name || null, decodedTransfer };
 }
 
 module.exports = { simulateTransaction, decodeKnownCall, analyzeTypedData };
