@@ -646,6 +646,74 @@ router.get('/market', async (req, res) => {
   }
 });
 
+// ── Phase 7, étape 1/2 : vue d'ensemble du marché ───────────────────
+//  GET /market/overview — protégée comme /market par le middleware
+//  router.use ci-dessus (x-api-key), aucune exception ajoutée.
+//  Sources (toutes gratuites, sans clé) :
+//    - Fear & Greed Index : https://api.alternative.me/fng/?limit=1
+//    - Dominance BTC + capitalisation totale : CoinGecko /global, via
+//      les en-têtes coingeckoHeaders() existants.
+//  Gestion d'échec PAR SOURCE (Promise.allSettled) : si une source
+//  tombe, l'autre est quand même renvoyée et la réponse reste HTTP 200
+//  (jamais d'échec total) ; `stale: true` signale alors au client
+//  d'afficher « données partielles / différées ». Si les DEUX sources
+//  tombent, la réponse contient des champs null + stale:true, toujours
+//  en 200 — le client peut afficher son dernier cache (voir
+//  MARKET_OVERVIEW_CACHE_KEY dans wallet-final/lib/phase7.js).
+async function fetchFearGreed() {
+  const response = await fetch('https://api.alternative.me/fng/?limit=1');
+  if (!response.ok) throw new Error(`Fear & Greed error ${response.status}`);
+  const data = await response.json();
+  const item = data && data.data && data.data[0];
+  if (!item) throw new Error('Fear & Greed: réponse vide');
+  return {
+    value: Number(item.value),
+    classification: item.value_classification || null,
+    timestamp: Number(item.timestamp) * 1000 || null,
+  };
+}
+
+async function fetchCoinGeckoGlobal() {
+  return cachedFetch('global', 60_000, async () => {
+    const response = await fetch('https://api.coingecko.com/api/v3/global', { headers: coingeckoHeaders() });
+    if (!response.ok) throw new Error(`CoinGecko global error ${response.status}`);
+    const data = await response.json();
+    const g = data && data.data;
+    if (!g) throw new Error('CoinGecko global: réponse vide');
+    return {
+      btcDominance: g.market_cap_percentage ? g.market_cap_percentage.btc : null,
+      totalMarketCapUsd: g.total_market_cap ? g.total_market_cap.usd : null,
+      totalVolume24hUsd: g.total_volume ? g.total_volume.usd : null,
+      activeCryptocurrencies: g.active_cryptocurrencies ?? null,
+    };
+  });
+}
+
+router.get('/market/overview', async (req, res) => {
+  try {
+    const [fng, global] = await Promise.allSettled([fetchFearGreed(), fetchCoinGeckoGlobal()]);
+    const fearGreed = fng.status === 'fulfilled' ? fng.value : null;
+    const globalData = global.status === 'fulfilled' ? global.value : null;
+    res.json({
+      success: true,
+      fearGreed,
+      btcDominance: globalData ? globalData.btcDominance : null,
+      totalMarketCapUsd: globalData ? globalData.totalMarketCapUsd : null,
+      totalVolume24hUsd: globalData ? globalData.totalVolume24hUsd : null,
+      activeCryptocurrencies: globalData ? globalData.activeCryptocurrencies : null,
+      sources: {
+        fearGreed: fearGreed ? 'api.alternative.me' : null,
+        global: globalData ? 'coingecko' : null,
+      },
+      fetchedAt: new Date().toISOString(),
+      stale: !fearGreed || !globalData,
+    });
+  } catch (error) {
+    console.error('Wallet route error:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
+  }
+});
+
 router.get('/coin/:cgId', async (req, res) => {
   try {
     // Hygiène basse (audit 2026-10-26) — cgId encodé avant tout usage

@@ -49,6 +49,8 @@ import { simulateTransaction, decodeKnownCall, analyzeTypedData } from './lib/tx
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
 import * as swapSecurity from './lib/swapSecurity';
+import * as phase7 from './lib/phase7';
+import * as top20Logos from './lib/top20Logos';
 import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
@@ -543,6 +545,11 @@ const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || `http://${LOCAL_API_HOS
 const APP_API_KEY = process.env.EXPO_PUBLIC_APP_API_KEY || 'wallet-pro-dev-key-2026-7f3a9b2c';
 const API_HEADERS = { 'x-api-key': APP_API_KEY };
 
+// Phase 7 — version affichée dans « Signaler un problème » : lue depuis
+// app.json si le bundler la résout, sinon « version inconnue » (jamais inventée).
+let P7_APP_VERSION = 'version inconnue';
+try { const _p7AppJson = require('./app.json'); if (_p7AppJson?.expo?.version) P7_APP_VERSION = String(_p7AppJson.expo.version); } catch { /* bundler sans JSON : on garde « version inconnue » */ }
+
 // Ne JAMAIS charger une image de métadonnées NFT directement (voir
 // GET /wallet/nft/image-proxy côté backend) : un NFT peut être envoyé à
 // n'importe quelle adresse sans consentement (spam/phishing "airdrop NFT"),
@@ -906,6 +913,50 @@ const loadTxTags = async () => {
 
 const saveTxTags = async (map) => {
   try { await AsyncStorage.setItem(TX_TAGS_KEY, JSON.stringify(map)); } catch { /* rien à faire */ }
+};
+
+// ── Phase 7 : stockages locaux (même pattern try/catch que ci-dessus) ──
+// Étiquettes libres d'historique : { [hash]: texte } — jamais de clé/phrase.
+// Favoris d'articles : liste de liens. Mode discret + seuil gas : valeurs simples.
+const P7_HISTORY_LABELS_KEY = 'wallet-pro-history-labels-v1';
+const loadHistoryLabels = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(P7_HISTORY_LABELS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+};
+const saveHistoryLabels = async (map) => {
+  try { await AsyncStorage.setItem(P7_HISTORY_LABELS_KEY, JSON.stringify(map)); } catch { /* rien à faire */ }
+};
+const P7_NEWS_FAVS_KEY = 'wallet-pro-news-favs-v1';
+const loadNewsFavs = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(P7_NEWS_FAVS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+const saveNewsFavs = async (list) => {
+  try { await AsyncStorage.setItem(P7_NEWS_FAVS_KEY, JSON.stringify(Array.isArray(list) ? list : [])); } catch { /* rien à faire */ }
+};
+const P7_DISCREET_KEY = 'wallet-pro-discreet-mode-v1';
+const loadDiscreetMode = async () => {
+  try { return (await AsyncStorage.getItem(P7_DISCREET_KEY)) === '1'; } catch { return false; }
+};
+const saveDiscreetMode = async (v) => {
+  try { await AsyncStorage.setItem(P7_DISCREET_KEY, v ? '1' : '0'); } catch { /* rien à faire */ }
+};
+const P7_GAS_THRESHOLD_KEY = 'wallet-pro-gas-threshold-v1';
+const loadGasThreshold = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(P7_GAS_THRESHOLD_KEY);
+    const n = raw == null ? null : Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+};
+const saveGasThreshold = async (v) => {
+  try { await AsyncStorage.setItem(P7_GAS_THRESHOLD_KEY, v == null ? '' : String(v)); } catch { /* rien à faire */ }
 };
 
 // Vibration au déclenchement d'une alerte de prix — activée par défaut,
@@ -2850,6 +2901,40 @@ function AppContent({ themeMode, changeTheme }) {
   const [tokenSearch, setTokenSearch] = useState('');
   const [tokenSort, setTokenSort] = useState('value');
   const [newsFilter, setNewsFilter] = useState('all');
+  // ── Phase 7 : états (aucun existant modifié, aucun secret stocké) ──
+  const [p7ChartPeriod, setP7ChartPeriod] = useState('7d'); // '7d' | '30d' | '1y'
+  const [marketOverview, setMarketOverview] = useState(null);
+  const [marketOverviewStatus, setMarketOverviewStatus] = useState('idle'); // idle | loading | ok | unavailable
+  const [marketOverviewFetchedAt, setMarketOverviewFetchedAt] = useState(null);
+  const [addressBook, setAddressBook] = useState([]);
+  const [addressBookLoaded, setAddressBookLoaded] = useState(false);
+  const [abLabel, setAbLabel] = useState('');
+  const [abAddress, setAbAddress] = useState('');
+  const [abImportText, setAbImportText] = useState('');
+  const [showAbImport, setShowAbImport] = useState(false);
+  const [historyLabels, setHistoryLabels] = useState({});
+  const [historyLabelsLoaded, setHistoryLabelsLoaded] = useState(false);
+  const [historyLabelEditFor, setHistoryLabelEditFor] = useState(null);
+  const [historyLabelInput, setHistoryLabelInput] = useState('');
+  const [newsSearch, setNewsSearch] = useState('');
+  const [newsFavs, setNewsFavs] = useState([]);
+  const [newsFavsLoaded, setNewsFavsLoaded] = useState(false);
+  const [newsFavOnly, setNewsFavOnly] = useState(false);
+  const [newsSource, setNewsSource] = useState('all');
+  const [newsSortSource, setNewsSortSource] = useState(false);
+  const [compareA, setCompareA] = useState('bitcoin');
+  const [compareB, setCompareB] = useState('ethereum');
+  const [gasThresholdGwei, setGasThresholdGwei] = useState(null);
+  const [gasThresholdLoaded, setGasThresholdLoaded] = useState(false);
+  const [onChainScan, setOnChainScan] = useState(null); // { at, results: [...] } | null
+  const [onChainScanning, setOnChainScanning] = useState(false);
+  const [balanceUnit, setBalanceUnit] = useState('fiat'); // fiat | BTC | ETH
+  const [converterAmount, setConverterAmount] = useState('');
+  const [converterToken, setConverterToken] = useState('ETH');
+  const [discreetMode, setDiscreetMode] = useState(false);
+  const [discreetLoaded, setDiscreetLoaded] = useState(false);
+  const [p7FxRates, setP7FxRates] = useState(null); // { EUR, CHF } : EUR/CHF pour 1 USD, via CoinGecko
+  const [p7FxStatus, setP7FxStatus] = useState('idle'); // idle | ok | unavailable
   const [showCardWaitlist, setShowCardWaitlist] = useState(false);
   const [cardWaitlistEmail, setCardWaitlistEmail] = useState('');
   const [cardWaitlistJoined, setCardWaitlistJoined] = useState('');
@@ -3585,10 +3670,10 @@ function AppContent({ themeMode, changeTheme }) {
   const exportHistoryCsv = useCallback(async (items) => {
     if (!items.length) return;
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['Date', 'Type', 'Direction', 'Montant', 'Symbole', 'De', 'Vers', 'Hash', 'Statut', 'Catégorie'].map(esc).join(',');
+    const header = ['Date', 'Type', 'Direction', 'Montant', 'Symbole', 'De', 'Vers', 'Hash', 'Statut', 'Catégorie', 'Étiquette libre'].map(esc).join(',');
     const rows = items.map(item => [
       new Date(item.timestamp).toISOString(),
-      item.type,
+      phase7.historyLabel(item.type, item.type),
       item.direction === 'out' ? 'Envoyé' : 'Reçu',
       item.amount,
       item.symbol,
@@ -3597,9 +3682,11 @@ function AppContent({ themeMode, changeTheme }) {
       item.hash,
       item.failed ? 'Échoué' : 'Réussi',
       txTags[item.hash] || '',
+      historyLabels[item.hash] || '',
     ].map(esc).join(','));
-    await copyToClipboard([header, ...rows].join('\n'), `${items.length} transaction(s) copiées en CSV`);
-  }, [copyToClipboard, txTags]);
+    // Phase 7 (idée 16) : mention exacte exigée, en première ligne commentée.
+    await copyToClipboard(['# Aide à tes comptes, pas un conseil fiscal', header, ...rows].join('\n'), `${items.length} transaction(s) copiées en CSV`);
+  }, [copyToClipboard, txTags, historyLabels]);
 
   // Photo du portefeuille à l'instant T (solde + valeur par token) — même
   // principe que l'export CSV de l'historique ci-dessus, utile pour un
@@ -4871,6 +4958,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadWatchAddresses().then(list => { setWatchAddresses(list); setWatchAddressesLoaded(true); });
   }, []);
 
+
   useEffect(() => {
     if (customTokensLoaded) saveCustomTokens(customTokens.map(({ balance, ...rest }) => rest));
     // Le solde n'est pas persisté (il serait périmé au prochain lancement) —
@@ -4988,6 +5076,12 @@ function AppContent({ themeMode, changeTheme }) {
   useEffect(() => {
     if (priceAlertsLoaded) savePriceAlerts(priceAlerts);
   }, [priceAlerts, priceAlertsLoaded]);
+
+  useEffect(() => { if (addressBookLoaded) phase7.saveAddressBook(addressBook); }, [addressBook, addressBookLoaded]);
+  useEffect(() => { if (historyLabelsLoaded) saveHistoryLabels(historyLabels); }, [historyLabels, historyLabelsLoaded]);
+  useEffect(() => { if (newsFavsLoaded) saveNewsFavs(newsFavs); }, [newsFavs, newsFavsLoaded]);
+  useEffect(() => { if (discreetLoaded) saveDiscreetMode(discreetMode); }, [discreetMode, discreetLoaded]);
+  useEffect(() => { if (gasThresholdLoaded) saveGasThreshold(gasThresholdGwei); }, [gasThresholdGwei, gasThresholdLoaded]);
 
   const addPriceAlert = useCallback((symbol, targetPrice, direction) => {
     setPriceAlerts(prev => [
@@ -5472,6 +5566,164 @@ function AppContent({ themeMode, changeTheme }) {
       .catch(err => console.warn('news indisponibles:', err.message));
   }, []);
 
+  // ── Phase 7 : indicateurs de marché (idée 9) ──────────────────────────
+  // GET /market/overview (même clé API que /market, fondations étape 1).
+  // Échec → dernier cache affiché + état « indisponible », jamais de valeur inventée.
+  const fetchMarketOverview = useCallback(async () => {
+    setMarketOverviewStatus('loading');
+    try {
+      const res = await axios.get(`${API_BASE}/market/overview`, { headers: API_HEADERS, timeout: 15000 });
+      if (res.data?.success) {
+        setMarketOverview(res.data);
+        setMarketOverviewFetchedAt(Date.now());
+        setMarketOverviewStatus('ok');
+        phase7.saveMarketOverviewCache(res.data);
+        return;
+      }
+      throw new Error('overview invalide');
+    } catch (err) {
+      console.warn('market overview indisponible:', err.message);
+      const cached = await phase7.loadMarketOverviewCache();
+      if (cached) { setMarketOverview(cached); setMarketOverviewFetchedAt(null); }
+      setMarketOverviewStatus('unavailable');
+    }
+  }, []);
+
+  // ── Phase 7 : taux EUR/CHF dérivés des prix CoinGecko (idée 6) ────────
+  // Ratio EUR/USD et CHF/USD du même actif (BTC) sur CoinGecko public :
+  // un taux réel, jamais codé en dur. Échec → null → l'affichage reste en
+  // EUR et l'indisponibilité est dite (voir Paramètres). Ne remplace PAS
+  // le fmt() existant, qui reste la source d'affichage partout.
+  const fetchFxRates = useCallback(async () => {
+    try {
+      const res = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur,chf', { timeout: 12000 });
+      const d = res.data?.bitcoin;
+      if (d?.usd && d?.eur && d?.chf) {
+        setP7FxRates({ EUR: d.eur / d.usd, CHF: d.chf / d.usd });
+        setP7FxStatus('ok');
+      } else { setP7FxRates(null); setP7FxStatus('unavailable'); }
+    } catch { setP7FxRates(null); setP7FxStatus('unavailable'); }
+  }, []);
+
+  // ── Phase 7 : liste des ids vérifiés = ids de /market (idée 14) ──────
+  // Un badge vert n'est affiché QUE si l'id CoinGecko est dans cette liste.
+  const verifiedMarketIds = useMemo(() => marketCoins.map((c) => c.id).filter(Boolean), [marketCoins]);
+  const isTokenVerified = useCallback((cgId) => phase7.isVerifiedToken(cgId, verifiedMarketIds), [verifiedMarketIds]);
+
+  // ── Phase 7 : scan d'allowances on-chain, lecture seule (idée 13) ────
+  // Un provider par réseau présent dans la liste locale ; chaque échec est
+  // isolé par phase7.scanAllowances. Ne signe RIEN : la révocation éventuelle
+  // passe par la modale de confirmation existante (showAlert) dans l'écran.
+  const runOnChainScan = useCallback(async () => {
+    if (!walletAddr) return;
+    const checks = tokenApprovals.filter((a) => !a.revoked && !a.isNft && a.tokenAddress && a.spender);
+    if (!checks.length) { setOnChainScan({ at: Date.now(), results: [] }); return; }
+    setOnChainScanning(true);
+    try {
+      const byNetwork = {};
+      checks.forEach((a) => { (byNetwork[a.network] = byNetwork[a.network] || []).push(a); });
+      const allResults = [];
+      for (const [net, list] of Object.entries(byNetwork)) {
+        try {
+          const provider = localWallet.getProvider(net);
+          const res = await phase7.scanAllowances({ provider, owner: walletAddr, checks: list.map((a) => ({ tokenAddress: a.tokenAddress, spender: a.spender, symbol: a.tokenSymbol })) });
+          res.forEach((r) => {
+            const entry = list.find((a) => a.tokenAddress === r.tokenAddress && a.spender === r.spender);
+            allResults.push({ ...r, network: net, entryId: entry?.id || null, unlimited: phase7.checkAllowanceSufficient(r.allowance, '0').unlimited });
+          });
+        } catch { list.forEach((a) => allResults.push({ tokenAddress: a.tokenAddress, spender: a.spender, symbol: a.tokenSymbol, allowance: null, ok: false, network: net, entryId: a.id, unlimited: false })); }
+      }
+      setOnChainScan({ at: Date.now(), results: allResults });
+    } finally { setOnChainScanning(false); }
+  }, [walletAddr, tokenApprovals]);
+
+  // ── Phase 7 : carnet d'adresses local (idée 4) ─────────────────────────
+  // Stocké via phase7 (AsyncStorage). Le drapeau `favorite` est géré ici :
+  // les fonctions pures de phase7 ne connaissent que {label, address, network}.
+  const sendNetworkFamily = sendToken === 'SOL' ? 'solana' : sendToken === 'BTC' ? 'bitcoin' : network;
+  const addAddressBookEntry = useCallback(() => {
+    const label = abLabel.trim();
+    const address = abAddress.trim();
+    if (!label || !address) { showToast('Nom et adresse requis', 'error'); return; }
+    const next = phase7.addAddressBookEntry(addressBook, { label, address, network: sendNetworkFamily });
+    if (next.length === addressBook.length && !phase7.findAddressBookEntry(next, address, sendNetworkFamily)) {
+      showToast('Adresse invalide pour ce réseau', 'error'); return;
+    }
+    setAddressBook(next); phase7.saveAddressBook(next);
+    setAbLabel(''); setAbAddress('');
+    showToast('Contact ajouté au carnet', 'success');
+  }, [abLabel, abAddress, addressBook, sendNetworkFamily, showToast]);
+  const toggleAbFavorite = useCallback((entry) => {
+    setAddressBook((prev) => {
+      const next = prev.map((e) => (e.network === entry.network && (entry.network === 'solana' || entry.network === 'bitcoin' ? e.address === entry.address : String(e.address).toLowerCase() === String(entry.address).toLowerCase()) ? { ...e, favorite: !e.favorite } : e));
+      phase7.saveAddressBook(next); return next;
+    });
+  }, []);
+  const removeAbEntry = useCallback((entry) => {
+    const next = phase7.removeAddressBookEntry(addressBook, entry.address, entry.network);
+    setAddressBook(next); phase7.saveAddressBook(next);
+  }, [addressBook]);
+  const exportAddressBook = useCallback(async () => {
+    const payload = {
+      version: 1,
+      warning: 'Ce fichier contient UNIQUEMENT des noms, des adresses publiques et des favoris — jamais de clé privée, jamais de phrase de récupération. Ne partage jamais ta phrase ou ton PIN.',
+      entries: addressBook.map((e) => ({ label: e.label, address: e.address, network: e.network, favorite: !!e.favorite })),
+    };
+    await copyToClipboard(JSON.stringify(payload), 'Carnet copié (noms + adresses + favoris uniquement)');
+  }, [addressBook, copyToClipboard]);
+  const importAddressBook = useCallback(() => {
+    let parsed;
+    try { parsed = JSON.parse(abImportText); } catch { showToast('JSON invalide', 'error'); return; }
+    const entries = parsed?.entries || parsed;
+    if (!Array.isArray(entries)) { showToast('JSON invalide : aucune liste d’entrées', 'error'); return; }
+    let next = [...addressBook]; let added = 0;
+    entries.forEach((e) => {
+      if (!e || typeof e.label !== 'string' || !e.label.trim() || typeof e.network !== 'string') return;
+      const before = next.length;
+      next = phase7.addAddressBookEntry(next, { label: e.label.trim(), address: String(e.address || '').trim(), network: e.network });
+      if (next.length > before || phase7.findAddressBookEntry(next, String(e.address || '').trim(), e.network)) {
+        if (e.favorite) next = next.map((x) => (x.network === e.network && String(x.address).toLowerCase() === String(e.address || '').toLowerCase() ? { ...x, favorite: true } : x));
+        added += 1;
+      }
+    });
+    setAddressBook(next); phase7.saveAddressBook(next);
+    setShowAbImport(false); setAbImportText('');
+    showToast(`${added} contact(s) importé(s)`, 'success');
+  }, [abImportText, addressBook, showToast]);
+
+  // ── Phase 7 : étiquettes libres d'historique (idée 5) ─────────────────
+  const setHistoryLabelText = useCallback((hash, text) => {
+    setHistoryLabels((prev) => {
+      const next = { ...prev };
+      if (text.trim()) next[hash] = text.trim(); else delete next[hash];
+      saveHistoryLabels(next); return next;
+    });
+    setHistoryLabelEditFor(null);
+  }, []);
+
+  // ── Phase 7 : favoris d'articles (idée 8) ──────────────────────────────
+  const toggleNewsFav = useCallback((link) => {
+    if (!link) return;
+    setNewsFavs((prev) => {
+      const next = prev.includes(link) ? prev.filter((l) => l !== link) : [...prev, link];
+      saveNewsFavs(next); return next;
+    });
+  }, []);
+  // Phase 7 : chargements locaux + indicateurs + taux (aucun existant touché).
+  // La préférence de devise phase7 (clé séparée) n'écrase PAS la devise
+  // existante (wallet-pro-currency-v1) : le sélecteur Paramètres existant
+  // reste la seule source de vérité pour `currency`.
+  useEffect(() => {
+    phase7.loadAddressBook().then((list) => { setAddressBook(list); setAddressBookLoaded(true); });
+    loadHistoryLabels().then((map) => { setHistoryLabels(map); setHistoryLabelsLoaded(true); });
+    loadNewsFavs().then((list) => { setNewsFavs(list); setNewsFavsLoaded(true); });
+    loadDiscreetMode().then((v) => { setDiscreetMode(v); setDiscreetLoaded(true); });
+    loadGasThreshold().then((v) => { setGasThresholdGwei(v); setGasThresholdLoaded(true); });
+    phase7.loadMarketOverviewCache().then((cached) => { if (cached) setMarketOverview(cached); });
+    fetchMarketOverview();
+    fetchFxRates();
+  }, [fetchMarketOverview, fetchFxRates]);
+
   useEffect(() => {
     fetchNews();
     const id = setInterval(fetchNews, 5 * 60 * 1000);
@@ -5613,9 +5865,22 @@ function AppContent({ themeMode, changeTheme }) {
     return filtered.sort(([, a], [, b]) => (((b.balance || 0) * (b.price || 0)) - ((a.balance || 0) * (a.price || 0))));
   }, [visibleTokenEntries, tokenSearch, tokenSort]);
 
-  const filteredNewsItems = useMemo(() =>
-    newsFilter === 'all' ? newsItems : newsItems.filter((item) => (item.category || 'crypto') === newsFilter),
-  [newsItems, newsFilter]);
+  // Phase 7 (actus) : recherche texte + favoris locaux + filtre/tri par source,
+  // en plus du filtre Tout/Crypto/Économie existant. Rien n'est inventé : les
+  // sources viennent des articles eux-mêmes (champ `source` du backend /news).
+  const newsSources = useMemo(() => {
+    const set = new Set(newsItems.map((i) => i.source).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [newsItems]);
+  const filteredNewsItems = useMemo(() => {
+    let list = newsFilter === 'all' ? [...newsItems] : newsItems.filter((item) => (item.category || 'crypto') === newsFilter);
+    if (newsSource !== 'all') list = list.filter((item) => item.source === newsSource);
+    const q = newsSearch.trim().toLowerCase();
+    if (q) list = list.filter((item) => `${item.title || ''} ${item.source || ''}`.toLowerCase().includes(q));
+    if (newsFavOnly) list = list.filter((item) => newsFavs.includes(item.link));
+    if (newsSortSource) list.sort((a, b) => (a.source || '').localeCompare(b.source || '') || (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0));
+    return list;
+  }, [newsItems, newsFilter, newsSource, newsSearch, newsFavOnly, newsFavs, newsSortSource]);
 
   // Token détenu (solde > 0) dont le prix bouge le plus aujourd'hui, dans un
   // sens ou l'autre -- ignoré sous 1% pour ne pas polluer l'accueil avec du
@@ -7190,6 +7455,7 @@ function AppContent({ themeMode, changeTheme }) {
                 { label: 'Valeur',     val: fmt((tk.balance || 0) * (tk.price || 0)) },
                 { label: 'Prix',       val: fmt(tk.price, 4) },
                 { label: 'Market Cap', val: fmt(tk.marketCap) },
+                { label: 'Volume 24h', val: coinDetails[selectedToken]?.totalVolume ? fmt(coinDetails[selectedToken].totalVolume) : '—' },
               ].map(item => (
                 <View key={item.label} style={st.detail_stat}>
                   <Text style={st.detail_stat_lbl}>{item.label}</Text>
@@ -7197,6 +7463,36 @@ function AppContent({ themeMode, changeTheme }) {
                 </View>
               ))}
             </View>
+            {(() => {
+              // Phase 7 (idée 2) : contrat affiché UNIQUEMENT pour les ERC20 connus
+              // du code (lib/wallet.js ERC20_TOKENS : USDT/USDC sur ethereum/bsc).
+              // Lien explorateur du réseau si contrat connu, sinon lien CoinGecko.
+              const erc20 = localWallet.ERC20_TOKENS?.[network]?.[selectedToken];
+              const cgId = WALLET_TOKENS[selectedToken]?.cgId;
+              const linkUrl = erc20 ? `${activeNetwork.explorer}/token/${erc20.address}` : (cgId ? `https://www.coingecko.com/en/coins/${cgId}` : null);
+              const linkLabel = erc20 ? `Voir sur ${activeNetwork.label} (explorateur)` : 'Voir sur CoinGecko';
+              return (
+                <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+                  {priceAlerts.some(a => a.symbol === selectedToken) && (
+                    <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>🔔 Alerte prix active pour ce token</Text>
+                  )}
+                  {erc20 && (
+                    <View style={{ marginBottom: 10 }}>
+                      <Text style={{ color: T.text3, fontSize: 11, marginBottom: 4 }}>Adresse de contrat ({activeNetwork.label}) — copiable :</Text>
+                      <Text style={{ color: T.text, fontSize: 12, fontFamily: T.fontMono }} selectable>{erc20.address}</Text>
+                      <TouchableOpacity onPress={() => copyToClipboard(erc20.address, 'Adresse de contrat copiée')} style={{ marginTop: 6 }}>
+                        <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>Copier l’adresse de contrat</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {linkUrl && (
+                    <TouchableOpacity onPress={() => Linking.openURL(linkUrl)}>
+                      <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>🔗 {linkLabel}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })()}
             <View style={st.detail_actions}>
               {[
                 { icon: 'arrow-up',         label: 'Envoyer',  onPress: () => { setSelectedToken(null); setSendToken(selectedToken); setShowSend(true); } },
@@ -7292,6 +7588,7 @@ function AppContent({ themeMode, changeTheme }) {
               {[
                 { label: 'Prix',       val: fmt(coin.current_price, 4) },
                 { label: 'Market Cap', val: fmt(coin.market_cap) },
+                { label: 'Volume 24h', val: marketCoinInfo[coin.id]?.totalVolume ? fmt(marketCoinInfo[coin.id].totalVolume) : '—' },
               ].map(item => (
                 <View key={item.label} style={st.detail_stat}>
                   <Text style={st.detail_stat_lbl}>{item.label}</Text>
@@ -7573,6 +7870,15 @@ function AppContent({ themeMode, changeTheme }) {
         ) : (
           <ScrollView style={{ flex: 1, padding: 16 }}>
             {sendToken !== 'SOL' && sendToken !== 'BTC' && <GasIndicatorBadge gasIndicator={gasIndicator} nativeSymbol={nativeSymbol} />}
+            {sendToken !== 'SOL' && sendToken !== 'BTC' && gasThresholdGwei != null && (
+              gasIndicator ? (gasIndicator.gwei < gasThresholdGwei ? (
+                <View style={[st.warning_box, { marginBottom: 12 }]}>
+                  <Text style={st.warning_txt}>⛽ Gas sous ton seuil : {gasIndicator.gwei} gwei estimés, sous le seuil de {gasThresholdGwei} gwei défini dans Paramètres.</Text>
+                </View>
+              ) : null) : (
+                <Text style={{ color: T.text3, fontSize: 11, marginBottom: 12 }}>Gas indisponible pour le moment (seuil défini : {gasThresholdGwei} gwei).</Text>
+              )
+            )}
             <View style={st.network_badge}>
               <Text style={{ color: T.text2, fontSize: 12, fontWeight: 'bold' }}>
                 ⛓️ Réseau {{ SOL: 'Solana', BTC: 'Bitcoin' }[sendToken] || activeNetwork.label}
@@ -7654,6 +7960,61 @@ function AppContent({ themeMode, changeTheme }) {
                 )}
               </View>
             )}
+
+            <View style={{ marginBottom: 16 }}>
+              <Text style={st.form_label}>Carnet d'adresses (local)</Text>
+              <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8 }}>Contacts enregistrés sur cet appareil uniquement — jamais de clé ni de phrase.</Text>
+              {addressBook.filter((e) => e.network === sendNetworkFamily).map((e) => (
+                <View key={`${e.network}:${e.address}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => setSendAddress(e.address)}>
+                    <Text style={{ color: T.text, fontSize: 13, fontWeight: '700' }}>{e.favorite ? '⭐ ' : ''}{e.label}</Text>
+                    <Text style={{ color: T.text3, fontSize: 11 }}>{e.address.slice(0, 10)}…{e.address.slice(-6)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleAbFavorite(e)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ paddingHorizontal: 6 }}>
+                    <Text style={{ fontSize: 16 }}>{e.favorite ? '⭐' : '☆'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => removeAbEntry(e)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ paddingHorizontal: 6 }}>
+                    <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {!addressBook.filter((e) => e.network === sendNetworkFamily).length && (
+                <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8 }}>Aucun contact pour ce réseau ({sendNetworkFamily}).</Text>
+              )}
+              <TextInput
+                style={[st.form_input, { marginBottom: 8 }]}
+                value={abLabel} onChangeText={setAbLabel} placeholder="Nom du contact (ex : Alice)" placeholderTextColor={T.text3} maxLength={40}
+              />
+              <TextInput
+                style={[st.form_input, { marginBottom: 8 }]}
+                value={abAddress} onChangeText={setAbAddress} placeholder="Adresse du contact" placeholderTextColor={T.text3} autoCapitalize="none"
+              />
+              <Text style={{ color: T.text3, fontSize: 11, marginBottom: 8 }}>Réseau du contact : {sendNetworkFamily} (celui de l’envoi en cours).</Text>
+              <AnimPressable style={[st.green_btn, { marginBottom: 10 }]} onPress={addAddressBookEntry}>
+                <Text style={st.green_btn_txt}>Ajouter au carnet</Text>
+              </AnimPressable>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity style={[st.max_btn, { flex: 1, alignItems: 'center' }]} onPress={exportAddressBook}>
+                  <Text style={st.max_btn_txt}>Exporter (JSON local)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[st.max_btn, { flex: 1, alignItems: 'center' }]} onPress={() => setShowAbImport((v) => !v)}>
+                  <Text style={st.max_btn_txt}>Importer</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: T.text3, fontSize: 11, marginTop: 8, lineHeight: 16 }}>Export : noms + adresses publiques + favoris UNIQUEMENT — jamais de clé privée ni de phrase de récupération.</Text>
+              {showAbImport && (
+                <View style={[st.alert_form, { marginTop: 10 }]}>
+                  <Text style={[st.form_label, { marginBottom: 8 }]}>Colle le JSON du carnet exporté</Text>
+                  <TextInput
+                    style={[st.form_input, { minHeight: 80 }]}
+                    value={abImportText} onChangeText={setAbImportText} placeholder='{"version":1,"entries":[...]}' placeholderTextColor={T.text3} multiline
+                  />
+                  <AnimPressable style={[st.green_btn, { flex: 1 }]} onPress={importAddressBook}>
+                    <Text style={st.green_btn_txt}>Importer le carnet</Text>
+                  </AnimPressable>
+                </View>
+              )}
+            </View>
 
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={st.form_label}>Montant</Text>
@@ -7774,6 +8135,12 @@ function AppContent({ themeMode, changeTheme }) {
         qrValue = paymentUri;
       } catch { /* montant invalide, on garde juste l'adresse */ }
     }
+    // Phase 7 (idée 3) : même principe côté Solana — le QR encode l'adresse
+    // PROPRE de l'utilisateur (solanaAddr, jamais une autre) + le montant.
+    if (isSolana && solanaAddr && amt > 0) {
+      paymentUri = `solana:${solanaAddr}?amount=${receiveAmount}`;
+      qrValue = paymentUri;
+    }
     return (
     <Modal visible={showReceive} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -7821,21 +8188,21 @@ function AppContent({ themeMode, changeTheme }) {
             </>
           )}
 
-          {isEvm && (
+          {(isEvm || isSolana) && (
             <View style={{ width: '100%', marginTop: 20 }}>
               <Text style={st.form_label}>Demander un montant précis (optionnel)</Text>
               <TextInput
                 style={st.form_input}
                 value={receiveAmount}
                 onChangeText={(v) => setReceiveAmount(normalizeDecimalInput(v))}
-                placeholder={`0.00 ${nativeSymbol}`}
+                placeholder={isSolana ? '0.00 SOL' : `0.00 ${nativeSymbol}`}
                 placeholderTextColor={T.text3}
                 keyboardType="decimal-pad"
               />
               {!!paymentUri && (
                 <>
                   <Text style={{ color: T.text3, fontSize: 11, marginBottom: 10 }}>
-                    Le QR ci-dessus encode maintenant {receiveAmount} {nativeSymbol} — un wallet compatible (dont NexiaWallet) pré-remplira le montant en scannant.
+                    Le QR ci-dessus encode maintenant {receiveAmount} {isSolana ? 'SOL' : nativeSymbol} — un wallet compatible (dont NexiaWallet) pré-remplira le montant en scannant.
                   </Text>
                   <AnimPressable style={[st.green_btn, { backgroundColor: T.card2 }]} onPress={() => copyToClipboard(paymentUri, 'Lien de demande copié')}>
                     <Text style={[st.green_btn_txt, { color: T.text }]}>🔗 Copier le lien de demande</Text>
@@ -8007,7 +8374,7 @@ function AppContent({ themeMode, changeTheme }) {
                       {new Date(item.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       {' • '}{counterpartyLabel}
                     </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 4, flexWrap: 'wrap' }}>
                       <TouchableOpacity
                         onPress={(e) => { e.stopPropagation?.(); cycleTxTag(item.hash); }}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -8015,6 +8382,17 @@ function AppContent({ themeMode, changeTheme }) {
                         accessibilityLabel="Changer la catégorie de cette transaction"
                       >
                         <Text style={st.tx_tag_chip}>🏷️ {txTags[item.hash] || 'Étiqueter'}</Text>
+                      </TouchableOpacity>
+                      {!!historyLabels[item.hash] && (
+                        <Text style={{ color: T.text2, fontSize: 11 }}>📝 {historyLabels[item.hash]}</Text>
+                      )}
+                      <TouchableOpacity
+                        onPress={(e) => { e.stopPropagation?.(); setHistoryLabelEditFor(historyLabelEditFor === item.hash ? null : item.hash); setHistoryLabelInput(historyLabels[item.hash] || ''); }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Saisir une étiquette libre pour cette transaction"
+                      >
+                        <Text style={{ color: T.gold, fontSize: 11, fontWeight: '700' }}>✏️ Étiquette libre</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={(e) => { e.stopPropagation?.(); shareTransactionReceipt(item, counterpartyLabel); }}
@@ -8024,6 +8402,24 @@ function AppContent({ themeMode, changeTheme }) {
                       >
                         <Ionicons name="share-outline" size={15} color={T.text3} />
                       </TouchableOpacity>
+                      {historyLabelEditFor === item.hash && (
+                        <View style={{ flexDirection: 'row', width: '100%', alignItems: 'center', gap: 8 }}>
+                          <TextInput
+                            style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+                            value={historyLabelInput}
+                            onChangeText={setHistoryLabelInput}
+                            placeholder="Étiquette libre (ex : Loyer, Don…)"
+                            placeholderTextColor={T.text3}
+                            maxLength={40}
+                          />
+                          <TouchableOpacity
+                            style={[st.max_btn, { marginBottom: 0 }]}
+                            onPress={(e) => { e.stopPropagation?.(); setHistoryLabelText(item.hash, historyLabelInput); }}
+                          >
+                            <Text style={st.max_btn_txt}>OK</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   </View>
                   <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.down : T.up) }]}>
@@ -8976,6 +9372,58 @@ function AppContent({ themeMode, changeTheme }) {
               le navigateur intégré ou un échange dans l'app. Une approbation accordée ailleurs, avant d'utiliser
               NexiaWallet, ne peut pas apparaître ici.
             </Text>
+            <AnimPressable
+              style={[st.settings_row, { justifyContent: 'center', opacity: onChainScanning ? 0.7 : 1 }]}
+              onPress={runOnChainScan} disabled={onChainScanning}
+            >
+              {onChainScanning
+                ? <ActivityIndicator color={T.gold} />
+                : <Text style={{ color: T.gold, fontWeight: '700' }}>🔍 Vérifier on-chain (lecture seule)</Text>}
+            </AnimPressable>
+            <Text style={{ color: T.text3, fontSize: 11, marginBottom: 16, textAlign: 'center' }}>
+              Lit les allowances actuelles via ethers (eth_call) pour les approbations suivies ici — aucune signature à cette étape.
+            </Text>
+            {!!onChainScan && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 8 }}>
+                  Résultat on-chain — {new Date(onChainScan.at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </Text>
+                {!onChainScan.results.length && (
+                  <Text style={{ color: T.text2, fontSize: 12 }}>Aucune approbation ERC20 suivie à vérifier sur ce wallet.</Text>
+                )}
+                {onChainScan.results.map((r, i) => (
+                  <View key={`${r.tokenAddress}-${r.spender}-${i}`} style={[st.settings_row, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                    <Text style={st.settings_row_title}>{r.symbol} · {r.network}</Text>
+                    <Text style={st.settings_row_sub} numberOfLines={1}>Spender : {r.spender?.slice(0, 10)}…{r.spender?.slice(-6)}</Text>
+                    <Text style={[st.settings_row_sub, { color: r.unlimited ? T.red : T.text2, fontWeight: r.unlimited ? '700' : '400' }]}>
+                      {!r.ok ? 'Lecture impossible (token non-ERC20 ou réseau indisponible)'
+                        : r.unlimited ? '⚠️ Approbation ILLIMITÉE détectée on-chain'
+                        : `Allowance lue : ${String(r.allowance).length > 24 ? `${String(r.allowance).slice(0, 24)}…` : r.allowance} (unités brutes du token)`}
+                    </Text>
+                    {r.unlimited && r.entryId && (
+                      <AnimPressable
+                        style={[st.settings_row, { marginTop: 10, justifyContent: 'center', backgroundColor: T.redBg }]}
+                        onPress={() => {
+                          const entry = tokenApprovals.find((a) => a.id === r.entryId);
+                          if (!entry) return;
+                          if (!unlockedPrivateKey) { showToast('Déverrouille ton wallet pour révoquer', 'error'); return; }
+                          showAlert(
+                            'Révoquer cette approbation ?',
+                            `Cette révocation est une NOUVELLE transaction on-chain (approve à 0) pour ${r.symbol} — elle doit être signée et paiera du gas.`,
+                            [
+                              { text: 'Annuler', style: 'cancel' },
+                              { text: 'Révoquer', style: 'destructive', onPress: () => handleRevokeApproval(entry) },
+                            ]
+                          );
+                        }}
+                      >
+                        <Text style={{ color: T.red, fontWeight: '700' }}>Révoquer (avec confirmation)</Text>
+                      </AnimPressable>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
             {approvalsLoading ? (
               <ActivityIndicator color={T.gold} style={{ marginTop: 20 }} />
             ) : activeApprovals.length === 0 ? (
@@ -9386,6 +9834,12 @@ function AppContent({ themeMode, changeTheme }) {
             ))}
           </View>
 
+          {p7FxStatus === 'ok' && p7FxRates ? (
+            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux CoinGecko (dérivés des prix BTC) : 1 USD = {p7FxRates.EUR.toFixed(4)} EUR · {p7FxRates.CHF.toFixed(4)} CHF.</Text>
+          ) : (
+            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux EUR/CHF CoinGecko indisponibles — la devise choisie reste affichée (EUR par défaut), aucun taux inventé.</Text>
+          )}
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
             {Object.entries(NETWORK_INFO).map(([id, n]) => (
@@ -9781,6 +10235,34 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 );
               })()}
+              <View style={[st.stats_card, { marginBottom: 14 }]}>
+                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité — Phase 7</Text>
+                {(() => {
+                  let unlimitedCount = 0;
+                  try {
+                    unlimitedCount = tokenApprovals.filter((a) => !a.revoked && a.amount && ethers.BigNumber.from(a.amount).gte(ethers.BigNumber.from(2).pow(200))).length;
+                  } catch { unlimitedCount = 0; }
+                  const rows = [
+                    { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
+                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création (Phase 6) — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
+                    { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
+                    { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
+                  ];
+                  return rows.map((r) => (
+                    <View key={r.title} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+                      <Text style={{ fontSize: 20 }}>{r.icon}</Text>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={st.settings_row_title}>{r.title}</Text>
+                        <Text style={st.settings_row_sub}>{r.sub}</Text>
+                        <Text style={{ color: r.done ? T.up : T.gold, fontSize: 12, fontWeight: '700', marginTop: 2 }}>{r.done ? '✓ Fait' : '○ À faire'}</Text>
+                      </View>
+                      <TouchableOpacity onPress={r.onAction} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: T.border }}>
+                        <Text style={{ color: T.gold, fontSize: 11, fontWeight: '700' }}>{r.actionLabel}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ));
+                })()}
+              </View>
               {!!unlockedMnemonic && !isDuressMode && (
                 <AnimPressable
                   style={st.settings_row}
@@ -9887,6 +10369,20 @@ function AppContent({ themeMode, changeTheme }) {
             </>
           )}
 
+          <Text style={[st.settings_section, { marginTop: 24 }]}>⛽ Alerte gas</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {[[null, 'Désactivée'], [20, '20 gwei'], [50, '50 gwei'], [100, '100 gwei']].map(([val, label]) => (
+              <TouchableOpacity
+                key={label}
+                style={[st.chip_pill, gasThresholdGwei === val && st.chip_pill_on]}
+                onPress={() => setGasThresholdGwei(val)}
+              >
+                <Text style={[st.chip_pill_txt, gasThresholdGwei === val && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Sur l’écran d’envoi, une alerte s’affiche quand le gas estimé passe sous ce seuil. Données gas existantes, sinon « indisponible ».</Text>
+
           <Text style={[st.settings_section, { marginTop: 24 }]}>👛 Affichage du portefeuille</Text>
           <AnimPressable
             style={st.settings_row}
@@ -9988,7 +10484,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>📱</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>NexiaWallet</Text>
-              <Text style={st.settings_row_sub}>Non-custodial • CoinGecko Live • EVM + Solana + Bitcoin</Text>
+              <Text style={st.settings_row_sub}>{`Non-custodial • CoinGecko Live • EVM + Solana + Bitcoin${P7_APP_VERSION !== 'version inconnue' ? ` • Version ${P7_APP_VERSION}` : ''}`}</Text>
             </View>
           </View>
           <AnimPressable style={st.settings_row} onPress={() => { setShowSettings(false); setShowFaq(true); }}>
@@ -10001,12 +10497,14 @@ function AppContent({ themeMode, changeTheme }) {
           <AnimPressable
             style={st.settings_row}
             onPress={() => {
+              // Phase 7 (idée 19) : version (app.json, sinon « version inconnue »)
+              // + réseau actif UNIQUEMENT — jamais de clé, de phrase, d'adresse
+              // complète ni de solde dans ce signalement.
+              const reportText = `Décris ici le problème rencontré :\n\n\n\n— Infos techniques (laisse cette partie) —\nVersion de l'app : ${P7_APP_VERSION}\nRéseau actif : ${activeNetwork?.label || '—'}\nPlateforme : ${Platform.OS}`;
               const subject = encodeURIComponent('Signalement NexiaWallet');
-              const body = encodeURIComponent(
-                `Décris ici le problème rencontré :\n\n\n\n— Infos techniques (laisse cette partie) —\nRéseau : ${activeNetwork?.label || '—'}\nAdresse : ${walletAddr || '—'}\nPlateforme : ${Platform.OS}`
-              );
+              const body = encodeURIComponent(reportText);
               Linking.openURL(`mailto:contact@nexiawallet.com?subject=${subject}&body=${body}`).catch(() => {
-                showAlert('Impossible d\'ouvrir ton client mail', 'Écris-nous directement à contact@nexiawallet.com.');
+                copyToClipboard(reportText, 'Texte du signalement copié — colle-le dans un email à contact@nexiawallet.com');
               });
             }}
           >
@@ -10132,6 +10630,9 @@ function AppContent({ themeMode, changeTheme }) {
           <TouchableOpacity onPress={() => setShowSettings(true)} style={st.icon_btn} accessibilityRole="button" accessibilityLabel={t('settings_title')}>
             <Ionicons name="settings-outline" size={20} color={T.text2} />
           </TouchableOpacity>
+          <TouchableOpacity onPress={() => setDiscreetMode(v => !v)} style={[st.icon_btn, discreetMode && { backgroundColor: T.goldBg }]} accessibilityRole="button" accessibilityLabel="Mode discret">
+            <Ionicons name={discreetMode ? 'eye-off-outline' : 'eye-outline'} size={20} color={discreetMode ? T.gold : T.text2} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -10174,10 +10675,18 @@ function AppContent({ themeMode, changeTheme }) {
                 <Ionicons name={balanceHidden ? 'eye-off-outline' : 'eye-outline'} size={20} color={T.text2} />
               </TouchableOpacity>
             </View>
-            <Text style={st.balance_amount}>{balanceHidden ? '••••••' : fmt(totalUSD)}</Text>
+            <TouchableOpacity onPress={() => setBalanceUnit(u => u === 'fiat' ? (tokens.BTC?.price ? 'BTC' : 'ETH') : u === 'BTC' ? (tokens.ETH?.price ? 'ETH' : 'fiat') : 'fiat')} accessibilityRole="button" accessibilityLabel="Basculer l'unité du solde total">
+              <Text style={st.balance_amount}>{(() => {
+                if (balanceHidden || discreetMode) return '••••••';
+                if (balanceUnit === 'BTC' && tokens.BTC?.price) return `${(totalUSD / tokens.BTC.price).toFixed(6)} BTC`;
+                if (balanceUnit === 'ETH' && tokens.ETH?.price) return `${(totalUSD / tokens.ETH.price).toFixed(6)} ETH`;
+                return fmt(totalUSD);
+              })()}</Text>
+            </TouchableOpacity>
+            <Text style={{ color: T.text3, fontSize: 11, marginTop: 2 }}>Touche le solde pour l'afficher en {balanceUnit === 'fiat' ? 'BTC / ETH' : balanceUnit === 'BTC' ? 'ETH / devise' : 'devise / BTC'} • {discreetMode ? 'Mode discret activé' : 'Mode discret désactivé'}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: periodChange >= 0 ? T.up : T.down, fontSize: 14, fontWeight: '600' }}>
-              {balanceHidden ? '••••' : `${periodChange >= 0 ? '+' : ''}${fmt(periodChange)} (${((periodChange / Math.max(totalUSD - periodChange, 1)) * 100).toFixed(2)}%)`}
+              {balanceHidden || discreetMode ? '••••' : `${periodChange >= 0 ? '+' : ''}${fmt(periodChange)} (${((periodChange / Math.max(totalUSD - periodChange, 1)) * 100).toFixed(2)}%)`}
             </Text>
             <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
               {[['24h', '24h'], ['7d', '7j'], ['30d', '30j']].map(([key, label]) => (
@@ -10195,6 +10704,37 @@ function AppContent({ themeMode, changeTheme }) {
         </LinearGradient>
       </View>
 
+      <View style={{ marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+        <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 8 }}>Convertisseur rapide</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TextInput
+            style={[st.form_input, { flex: 1, marginBottom: 0 }]}
+            value={converterAmount}
+            onChangeText={(v) => setConverterAmount(normalizeDecimalInput(v))}
+            placeholder="Montant en EUR" placeholderTextColor={T.text3} keyboardType="decimal-pad"
+          />
+          <Text style={{ color: T.text2, fontSize: 13, fontWeight: '700' }}>EUR →</Text>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+          {['ETH', 'BTC', 'BNB', 'SOL', 'USDT', 'USDC', 'MATIC', 'ADA'].filter((sym) => tokens[sym]).map((sym) => (
+            <TouchableOpacity key={sym} style={[st.chip_pill, converterToken === sym && st.chip_pill_on]} onPress={() => setConverterToken(sym)}>
+              <Text style={[st.chip_pill_txt, converterToken === sym && st.chip_pill_txt_on]}>{sym}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={{ color: T.gold, fontWeight: '700', fontSize: 15, marginTop: 10 }}>
+          ≈ {(() => {
+            const amt = parseFloat(converterAmount);
+            const priceUsd = tokens[converterToken]?.price;
+            if (!amt || !priceUsd) return '—';
+            const fx = p7FxRates || { EUR: CURRENCIES.EUR.rate, CHF: CURRENCIES.CHF.rate };
+            const qty = phase7.convertFiatToCrypto(amt, 'EUR', priceUsd, fx);
+            return qty == null ? '—' : (phase7.formatCryptoAmount(qty, converterToken) || '—');
+          })()}
+        </Text>
+        <Text style={{ color: T.text3, fontSize: 11, marginTop: 4 }}>Conversion avec les prix existants (CoinGecko via /market) ; aucun taux inventé{p7FxRates ? '' : ' — taux EUR CoinGecko indisponible, taux d’affichage existant utilisé'}.</Text>
+      </View>
+
       {portfolioHistory.length >= 2 && (
         <View style={st.sparkline_wrap}>
           <PortfolioSparkline points={portfolioHistory} />
@@ -10204,8 +10744,41 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
       )}
 
+      {!discreetMode && (
+        <View style={{ marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13 }}>Évolution du solde total</Text>
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+              {[['7d', '7j'], ['30d', '30j'], ['1y', '1 an']].map(([key, label]) => (
+                <TouchableOpacity key={key} style={[st.period_chip, p7ChartPeriod === key && st.period_chip_on]} onPress={() => setP7ChartPeriod(key)}>
+                  <Text style={[st.period_chip_txt, p7ChartPeriod === key && st.period_chip_txt_on]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          {(() => {
+            const ms = p7ChartPeriod === '7d' ? 7 * 24 * 3600 * 1000 : p7ChartPeriod === '30d' ? 30 * 24 * 3600 * 1000 : 365 * 24 * 3600 * 1000;
+            const pts = portfolioHistory.filter((pt) => pt.t >= Date.now() - ms);
+            if (pts.length < 2) return (
+              <Text style={{ color: T.text2, fontSize: 12, marginTop: 10, lineHeight: 18 }}>
+                Historique insuffisant pour cette période — la courbe apparaîtra au fil du temps : un point de solde est enregistré toutes les 10 minutes quand le solde est supérieur à 0 (200 points max). Aucune courbe n’est inventée.
+              </Text>
+            );
+            const chg = phase7.balanceHistoryChange(pts.map((pt) => ({ t: pt.t, totalUsd: pt.v })));
+            return (
+              <>
+                <PortfolioSparkline points={pts} />
+                <Text style={{ color: T.text2, fontSize: 12, marginTop: 8 }}>
+                  {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)} % sur la période`} • {pts.length} points réels{marketStale ? ' • prix différés' : ''}
+                </Text>
+              </>
+            );
+          })()}
+        </View>
+      )}
+
       <View style={st.quick_actions}>
-        {visibleQuickActions.map(a => (
+        {visibleQuickActions.filter(a => !(discreetMode && a.id === 'history')).map(a => (
           <AnimPressable key={a.id} style={st.quick_btn} onPress={a.onPress} accessibilityRole="button" accessibilityLabel={a.label}>
             <View style={[st.quick_icon_wrap, { backgroundColor: a.bg }]}>
               <Ionicons name={a.icon} size={21} color={a.bg === T.gold ? '#000' : T.text} />
@@ -10252,7 +10825,7 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
       )}
 
-      {favoritesLoaded && !favorites.length && (
+      {!discreetMode && favoritesLoaded && !favorites.length && (
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginHorizontal: 16, marginTop: 4, marginBottom: 2, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: T.goldBg }}
           onPress={() => setTab('markets')}
@@ -10263,7 +10836,7 @@ function AppContent({ themeMode, changeTheme }) {
         </TouchableOpacity>
       )}
 
-      {!!favoriteMarketCoins.length && (
+      {!discreetMode && !!favoriteMarketCoins.length && (
         <>
           <View style={st.section_hdr}>
             <SectionTitle>{t('common_favorites')}</SectionTitle>
@@ -10367,6 +10940,9 @@ function AppContent({ themeMode, changeTheme }) {
                     {t.readOnly && (
                       <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>{readOnlyLabel}</Text></View>
                     )}
+                    {priceAlerts.some(a => a.symbol === sym) && (
+                      <View style={st.readonly_badge}><Text style={st.readonly_badge_txt}>🔔 Alerte prix</Text></View>
+                    )}
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={st.token_price_txt}>{fmt(t.price, t.price < 1 ? 4 : 2)}</Text>
@@ -10374,8 +10950,8 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={st.token_val}>{balanceHidden ? '••••' : fmt(val)}</Text>
-                  <Text style={st.token_bal}>{balanceHidden ? '••••' : `${(t.balance || 0).toFixed(4)} ${sym}`}</Text>
+                  <Text style={st.token_val}>{balanceHidden || discreetMode ? '••••' : fmt(val)}</Text>
+                  <Text style={st.token_bal}>{balanceHidden || discreetMode ? '••••' : `${(t.balance || 0).toFixed(4)} ${sym}`}</Text>
                 </View>
               </AnimPressable>
               <TouchableOpacity
@@ -10434,6 +11010,28 @@ function AppContent({ themeMode, changeTheme }) {
               </TouchableOpacity>
             ))}
           </View>
+          <View style={{ marginHorizontal: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, borderWidth: 1, borderColor: T.border, paddingHorizontal: 12 }}>
+            <Ionicons name="search-outline" size={16} color={T.text3} />
+            <TextInput
+              style={{ flex: 1, color: T.text, fontSize: 14, paddingVertical: 11, marginLeft: 8 }}
+              placeholder="Rechercher dans les actus…" placeholderTextColor={T.text3}
+              value={newsSearch} onChangeText={setNewsSearch} autoCapitalize="none"
+            />
+            {!!newsSearch && (<TouchableOpacity onPress={() => setNewsSearch('')}><Ionicons name="close-circle" size={18} color={T.text3} /></TouchableOpacity>)}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4, gap: 8 }}>
+            <TouchableOpacity style={[st.chip_pill, newsFavOnly && st.chip_pill_on]} onPress={() => setNewsFavOnly(v => !v)}>
+              <Text style={[st.chip_pill_txt, newsFavOnly && st.chip_pill_txt_on, { fontSize: 12 }]}>⭐ Favoris ({newsFavs.length})</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[st.chip_pill, newsSortSource && st.chip_pill_on]} onPress={() => setNewsSortSource(v => !v)}>
+              <Text style={[st.chip_pill_txt, newsSortSource && st.chip_pill_txt_on, { fontSize: 12 }]}>Tri par source</Text>
+            </TouchableOpacity>
+            {['all', ...newsSources].map((src) => (
+              <TouchableOpacity key={src} style={[st.chip_pill, newsSource === src && st.chip_pill_on]} onPress={() => setNewsSource(src)}>
+                <Text style={[st.chip_pill_txt, newsSource === src && st.chip_pill_txt_on, { fontSize: 12 }]}>{src === 'all' ? 'Toutes sources' : src}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
             {filteredNewsItems.slice(0, 10).map((item, i) => (
               <AnimPressable key={`${item.link}-${i}`} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
@@ -10449,6 +11047,14 @@ function AppContent({ themeMode, changeTheme }) {
                 <Text style={st.news_date}>
                   {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                 </Text>
+                <TouchableOpacity
+                  onPress={(e) => { e.stopPropagation?.(); toggleNewsFav(item.link); }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{ alignSelf: 'flex-start', marginTop: 6 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: T.gold, fontSize: 13, fontWeight: '700' }}>{newsFavs.includes(item.link) ? '⭐ Favori' : '☆ Favori'}</Text>
+                </TouchableOpacity>
               </AnimPressable>
             ))}
           </ScrollView>
@@ -10497,7 +11103,13 @@ function AppContent({ themeMode, changeTheme }) {
             <Ionicons name={isFav ? 'star' : 'star-outline'} size={14} color={T.gold} />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <CoinLogo logo={coin.image} icon="🪙" size={30} />
+            {coin.id === 'ripple' && top20Logos.getTop20Logo(coin.id) ? (
+              <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#0B0B0F', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                <CoinLogo logo={top20Logos.getTop20Logo(coin.id)} icon="🪙" size={30} />
+              </View>
+            ) : (
+              <CoinLogo logo={top20Logos.getTop20Logo(coin.id) || coin.image} icon="🪙" size={30} />
+            )}
             <View style={{ marginLeft: 8, flex: 1 }}>
               <Text style={st.market_card_sym} numberOfLines={1}>{sym}</Text>
               <Text style={st.market_card_name} numberOfLines={1}>{coin.name}</Text>
@@ -10528,6 +11140,48 @@ function AppContent({ themeMode, changeTheme }) {
         {marketStale && (
           <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 12 }]}>
             <Text style={st.warning_txt}>⚠️ Prix différés : CoinGecko est indisponible, les prix affichés sont des prix de secours figés, pas des prix en direct. Ne décide pas d'un échange sur ces seuls prix.</Text>
+          </View>
+        )}
+        {marketOverviewStatus === 'loading' && !marketOverview && (
+          <View style={{ marginHorizontal: 16, marginTop: 12, alignItems: 'center' }}>
+            <ActivityIndicator color={T.gold} />
+            <Text style={{ color: T.text2, fontSize: 12, marginTop: 6 }}>Chargement des indicateurs de marché…</Text>
+          </View>
+        )}
+        {marketOverviewStatus === 'unavailable' && !marketOverview && (
+          <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 12 }]}>
+            <Text style={st.warning_txt}>Indicateurs de marché indisponibles pour le moment — aucune valeur inventée.</Text>
+            <TouchableOpacity onPress={fetchMarketOverview} style={{ marginTop: 8 }}>
+              <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>Réessayer</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {!!marketOverview && (
+          <View style={{ marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 10 }}>Marché global</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+              <View style={{ flex: 1, minWidth: 120 }}>
+                <Text style={{ color: T.text3, fontSize: 11 }}>Fear & Greed</Text>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.fearGreed?.value ?? '—'}{marketOverview.fearGreed?.classification ? ` (${marketOverview.fearGreed.classification})` : ''}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 120 }}>
+                <Text style={{ color: T.text3, fontSize: 11 }}>Dominance BTC</Text>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.btcDominance != null ? `${Number(marketOverview.btcDominance).toFixed(1)} %` : '—'}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 120 }}>
+                <Text style={{ color: T.text3, fontSize: 11 }}>Capitalisation totale</Text>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalMarketCapUsd != null ? `$${fmtCompactNumber(marketOverview.totalMarketCapUsd)}` : '—'}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 120 }}>
+                <Text style={{ color: T.text3, fontSize: 11 }}>Volume 24h</Text>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalVolume24hUsd != null ? `$${fmtCompactNumber(marketOverview.totalVolume24hUsd)}` : '—'}</Text>
+              </View>
+            </View>
+            <Text style={{ color: T.text3, fontSize: 11, marginTop: 10 }}>
+              Sources : {marketOverview.sources?.fearGreed || '—'} · {marketOverview.sources?.global || '—'}
+              {marketOverviewFetchedAt ? ` • Mis à jour le ${new Date(marketOverviewFetchedAt).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ' • Dernier cache affiché'}
+              {marketOverview.stale ? ' • Données partielles' : ''}
+            </Text>
           </View>
         )}
         <View style={st.search_wrap}>
@@ -10570,7 +11224,7 @@ function AppContent({ themeMode, changeTheme }) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); Promise.all([fetchMarket(), fetchNews()]).finally(() => setRefreshing(false)); }}
+              onRefresh={() => { setRefreshing(true); Promise.all([fetchMarket(), fetchNews(), fetchMarketOverview()]).finally(() => setRefreshing(false)); }}
               tintColor={T.gold}
             />
           }
@@ -10597,6 +11251,14 @@ function AppContent({ themeMode, changeTheme }) {
                         <Text style={st.news_date}>
                           {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                         </Text>
+                        <TouchableOpacity
+                          onPress={(e) => { e.stopPropagation?.(); toggleNewsFav(item.link); }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          style={{ alignSelf: 'flex-start', marginTop: 6 }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={{ color: T.gold, fontSize: 13, fontWeight: '700' }}>{newsFavs.includes(item.link) ? '⭐ Favori' : '☆ Favori'}</Text>
+                        </TouchableOpacity>
                       </AnimPressable>
                     ))}
                   </ScrollView>
@@ -10608,7 +11270,59 @@ function AppContent({ themeMode, changeTheme }) {
               </View>
             </>
           }
-          ListFooterComponent={<View style={{ height: 90 }} />}
+          ListFooterComponent={(
+            <>
+              <View style={{ marginHorizontal: 16, marginTop: 20, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+                <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 10 }}>Comparateur — 2 cryptos</Text>
+                <Text style={{ color: T.text3, fontSize: 11, marginBottom: 6 }}>Crypto A</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                  {marketCoins.map((c) => (
+                    <TouchableOpacity key={c.id} style={[st.chip_pill, compareA === c.id && st.chip_pill_on]} onPress={() => setCompareA(c.id)}>
+                      <Text style={[st.chip_pill_txt, compareA === c.id && st.chip_pill_txt_on, { fontSize: 12 }]}>{c.symbol?.toUpperCase()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <Text style={{ color: T.text3, fontSize: 11, marginBottom: 6 }}>Crypto B</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {marketCoins.map((c) => (
+                    <TouchableOpacity key={c.id} style={[st.chip_pill, compareB === c.id && st.chip_pill_on]} onPress={() => setCompareB(c.id)}>
+                      <Text style={[st.chip_pill_txt, compareB === c.id && st.chip_pill_txt_on, { fontSize: 12 }]}>{c.symbol?.toUpperCase()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {(() => {
+                  const a = marketCoins.find((c) => c.id === compareA);
+                  const b = marketCoins.find((c) => c.id === compareB);
+                  if (!a || !b) return (<Text style={{ color: T.text2, fontSize: 12 }}>Choisis deux cryptos de la liste /market.</Text>);
+                  const pct = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)} %`);
+                  const rows = [
+                    ['Prix', fmt(a.current_price, a.current_price < 1 ? 4 : 2), fmt(b.current_price, b.current_price < 1 ? 4 : 2)],
+                    ['Variation 24h', pct(a.price_change_percentage_24h), pct(b.price_change_percentage_24h)],
+                    ['Variation 7j', pct(a.price_change_percentage_7d), pct(b.price_change_percentage_7d)],
+                    ['Variation 30j', pct(a.price_change_percentage_30d), pct(b.price_change_percentage_30d)],
+                    ['Capitalisation', a.market_cap ? fmt(a.market_cap) : '—', b.market_cap ? fmt(b.market_cap) : '—'],
+                  ];
+                  return (
+                    <View>
+                      <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                        <Text style={{ flex: 1, color: T.text3, fontSize: 11 }} />
+                        <Text style={{ flex: 1, color: T.text, fontSize: 12, fontWeight: '700', textAlign: 'right' }}>{a.name}</Text>
+                        <Text style={{ flex: 1, color: T.text, fontSize: 12, fontWeight: '700', textAlign: 'right' }}>{b.name}</Text>
+                      </View>
+                      {rows.map(([label, va, vb]) => (
+                        <View key={label} style={{ flexDirection: 'row', paddingVertical: 5, borderTopWidth: 1, borderTopColor: T.border }}>
+                          <Text style={{ flex: 1, color: T.text3, fontSize: 12 }}>{label}</Text>
+                          <Text style={{ flex: 1, color: T.text, fontSize: 12, textAlign: 'right' }}>{va}</Text>
+                          <Text style={{ flex: 1, color: T.text, fontSize: 12, textAlign: 'right' }}>{vb}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })()}
+              </View>
+              <View style={{ height: 90 }} />
+            </>
+          )}
         />
       </View>
     );
@@ -10824,6 +11538,20 @@ function AppContent({ themeMode, changeTheme }) {
               );
             })}
           </ScrollView>
+        </View>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12, justifyContent: 'center' }}>
+          {[['Paies', swapFrom], ['Reçois', swapTo]].map(([role, sym]) => {
+            const cgId = WALLET_TOKENS[sym]?.cgId;
+            const verified = isTokenVerified(cgId);
+            return (
+              <View key={role} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: verified ? T.up : T.border, backgroundColor: verified ? T.upBg : T.card }}>
+                <Text style={{ color: verified ? T.up : T.text2, fontSize: 11, fontWeight: '700' }}>
+                  {role} {sym} : {verified ? '✓ Token vérifié' : 'Token non vérifié — vérifie l’adresse du contrat'}
+                </Text>
+              </View>
+            );
+          })}
         </View>
 
         {/* Le chemin et les frais ne sont pas les mêmes selon les jetons : dire
