@@ -762,11 +762,35 @@ async function fetchCryptoNewsUncached() {
     const m = block.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`));
     return m ? decodeEntities(m[1].trim()) : '';
   };
-  const pickImage = (block) => decodeEntities(
-    block.match(/<media:content url="([^"]+)"/)?.[1]
-    || block.match(/<enclosure url="([^"]+)"[^>]*type="image\/[^"]+"/)?.[1]
-    || ''
-  );
+  // Phase 12 — couverture images élargie, dans cet ordre (url acceptée
+  // n'importe où dans la balise, pas seulement en première position) :
+  // 1) <media:content url="..."> (CoinDesk, CoinTelegraph, et Le Monde dont
+  //    le url suit width/height) ; 2) <media:thumbnail url="..."> (BBC
+  //    Business, qui n'utilise que cette balise) ; 3) <enclosure url="...">
+  //    si le type contient image ou si l'URL a une extension d'image ;
+  // 4) <img src="..."> dans la description / le contenu.
+  const pickImage = (block) => {
+    const tagUrl = (tag) => {
+      const m = block.match(new RegExp(`<${tag}[^>]*?\\surl="([^"]+)"`));
+      return m ? m[1] : '';
+    };
+    const enclosure = block.match(/<enclosure[^>]*?url="([^"]+)"[^>]*?>/);
+    const enclosureUrl = enclosure ? enclosure[1] : '';
+    const enclosureIsImage = /type="image\//.test(enclosure ? enclosure[0] : '')
+      || /\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(enclosureUrl);
+    const imgFromContent = () => {
+      const body = pick(block, 'description') || pick(block, 'content:encoded') || '';
+      const m = body.match(/<img[^>]*?src="([^"]+)"/);
+      return m ? m[1] : '';
+    };
+    return decodeEntities(
+      tagUrl('media:content')
+      || tagUrl('media:thumbnail')
+      || (enclosureIsImage ? enclosureUrl : '')
+      || imgFromContent()
+      || ''
+    );
+  };
   const fetchOne = async (source) => {
     const response = await fetch(source.url, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error(`RSS error ${response.status} for ${source.name}`);

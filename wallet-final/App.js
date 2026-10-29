@@ -940,6 +940,22 @@ const loadNewsFavs = async () => {
 const saveNewsFavs = async (list) => {
   try { await AsyncStorage.setItem(P7_NEWS_FAVS_KEY, JSON.stringify(Array.isArray(list) ? list : [])); } catch { /* rien à faire */ }
 };
+// Cache des articles d'actu : mêmes données que l'affichage (titre, lien,
+// image, date, source), jamais de secret ni de clé. Le cache sert uniquement
+// à afficher les carrés immédiatement au lancement si le backend est en
+// panne ; il est écrasé à chaque succès de fetchNews. L'horodatage est
+// stocké mais n'est pas affiché (le sous-titre reste « MAJ / 5 min »).
+const NEWS_CACHE_KEY = 'nexia-news-cache-v1';
+const loadNewsCache = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(NEWS_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed?.items) ? parsed.items : [];
+  } catch { return []; }
+};
+const saveNewsCache = async (items) => {
+  try { await AsyncStorage.setItem(NEWS_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), items: Array.isArray(items) ? items : [] })); } catch { /* rien à faire */ }
+};
 const P7_DISCREET_KEY = 'wallet-pro-discreet-mode-v1';
 const loadDiscreetMode = async () => {
   try { return (await AsyncStorage.getItem(P7_DISCREET_KEY)) === '1'; } catch { return false; }
@@ -5562,7 +5578,16 @@ function AppContent({ themeMode, changeTheme }) {
 
   const fetchNews = useCallback(() => {
     return axios.get(`${API_BASE}/news`, { headers: API_HEADERS, timeout: 15000 })
-      .then(res => { if (res.data?.success) setNewsItems(res.data.items); })
+      .then(res => {
+        const items = res.data?.items;
+        // Succès + liste non vide uniquement : on affiche et on met le
+        // cache à jour. Un succès vide ou un échec ne vide jamais
+        // newsItems, donc le cache précédemment affiché reste visible.
+        if (res.data?.success && Array.isArray(items) && items.length) {
+          setNewsItems(items);
+          saveNewsCache(items);
+        }
+      })
       .catch(err => console.warn('news indisponibles:', err.message));
   }, []);
 
@@ -5725,8 +5750,14 @@ function AppContent({ themeMode, changeTheme }) {
   }, [fetchMarketOverview, fetchFxRates]);
 
   useEffect(() => {
-    fetchNews();
+    // Ordre garanti : cache local d'abord (affichage immédiat des carrés
+    // même si le backend est en panne), puis fetchNews — qui écrase le
+    // cache par les articles frais en cas de succès, ou le laisse affiché
+    // en cas d'échec. L'intervalle 5 min existant est conservé tel quel.
     const id = setInterval(fetchNews, 5 * 60 * 1000);
+    loadNewsCache().then((cached) => {
+      if (cached.length) setNewsItems(cached);
+    }).finally(() => { fetchNews(); });
     return () => clearInterval(id);
   }, [fetchNews]);
 
@@ -10995,66 +11026,20 @@ function AppContent({ themeMode, changeTheme }) {
             <SectionTitle>{t('home_news_title')}</SectionTitle>
             <Text style={st.section_sub}>{t('home_news_updated')}</Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginBottom: 10 }}>
-            {[
-              ['all', t('news_filter_all')],
-              ['crypto', t('news_filter_crypto')],
-              ['economy', t('news_filter_economy')],
-            ].map(([key, label]) => (
-              <TouchableOpacity
-                key={key}
-                style={[st.chip_pill, newsFilter === key && st.chip_pill_on, { paddingHorizontal: 12, paddingVertical: 6 }]}
-                onPress={() => setNewsFilter(key)}
-              >
-                <Text style={[st.chip_pill_txt, newsFilter === key && st.chip_pill_txt_on, { fontSize: 12 }]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={{ marginHorizontal: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, borderWidth: 1, borderColor: T.border, paddingHorizontal: 12 }}>
-            <Ionicons name="search-outline" size={16} color={T.text3} />
-            <TextInput
-              style={{ flex: 1, color: T.text, fontSize: 14, paddingVertical: 11, marginLeft: 8 }}
-              placeholder="Rechercher dans les actus…" placeholderTextColor={T.text3}
-              value={newsSearch} onChangeText={setNewsSearch} autoCapitalize="none"
-            />
-            {!!newsSearch && (<TouchableOpacity onPress={() => setNewsSearch('')}><Ionicons name="close-circle" size={18} color={T.text3} /></TouchableOpacity>)}
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4, gap: 8 }}>
-            <TouchableOpacity style={[st.chip_pill, newsFavOnly && st.chip_pill_on]} onPress={() => setNewsFavOnly(v => !v)}>
-              <Text style={[st.chip_pill_txt, newsFavOnly && st.chip_pill_txt_on, { fontSize: 12 }]}>⭐ Favoris ({newsFavs.length})</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[st.chip_pill, newsSortSource && st.chip_pill_on]} onPress={() => setNewsSortSource(v => !v)}>
-              <Text style={[st.chip_pill_txt, newsSortSource && st.chip_pill_txt_on, { fontSize: 12 }]}>Tri par source</Text>
-            </TouchableOpacity>
-            {['all', ...newsSources].map((src) => (
-              <TouchableOpacity key={src} style={[st.chip_pill, newsSource === src && st.chip_pill_on]} onPress={() => setNewsSource(src)}>
-                <Text style={[st.chip_pill_txt, newsSource === src && st.chip_pill_txt_on, { fontSize: 12 }]}>{src === 'all' ? 'Toutes sources' : src}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-            {filteredNewsItems.slice(0, 10).map((item, i) => (
-              <AnimPressable key={`${item.link}-${i}`} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+            {newsItems.slice(0, 10).map((item, i) => (
+              <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
                 {item.image ? (
                   <Image source={{ uri: item.image }} style={st.news_img} />
                 ) : (
-                  <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center', backgroundColor: T.goldBg }]}>
-                    <Text style={{ color: T.gold, fontWeight: '800', fontSize: 13, textAlign: 'center', paddingHorizontal: 12 }}>{item.source || 'NexiaWallet'}</Text>
+                  <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ fontSize: 30 }}>📰</Text>
                   </View>
                 )}
                 <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
-                <Text style={[st.news_date, { fontWeight: '700', color: T.gold }]}>{item.source || ''}</Text>
                 <Text style={st.news_date}>
                   {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                 </Text>
-                <TouchableOpacity
-                  onPress={(e) => { e.stopPropagation?.(); toggleNewsFav(item.link); }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={{ alignSelf: 'flex-start', marginTop: 6 }}
-                  accessibilityRole="button"
-                >
-                  <Text style={{ color: T.gold, fontSize: 13, fontWeight: '700' }}>{newsFavs.includes(item.link) ? '⭐ Favori' : '☆ Favori'}</Text>
-                </TouchableOpacity>
               </AnimPressable>
             ))}
           </ScrollView>
@@ -11237,28 +11222,19 @@ function AppContent({ themeMode, changeTheme }) {
                     <Text style={st.section_sub}>MAJ / 5 min</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-                    {filteredNewsItems.slice(0, 10).map((item, i) => (
-                      <AnimPressable key={`${item.link}-${i}`} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+                    {newsItems.slice(0, 10).map((item, i) => (
+                      <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
                         {item.image ? (
                           <Image source={{ uri: item.image }} style={st.news_img} />
                         ) : (
-                          <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center', backgroundColor: T.goldBg }]}>
-                            <Text style={{ color: T.gold, fontWeight: '800', fontSize: 13, textAlign: 'center', paddingHorizontal: 12 }}>{item.source || 'NexiaWallet'}</Text>
+                          <View style={[st.news_img, { alignItems: 'center', justifyContent: 'center' }]}>
+                            <Text style={{ fontSize: 30 }}>📰</Text>
                           </View>
                         )}
                         <Text style={st.news_title} numberOfLines={2}>{item.title}</Text>
-                        <Text style={[st.news_date, { fontWeight: '700', color: T.gold }]}>{item.source || ''}</Text>
                         <Text style={st.news_date}>
                           {item.pubDate ? new Date(item.pubDate).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                         </Text>
-                        <TouchableOpacity
-                          onPress={(e) => { e.stopPropagation?.(); toggleNewsFav(item.link); }}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          style={{ alignSelf: 'flex-start', marginTop: 6 }}
-                          accessibilityRole="button"
-                        >
-                          <Text style={{ color: T.gold, fontSize: 13, fontWeight: '700' }}>{newsFavs.includes(item.link) ? '⭐ Favori' : '☆ Favori'}</Text>
-                        </TouchableOpacity>
                       </AnimPressable>
                     ))}
                   </ScrollView>
