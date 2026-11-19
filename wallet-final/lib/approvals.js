@@ -31,7 +31,10 @@ const REVOKE_ABI = {
 async function loadAll() {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const parsed = raw ? JSON.parse(raw) : null;
+    // Stockage abime ("null", tableau, texte...) : on repart d'un objet vide
+    // plutot que de planter a chaque lecture/ecriture.
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch { return {}; }
 }
 
@@ -69,6 +72,7 @@ async function recordApproval(walletAddress, {
 }
 
 async function markRevoked(walletAddress, id) {
+  if (!walletAddress) return;
   const all = await loadAll();
   const key = walletAddress.toLowerCase();
   const list = all[key] || [];
@@ -77,6 +81,7 @@ async function markRevoked(walletAddress, id) {
 }
 
 async function removeApproval(walletAddress, id) {
+  if (!walletAddress) return;
   const all = await loadAll();
   const key = walletAddress.toLowerCase();
   all[key] = (all[key] || []).filter(e => e.id !== id);
