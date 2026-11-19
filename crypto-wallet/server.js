@@ -157,13 +157,24 @@ app.use((req, res) => {
 // trace, qui pourraient révéler des détails d'implémentation à un attaquant.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error('Erreur non gérée sur une route :', err?.message);
   if (res.headersSent) return;
+  // Erreurs du CLIENT signalées par express.json (corps illisible ou trop
+  // gros) : ce n'est pas une panne du serveur → 400 / 413, message générique.
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, error: 'Requête invalide (JSON mal formé).' });
+  }
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, error: 'Requête trop volumineuse.' });
+  }
+  console.error('Erreur non gérée sur une route :', err?.message);
   res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
 });
 
-// Démarrage du serveur
-app.listen(PORT, () => {
+// Démarrage du serveur. NEXIA_NO_LISTEN=1 est réservé aux tests
+// (test/server.health.test.js) : ils chargent l'app sans ouvrir le port.
+// (Pas de test require.main ici : pm2, voir ecosystem.config.js, charge
+// server.js depuis son propre script et le serveur ne démarrerait plus.)
+if (process.env.NEXIA_NO_LISTEN !== '1') app.listen(PORT, () => {
   console.log(`==========================================`);
   console.log(`🚀 SERVEUR DÉMARRÉ SUR LE PORT : ${PORT}`);
   console.log(`📡 En attente des requêtes du téléphone...`);
@@ -171,3 +182,5 @@ app.listen(PORT, () => {
   // Indexeur des commissions on-chain, si INDEXER_ENABLED=1 (ne peut pas faire planter le serveur).
   require('./src/revenue/scheduler').startRevenueIndexer();
 });
+
+module.exports = app;
