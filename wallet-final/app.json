@@ -36,7 +36,7 @@
       "name": "NexiaWallet",
       "lang": "fr",
       "themeColor": "#10B981",
-      "description": "NexiaWallet — portefeuille crypto non-custodial. Achète, envoie et échange sur 8 réseaux (Ethereum, Bitcoin, Solana…). Tes clés restent sur ton téléphone, jamais sur un serveur."
+      "description": "Portefeuille crypto non-custodial : achète, envoie et échange sur 8 réseaux (Ethereum, Bitcoin, Solana…). Tes clés restent sur ton téléphone."
     },
     "extra": {
       "eas": {
