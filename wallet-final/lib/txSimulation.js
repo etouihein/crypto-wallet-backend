@@ -51,7 +51,10 @@ function decodeKnownCall(data) {
 // Adresse du contrat Permit2 d'Uniswap — identique sur la quasi-totalité des
 // chaînes EVM (déploiement déterministe CREATE2), utile pour reconnaître une
 // demande de signature Permit2 quel que soit le réseau.
-const PERMIT2_ADDRESS = '0x000000000022d473030f116ddee9f6b43ac78ba';
+// Attention : 42 caracteres exactement (0x + 40). Une version precedente
+// avait perdu le "3" final, ce qui empechait de reconnaitre Permit2 (les
+// signatures Permit2 n'etaient alors signalees qu'en risque "moyen").
+const PERMIT2_ADDRESS = '0x000000000022d473030f116ddee9f6b43ac78ba3';
 
 // Une signature "Permit" (EIP-2612) ou "Permit2" coûte 0 gas et ne déclenche
 // AUCUNE transaction on-chain visible au moment de signer — c'est exactement
