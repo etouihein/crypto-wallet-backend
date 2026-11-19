@@ -17,6 +17,24 @@ const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 const revenueHooks = require('../revenue/hooks');
 const { createHistorySources } = require('../history');
 
+// Délai maximum de chaque appel à un service externe (0x, LI.FI, CoinGecko,
+// Alternative.me, Alchemy, Coinbase, Blockstream). Sans lui, un service qui
+// accepte la connexion mais ne répond jamais laissait la requête de l'app
+// suspendue plusieurs minutes (écran qui tourne dans le vide). Réglable via
+// UPSTREAM_TIMEOUT_MS (10 s par défaut). La diffusion d'une transaction a
+// droit à 2,5 fois plus (25 s par défaut) : on préfère attendre un peu plus
+// qu'annuler une diffusion qui allait réussir.
+const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS) > 0 ? Number(process.env.UPSTREAM_TIMEOUT_MS) : 10_000;
+const BROADCAST_TIMEOUT_MS = Math.round(UPSTREAM_TIMEOUT_MS * 2.5);
+
+function upstreamFetch(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+function isUpstreamTimeout(error) {
+  return error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+}
+
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 // demo | stripe | moonpay | coinbase
 const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || 'demo').toLowerCase();
@@ -205,7 +223,7 @@ async function buildCoinbaseOnrampUrl({ walletAddress, network, clientIp, amount
     requestPath: '/onramp/v1/token',
     expiresIn: 120,
   });
-  const response = await fetch('https://api.developer.coinbase.com/onramp/v1/token', {
+  const response = await upstreamFetch('https://api.developer.coinbase.com/onramp/v1/token', {
     method: 'POST',
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -250,7 +268,7 @@ async function buildCoinbaseOfframpUrl({ walletAddress, network, clientIp, amoun
     requestPath: '/onramp/v1/token',
     expiresIn: 120,
   });
-  const response = await fetch('https://api.developer.coinbase.com/onramp/v1/token', {
+  const response = await upstreamFetch('https://api.developer.coinbase.com/onramp/v1/token', {
     method: 'POST',
     headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -519,7 +537,7 @@ async function fetchCoinGeckoMarket(limit = 50) {
   return cachedFetch(`market:${limit}`, 30_000, async () => {
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h,7d,30d`;
     try {
-      const response = await fetch(url, { headers: coingeckoHeaders() });
+      const response = await upstreamFetch(url, { headers: coingeckoHeaders() });
       if (!response.ok) throw new Error(`CoinGecko error ${response.status}`);
       const data = await response.json();
       const mapped = data.map(mapCoinGeckoMarketItem);
@@ -531,7 +549,7 @@ async function fetchCoinGeckoMarket(limit = 50) {
       if (missingIds.length) {
         try {
           const extraUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${missingIds.join(',')}&sparkline=false&price_change_percentage=24h,7d,30d`;
-          const extraResponse = await fetch(extraUrl, { headers: coingeckoHeaders() });
+          const extraResponse = await upstreamFetch(extraUrl, { headers: coingeckoHeaders() });
           if (extraResponse.ok) {
             const extraData = await extraResponse.json();
             mapped.push(...extraData.map(mapCoinGeckoMarketItem));
@@ -564,7 +582,7 @@ async function fetchCoinOhlc(cgId, timeframe) {
   return cachedFetch(`ohlc:${cgId}:${timeframe}`, 60_000, async () => {
     const days = CANDLE_DAYS_BY_TIMEFRAME[timeframe] || 7;
     const url = `https://api.coingecko.com/api/v3/coins/${cgId}/ohlc?vs_currency=usd&days=${days}`;
-    const response = await fetch(url, { headers: coingeckoHeaders() });
+    const response = await upstreamFetch(url, { headers: coingeckoHeaders() });
     if (!response.ok) throw new Error(`CoinGecko OHLC error ${response.status}`);
     const raw = await response.json(); // [ [time, open, high, low, close], ... ]
     return raw.map(([time, o, h, l, c]) => ({ time, o, h, l, c }));
@@ -577,7 +595,7 @@ async function fetchCoinDetail(cgId) {
 
 async function fetchCoinDetailUncached(cgId) {
   const url = `https://api.coingecko.com/api/v3/coins/${cgId}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
-  const response = await fetch(url, { headers: coingeckoHeaders() });
+  const response = await upstreamFetch(url, { headers: coingeckoHeaders() });
   if (!response.ok) throw new Error(`CoinGecko coin error ${response.status}`);
   const d = await response.json();
   const md = d.market_data || {};
@@ -661,7 +679,7 @@ router.get('/market', async (req, res) => {
 //  en 200 — le client peut afficher son dernier cache (voir
 //  MARKET_OVERVIEW_CACHE_KEY dans wallet-final/lib/phase7.js).
 async function fetchFearGreed() {
-  const response = await fetch('https://api.alternative.me/fng/?limit=1');
+  const response = await upstreamFetch('https://api.alternative.me/fng/?limit=1');
   if (!response.ok) throw new Error(`Fear & Greed error ${response.status}`);
   const data = await response.json();
   const item = data && data.data && data.data[0];
@@ -675,7 +693,7 @@ async function fetchFearGreed() {
 
 async function fetchCoinGeckoGlobal() {
   return cachedFetch('global', 60_000, async () => {
-    const response = await fetch('https://api.coingecko.com/api/v3/global', { headers: coingeckoHeaders() });
+    const response = await upstreamFetch('https://api.coingecko.com/api/v3/global', { headers: coingeckoHeaders() });
     if (!response.ok) throw new Error(`CoinGecko global error ${response.status}`);
     const data = await response.json();
     const g = data && data.data;
@@ -792,7 +810,7 @@ async function fetchCryptoNewsUncached() {
     );
   };
   const fetchOne = async (source) => {
-    const response = await fetch(source.url, { signal: AbortSignal.timeout(10000) });
+    const response = await upstreamFetch(source.url);
     if (!response.ok) throw new Error(`RSS error ${response.status} for ${source.name}`);
     const xml = await response.text();
     return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
@@ -966,7 +984,7 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
       quoteParams.swapFeeToken = buyToken;
     }
     const qs = new URLSearchParams(quoteParams).toString();
-    const response = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${qs}`, {
+    const response = await upstreamFetch(`https://api.0x.org/swap/allowance-holder/quote?${qs}`, {
       headers: { '0x-api-key': apiKey, '0x-version': 'v2' },
     });
     const data = await response.json();
@@ -977,6 +995,9 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
     revenueHooks.onSwapQuote({ chainId, sellToken, buyToken, sellAmount, taker, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
   } catch (error) {
     console.error('Wallet route error:', error);
+    if (isUpstreamTimeout(error)) {
+      return res.status(504).json({ success: false, error: 'Le service de devis ne répond pas, réessaie dans un instant.' });
+    }
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -1018,7 +1039,7 @@ router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
     });
     if (LIFI_FEE > 0) params.set('fee', String(LIFI_FEE));
 
-    const response = await fetch(`https://li.quest/v1/quote?${params.toString()}`, {
+    const response = await upstreamFetch(`https://li.quest/v1/quote?${params.toString()}`, {
       headers: LIFI_API_KEY ? { 'x-lifi-api-key': LIFI_API_KEY } : {},
     });
     const data = await response.json();
@@ -1032,6 +1053,9 @@ router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
     revenueHooks.onBridgeQuote({ fromChain: fc, toChain: tc, fromAddress, fromAmount, quote: data, fee: LIFI_FEE });
   } catch (error) {
     console.error('Bridge quote error:', error);
+    if (isUpstreamTimeout(error)) {
+      return res.status(504).json({ success: false, error: 'Le service de pont ne répond pas, réessaie dans un instant.' });
+    }
     res.status(500).json({ success: false, error: 'Erreur serveur lors du devis de pont.' });
   }
 });
@@ -1111,7 +1135,7 @@ router.get('/swap/cross-quote', sensitiveLimiter, async (req, res) => {
 
     const demander = async (avecCommission) => {
       const params = new URLSearchParams(avecCommission && LIFI_FEE > 0 ? { ...base, fee: String(LIFI_FEE) } : base);
-      const reponse = await fetch(`https://li.quest/v1/quote?${params.toString()}`, {
+      const reponse = await upstreamFetch(`https://li.quest/v1/quote?${params.toString()}`, {
         headers: LIFI_API_KEY ? { 'x-lifi-api-key': LIFI_API_KEY } : {},
       });
       return { reponse, data: await reponse.json().catch(() => null) };
@@ -1150,6 +1174,9 @@ router.get('/swap/cross-quote', sensitiveLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error('Cross swap quote error:', error);
+    if (isUpstreamTimeout(error)) {
+      return res.status(504).json({ success: false, error: 'Le service d\'échange ne répond pas, réessaie dans un instant.' });
+    }
     res.status(500).json({ success: false, error: 'Erreur serveur lors du devis d\'échange.' });
   }
 });
@@ -1191,7 +1218,7 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: `Galerie NFT non supportée sur ${requestedNetwork}.` });
     }
     const url = `https://${subdomain}.g.alchemy.com/v2/${apiKey}/getNFTs?owner=${address}&withMetadata=true`;
-    const response = await fetch(url);
+    const response = await upstreamFetch(url);
     // Alchemy répond parfois en texte brut (pas du JSON) sur certaines
     // erreurs — ex. 403 "XXX_MAINNET is not enabled for this app" — .json()
     // planterait dessus (vu en vrai : "Unexpected token 'M'..."). Lit le
@@ -1637,7 +1664,7 @@ router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
     if (!rawTx || typeof rawTx !== 'string') {
       return res.status(400).json({ success: false, error: 'Transaction signée (rawTx) requise.' });
     }
-    const response = await fetch(`${BLOCKSTREAM_API_URL}/tx`, { method: 'POST', body: rawTx });
+    const response = await upstreamFetch(`${BLOCKSTREAM_API_URL}/tx`, { method: 'POST', body: rawTx }, BROADCAST_TIMEOUT_MS);
     const text = await response.text();
     if (!response.ok) {
       // Phase 6 : message générique au client, détail dans les logs serveur
