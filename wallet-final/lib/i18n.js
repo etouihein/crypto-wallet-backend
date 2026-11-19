@@ -655,7 +655,10 @@ function translate(locale, key, vars) {
   let text = dict[key] ?? englishFallback ?? DICTIONARIES.fr[key] ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
-      text = text.replace(new RegExp(`{{${k}}}`, 'g'), v);
+      // Fonction de remplacement (et non la valeur directement) : sinon un
+      // "$&", "$$" ou "$'" dans la valeur (ex. nom de token choisi par son
+      // createur) serait interprete comme un motif de String.replace.
+      text = text.replace(new RegExp(`{{${k}}}`, 'g'), () => String(v));
     }
   }
   return text;
@@ -680,4 +683,4 @@ function detectDeviceLocale() {
   }
 }
 
-module.exports = { translate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale };
+module.exports = { translate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale, DICTIONARIES };
