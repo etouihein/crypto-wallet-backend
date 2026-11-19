@@ -83,3 +83,21 @@ test('corps trop gros (> 100 Ko) : 413, pas 500', async () => {
   assert.equal(r.status, 413);
   assert.equal((await r.json()).success, false);
 });
+
+test('GET /health donne la version deployee (commit court) pour la surveillance', async () => {
+  const avant = process.env.RAILWAY_GIT_COMMIT_SHA;
+  try {
+    process.env.RAILWAY_GIT_COMMIT_SHA = 'A9385EB0123456789abcdef0123456789abcdef0';
+    let corps = await (await fetch(`${base}/health`)).json();
+    assert.equal(corps.version, 'a9385eb');
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
+    corps = await (await fetch(`${base}/health`)).json();
+    assert.equal(corps.version, 'inconnue');
+    process.env.RAILWAY_GIT_COMMIT_SHA = '<script>';
+    corps = await (await fetch(`${base}/health`)).json();
+    assert.equal(corps.version, 'inconnue', 'jamais de valeur non hexadecimale renvoyee');
+  } finally {
+    if (avant === undefined) delete process.env.RAILWAY_GIT_COMMIT_SHA;
+    else process.env.RAILWAY_GIT_COMMIT_SHA = avant;
+  }
+});
