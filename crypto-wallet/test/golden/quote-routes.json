@@ -32,7 +32,7 @@
     },
     "upstream": [
       {
-        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=1000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=1000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&slippageBps=100&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
         "headers": {
           "0x-api-key": "zerox-test-key",
           "0x-version": "v2"
@@ -73,7 +73,7 @@
     },
     "upstream": [
       {
-        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=56&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=2000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=56&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=2000000&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&slippageBps=100&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
         "headers": {
           "0x-api-key": "zerox-test-key",
           "0x-version": "v2"
@@ -111,7 +111,7 @@
     },
     "upstream": [
       {
-        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=999&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+        "url": "https://api.0x.org/swap/allowance-holder/quote?chainId=1&sellToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&buyToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&sellAmount=999&taker=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&slippageBps=100&swapFeeRecipient=0xFD749d841FFF1f87e81D58e4a186261e62FbcbCC&swapFeeBps=75&swapFeeToken=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
         "headers": {
           "0x-api-key": "zerox-test-key",
           "0x-version": "v2"
