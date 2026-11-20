@@ -29,7 +29,9 @@
          comptage au vrai domaine, pour que les builds locaux et les tests e2e
          ne faussent pas les statistiques. data-exclude-search retire les
          paramètres d'URL : un lien partagé qui contiendrait une adresse de
-         wallet (demande de paiement, parrainage) n'arrive jamais chez Umami. -->
+         wallet (demande de paiement, parrainage) n'arrive jamais chez Umami.
+         L'app y ajoute seulement des NOMS d'etapes ("wallet_cree", "swap_envoye"...),
+         sans aucune donnee : voir lib/parcours.js. -->
     <script defer src="https://cloud.umami.is/script.js" data-website-id="bab64506-68c1-48b4-aaf8-f922027da76a" data-domains="nexiawallet.com,www.nexiawallet.com" data-exclude-search="true"></script>
 
     <!-- PWA -->
