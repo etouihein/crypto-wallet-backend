@@ -90,6 +90,14 @@ if (ENV === 'production') {
 // ADMIN_PASSWORD_HASH ne sont pas définis.
 require('./src/admin/router').mountAdminFromEnv(app);
 
+// Compteur de requetes (categories + erreurs, sans aucune donnee personnelle) et
+// route GET /stats/agent pour l'agent Jarvis "Statistiques" de Pablo (protegee par
+// jeton, absente tant que STATS_TOKEN_SHA256 n'est pas defini). Voir src/stats/agentStats.js.
+const { creerCompteur, monterStats } = require('./src/stats/agentStats');
+const compteurRequetes = creerCompteur();
+app.use(compteurRequetes.middleware);
+monterStats(app, compteurRequetes);
+
 // Configuration des Middlewares globaux
 app.use(cors({ origin: corsOriginCheck }));
 app.use(express.json({
