@@ -57,6 +57,8 @@ import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
+// Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
+import { etape } from './lib/parcours';
 import { ethers } from 'ethers';
 import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
@@ -357,7 +359,7 @@ Les prix de marché (CoinGecko), l'historique de transactions (Etherscan et équ
 En cas de bug, un rapport technique (message d'erreur, type d'appareil, version de l'application) peut être envoyé à Sentry, l'outil utilisé pour détecter et corriger les problèmes. Aucune donnée sensible du wallet — clé privée, phrase de récupération, code PIN — n'est jamais incluse dans ces rapports.
 
 6. Mesure d'audience
-Le site nexiawallet.com utilise Umami pour mesurer sa fréquentation (nombre de visites, pages consultées sans leurs paramètres d'URL, site de provenance, pays, type d'appareil et de navigateur). Umami ne dépose aucun cookie et ne sert pas à identifier individuellement les visiteurs. Il ne reçoit aucune donnée du wallet : ni clé, ni phrase de récupération, ni adresse, ni solde.
+Le site nexiawallet.com utilise Umami pour mesurer sa fréquentation (nombre de visites, pages consultées sans leurs paramètres d'URL, site de provenance, pays, type d'appareil et de navigateur) et les grandes étapes franchies dans l'app, transmises sous forme d'un simple nom (par exemple « wallet créé » ou « swap envoyé »), sans aucune autre information. Umami ne dépose aucun cookie et ne sert pas à identifier individuellement les visiteurs. Il ne reçoit aucune donnée du wallet : ni clé, ni phrase de récupération, ni adresse, ni solde.
 
 7. Cookies
 Aucun cookie publicitaire ni cookie de mesure d'audience n'est déposé sur ce site, et aucun outil publicitaire n'y est utilisé.
@@ -2651,6 +2653,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [duressSetupInput, setDuressSetupInput] = useState('');
   const [duressSetupError, setDuressSetupError] = useState(null);
   const [tab, setTab]                 = useState('home');
+  useEffect(() => { if (tab === 'swap') etape('ecran_swap'); }, [tab]);
   // EUR par défaut : l'app est franco-française. Persisté (voir loadCurrency/
   // saveCurrency) dès que l'utilisateur choisit une autre devise.
   const [currency, setCurrency]       = useState('EUR');
@@ -3948,6 +3951,7 @@ function AppContent({ themeMode, changeTheme }) {
       setWalletCreated(true);
       setBackendReady(true);
       setIsUnlocked(true);
+      if (!pendingWalletForPin.isMigration) etape(pendingWalletForPin.isImport ? 'wallet_importe' : 'wallet_cree');
       if (!pendingWalletForPin.isImport && !pendingWalletForPin.isMigration) {
         setPendingMnemonic(pendingWalletForPin.mnemonic);
         // Seul le tout premier wallet de l'appareil déclenche l'onboarding —
@@ -6096,6 +6100,7 @@ function AppContent({ themeMode, changeTheme }) {
       if (!res.data?.success || !res.data.url) {
         throw new Error(res.data?.error || 'Impossible de créer la session de paiement.');
       }
+      etape('achat_carte');
 
       setShowBuy(false);
       if (res.data?.demo) {
@@ -6141,6 +6146,7 @@ function AppContent({ themeMode, changeTheme }) {
       if (!res.data?.success || !res.data.url) {
         throw new Error(res.data?.error || 'Impossible de créer la session de vente.');
       }
+      etape('vente_carte');
 
       setShowSell(false);
       if (Platform.OS === 'web') {
@@ -6207,6 +6213,7 @@ function AppContent({ themeMode, changeTheme }) {
         apiHeaders: API_HEADERS,
       });
       setBridgeQuote(quote);
+      etape('bridge_devis');
     } catch (err) {
       setBridgeError(err.response?.data?.message || humanizeTxError(err) || 'Impossible de récupérer une route de pont.');
     } finally {
@@ -6234,6 +6241,7 @@ function AppContent({ themeMode, changeTheme }) {
       });
       const resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
       if (!resp.data?.success) throw new Error(resp.data?.error || 'Échec de la diffusion.');
+      etape('bridge_envoye');
       // Confirmation du DÉPART sur le réseau d'origine. L'arrivée sur l'autre
       // réseau dépend du pont lui-même et se voit au solde, qui déclenche sa
       // propre notification « Fonds reçus ».
@@ -6415,6 +6423,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         const txHash = response.data.txHash;
         trackTransaction({ txHash, net: 'solana', token: 'SOL', amount: sendAmount, kind: 'Envoi' });
+        etape('envoi_crypto');
         playTone('success');
         showAlert(
           '✅ Transaction Soumise!',
@@ -6456,6 +6465,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         const txHash = response.data.txHash;
         trackTransaction({ txHash, net: 'bitcoin', token: 'BTC', amount: sendAmount, kind: 'Envoi' });
+        etape('envoi_crypto');
         playTone('success');
         showAlert(
           '✅ Transaction Soumise!',
@@ -6519,6 +6529,7 @@ function AppContent({ themeMode, changeTheme }) {
       if (!response.data?.success) {
         throw new Error(response.data?.error || 'Échec du transfert');
       }
+      etape('envoi_crypto');
 
       const txHash = response.data.txHash;
       playTone('success');
@@ -6808,6 +6819,7 @@ function AppContent({ themeMode, changeTheme }) {
       } else {
         await fetchZeroXQuoteForConfirm();
       }
+      etape('swap_devis');
     } catch (e) {
       playTone('error');
       showAlert('❌ Erreur', humanizeTxError(e) || 'Swap échoué');
@@ -6824,6 +6836,7 @@ function AppContent({ themeMode, changeTheme }) {
     try {
       if (confirm.kind === 'cross') await executeCrossFromQuote(confirm);
       else await executeZeroXFromQuote(confirm);
+      etape('swap_envoye');
     } catch (e) {
       playTone('error');
       showAlert('❌ Erreur', humanizeTxError(e) || 'Swap échoué');
@@ -7201,10 +7214,10 @@ function AppContent({ themeMode, changeTheme }) {
                   </Text>
                 </View>
               )}
-              <AnimPressable style={primaryBtn} onPress={() => createWallet()}>
+              <AnimPressable style={primaryBtn} onPress={() => { etape('creer_wallet_clic'); createWallet(); }}>
                 <Text style={{ color: '#062219', fontSize: 16, fontWeight: '800' }}>{t('onboarding_create')}</Text>
               </AnimPressable>
-              <AnimPressable style={{ paddingVertical: 15, alignItems: 'center', width: '100%', marginTop: 10, borderRadius: 16, borderWidth: 1.5, borderColor: L.border }} onPress={() => { setImportMode(true); setImportError(null); }}>
+              <AnimPressable style={{ paddingVertical: 15, alignItems: 'center', width: '100%', marginTop: 10, borderRadius: 16, borderWidth: 1.5, borderColor: L.border }} onPress={() => { etape('importer_clic'); setImportMode(true); setImportError(null); }}>
                 <Text style={{ color: L.text, fontSize: 14, fontWeight: '700' }}>{t('onboarding_import')}</Text>
               </AnimPressable>
             </View>
