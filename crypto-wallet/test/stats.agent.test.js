@@ -108,3 +108,72 @@ test('GET /stats/agent : base des revenus absente -> chiffres de requetes quand 
     assert.ok(d.requetes);
   } finally { server.close(); }
 });
+
+test('stockage permanent : un redemarrage du serveur ne perd rien (24 h reprises, totaux 7 j / 30 j / depuis le debut)', () => {
+  const { stockageSqlite } = require('../src/stats/agentStats');
+  const db = openRevenueDb(':memory:');
+  let t = 1_800_000_000_000;
+  const stockage = stockageSqlite(() => db);
+  const c1 = creerCompteur({ now: () => t, stockage });
+  c1.enregistrer('/wallet/swap/quote', 200);
+  c1.enregistrer('/wallet/swap/quote', 200);
+  t -= 3 * 24 * 3600 * 1000; // une requete il y a 3 jours
+  c1.enregistrer('/wallet/tx/broadcast', 200);
+  t += 3 * 24 * 3600 * 1000;
+  c1.enregistrerDansLaBase();
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM request_stats').get().n, 2);
+
+  // "redemarrage" : nouveau compteur, meme base
+  const c2 = creerCompteur({ now: () => t, stockage });
+  c2.enregistrer('/health', 200);
+  const r = c2.resume();
+  assert.equal(r.dix_dernieres_minutes.total, 3, 'les requetes d avant le redemarrage sont reprises');
+  assert.equal(r.dernieres_24h.total, 3);
+  assert.equal(r.historique.sept_jours.total, 4, 'la requete d il y a 3 jours compte sur 7 jours');
+  assert.equal(r.historique.depuis_le_debut.parCategorie.devis_swap, 2);
+  assert.ok(r.historique.premier_enregistrement);
+  db.close();
+});
+
+test('arret du serveur (SIGTERM) : les compteurs sont enregistres avant de s arreter', () => {
+  const { stockageSqlite } = require('../src/stats/agentStats');
+  const EventEmitter = require('events');
+  const db = openRevenueDb(':memory:');
+  const c = creerCompteur({ stockage: stockageSqlite(() => db) });
+  const proc = new EventEmitter();
+  proc.pid = 123;
+  const tues = [];
+  proc.kill = (pid, sig) => tues.push([pid, sig]);
+  c.demarrerEnregistrement(proc);
+  c.enregistrer('/wallet/market', 200);
+  proc.emit('SIGTERM', 'SIGTERM');
+  assert.equal(db.prepare('SELECT SUM(total) AS n FROM request_stats').get().n, 1);
+  assert.deepEqual(tues, [[123, 'SIGTERM']], 'l arret normal reprend ensuite');
+  db.close();
+});
+
+test('base indisponible : le compteur continue en memoire sans planter', () => {
+  const { stockageSqlite } = require('../src/stats/agentStats');
+  const c = creerCompteur({ stockage: stockageSqlite(() => null), logger: { warn: () => {} } });
+  c.enregistrer('/health', 200);
+  c.enregistrerDansLaBase();
+  const r = c.resume();
+  assert.equal(r.dix_dernieres_minutes.total, 1);
+  assert.equal(r.historique, null);
+});
+
+test('erreurs du calcul des revenus : transmises nettoyees (ni lien ni cle)', async () => {
+  const db = openRevenueDb(':memory:');
+  db.prepare("INSERT INTO indexer_runs (started_at, finished_at, status, detail) VALUES (1, 2, 'partial', ?)")
+    .run(JSON.stringify({ errors: ['Polygon native : Blockscout HTTP 403', 'Base : echec https://base.example/rpc?apikey=SECRET123 refuse', 'x token=ABCDEF'] }));
+  const app = express();
+  monterStats(app, creerCompteur(), { env: { STATS_TOKEN_SHA256: EMPREINTE }, getServices: () => ({ db }) });
+  const { server, base } = await demarrer(app);
+  try {
+    const texte = await (await fetch(`${base}/stats/agent`, { headers: { authorization: `Bearer ${JETON}` } })).text();
+    assert.ok(!texte.includes('SECRET123') && !texte.includes('ABCDEF') && !texte.includes('base.example'));
+    const d = JSON.parse(texte);
+    assert.equal(d.indexeur.status, 'partial');
+    assert.equal(d.indexeur.erreurs[0], 'Polygon native : Blockscout HTTP 403');
+  } finally { server.close(); db.close(); }
+});

@@ -20,14 +20,29 @@ const { NATIVE_TOKEN } = require('../chains');
 const PAGE_SIZE = 1000;
 const MAX_PAGES = 200;
 
+// Depuis 2026, les explorateurs publics par chaîne (polygon.blockscout.com…)
+// sont derrière une protection anti-robot (Cloudflare « Just a moment… », HTTP
+// 403) : les appels d'un serveur y sont refusés. Blockscout demande d'utiliser
+// son API PRO, https://api.blockscout.com/<chainId>/…, avec une clé gratuite
+// « proapi_… » (dev.blockscout.com) — même format de requêtes. Avec une telle clé
+// dans BLOCKSCOUT_API_KEY, toutes les chaînes passent par l'API PRO ; sans clé
+// (ou avec une ancienne clé), on garde l'hôte public de chaque chaîne.
+const PRO_API = 'https://api.blockscout.com';
+
 function createBlockscoutSource({ fetchImpl = globalThis.fetch, apiKey = process.env.BLOCKSCOUT_API_KEY, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), spacingMs = 250, retries = 3 } = {}) {
+  const proKey = typeof apiKey === 'string' && apiKey.trim().startsWith('proapi_') ? apiKey.trim() : null;
+  const base = (chain) => (proKey ? `${PRO_API}/${chain.chainId}` : chain.blockscoutHost);
+
   async function getJson(url) {
     let lastError;
     for (let attempt = 0; attempt < retries; attempt++) {
       await sleep(spacingMs * (attempt + 1));
       try {
-        const res = await fetchImpl(url, { headers: { accept: 'application/json' } });
+        const res = await fetchImpl(url, { headers: { accept: 'application/json', 'user-agent': 'NexiaWallet-revenus/1.0' } });
         if (res.status >= 500 || res.status === 429) { lastError = new Error(`Blockscout HTTP ${res.status}`); continue; }
+        if (res.status === 403 && !proKey) {
+          throw new Error('Blockscout HTTP 403 (protection anti-robot de l\'explorateur public : mettre une clé gratuite proapi_ de dev.blockscout.com dans BLOCKSCOUT_API_KEY)');
+        }
         if (!res.ok) throw new Error(`Blockscout HTTP ${res.status}`);
         return await res.json();
       } catch (error) {
@@ -45,7 +60,7 @@ function createBlockscoutSource({ fetchImpl = globalThis.fetch, apiKey = process
     const all = [];
     for (let page = 1; page <= MAX_PAGES; page++) {
       const qs = new URLSearchParams(withKey({ module: 'account', action, address, startblock: fromBlock, endblock: toBlock, page, offset: PAGE_SIZE, sort: 'asc' }));
-      const data = await getJson(`${chain.blockscoutHost}/api?${qs}`);
+      const data = await getJson(`${base(chain)}/api?${qs}`);
       if (data.status === '0' && !/no (transactions|internal transactions|token transfers) found/i.test(String(data.message)) && !Array.isArray(data.result)) {
         throw new Error(`Blockscout ${action} : ${data.message || data.result}`);
       }
@@ -135,7 +150,7 @@ function createBlockscoutSource({ fetchImpl = globalThis.fetch, apiKey = process
     let params = { type: 'ERC-20', filter: 'to' };
     for (let page = 0; page < MAX_PAGES; page++) {
       const qs = new URLSearchParams(withKey(params));
-      const data = await getJson(`${chain.blockscoutHost}/api/v2/addresses/${address}/token-transfers?${qs}`);
+      const data = await getJson(`${base(chain)}/api/v2/addresses/${address}/token-transfers?${qs}`);
       const items = Array.isArray(data.items) ? data.items : [];
       let reachedOlder = false;
       for (const item of items) {
@@ -156,7 +171,8 @@ function createBlockscoutSource({ fetchImpl = globalThis.fetch, apiKey = process
   // commission. Demandé à Blockscout plutôt qu'au RPC : certains nœuds publics
   // refusent eth_getTransactionReceipt (constaté en réel sur Optimism : 403).
   async function getTransactionTarget(chain, txHash) {
-    const data = await getJson(`${chain.blockscoutHost}/api/v2/transactions/${txHash}`);
+    const qs = proKey ? `?${new URLSearchParams(withKey({}))}` : '';
+    const data = await getJson(`${base(chain)}/api/v2/transactions/${txHash}${qs}`);
     const to = data && data.to && (data.to.hash || data.to);
     return to ? String(to).toLowerCase() : null;
   }

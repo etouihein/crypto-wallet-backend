@@ -93,8 +93,12 @@ require('./src/admin/router').mountAdminFromEnv(app);
 // Compteur de requetes (categories + erreurs, sans aucune donnee personnelle) et
 // route GET /stats/agent pour l'agent Jarvis "Statistiques" de Pablo (protegee par
 // jeton, absente tant que STATS_TOKEN_SHA256 n'est pas defini). Voir src/stats/agentStats.js.
-const { creerCompteur, monterStats } = require('./src/stats/agentStats');
-const compteurRequetes = creerCompteur();
+const { creerCompteur, stockageSqlite, monterStats } = require('./src/stats/agentStats');
+// compteurs gardes pour toujours dans la base des revenus (volume Railway), repris au redemarrage
+const compteurRequetes = creerCompteur({
+  stockage: stockageSqlite(() => { try { return require('./src/revenue/services').getRevenueServices().db; } catch { return null; } }),
+});
+compteurRequetes.demarrerEnregistrement();
 app.use(compteurRequetes.middleware);
 monterStats(app, compteurRequetes);
 

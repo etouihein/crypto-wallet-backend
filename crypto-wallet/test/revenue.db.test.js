@@ -11,10 +11,10 @@ const { openRevenueDb, migrate, MIGRATIONS_DIR } = require('../src/revenue/db');
 test('les migrations s\'appliquent une seule fois', () => {
   const db = openRevenueDb(':memory:');
   const versions = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => r.version);
-  assert.deepEqual(versions, [1]);
+  assert.deepEqual(versions, [1, 2]);
   assert.deepEqual(migrate(db), []); // relancer ne rejoue rien
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
-  for (const t of ['quote_events', 'inbound_transfers', 'indexer_cursors', 'indexer_runs', 'price_points', 'token_ids', 'admin_sessions']) {
+  for (const t of ['quote_events', 'inbound_transfers', 'indexer_cursors', 'indexer_runs', 'price_points', 'token_ids', 'admin_sessions', 'request_stats']) {
     assert.ok(tables.includes(t), `table ${t} absente`);
   }
   db.close();
