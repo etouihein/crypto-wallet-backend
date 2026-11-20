@@ -1,0 +1,74 @@
+# Tests automatiques NexiaWallet : a chaque Pull Request (et a chaque fusion sur main),
+# GitHub relance les tests du serveur et de l'app, et verifie que le site se construit.
+# Resultat visible sur la Pull Request : coche verte = on peut fusionner, croix rouge = non.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serveur:
+    name: Serveur (crypto-wallet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: crypto-wallet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crypto-wallet/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Tests du serveur
+        run: npm test
+      - name: Le serveur demarre
+        run: timeout 20 node -e "process.env.PORT=0; require('./server.js'); setTimeout(() => process.exit(0), 5000)"
+
+  app:
+    name: App et site (wallet-final)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: wallet-final
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: wallet-final/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Tests de l'app
+        run: npm run test:lib
+      - name: Construction du site web
+        run: npx expo export -p web --output-dir /tmp/site
+
+  securite:
+    name: Audit des bibliotheques (information)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Aucune faille critique dans le serveur
+        working-directory: crypto-wallet
+        run: npm audit --omit=dev --audit-level=critical
+      - name: Aucune faille critique dans l'app
+        working-directory: wallet-final
+        run: npm audit --omit=dev --audit-level=critical
