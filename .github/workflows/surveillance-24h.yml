@@ -1,0 +1,36 @@
+# Surveillance 24 h/24 de NexiaWallet (meme quand le PC de Pablo est eteint).
+# Toutes les 15 minutes : site, API, application, certificats, protections.
+# Panne = passage rouge -> e-mail de GitHub a Pablo + alerte dans la cloche Jarvis au rallumage du PC.
+name: Surveillance 24h
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surveillance-24h
+  cancel-in-progress: false
+
+jobs:
+  surveillance:
+    name: Site, API et application
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/agents
+      - name: Verifications
+        run: python3 .github/agents/surveillance_24h.py
+      - name: Garder le resultat (relu par le PC de Pablo)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surveillance
+          path: surveillance.json
+          retention-days: 7
+          if-no-files-found: ignore
