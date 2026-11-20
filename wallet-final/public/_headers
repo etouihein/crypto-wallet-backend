@@ -21,3 +21,20 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Protections du navigateur sur toutes les pages (verifiees par la surveillance Jarvis) :
+# - HSTS : le navigateur n'accepte plus que HTTPS pour nexiawallet.com (pas de sous-domaines,
+#   pour ne rien casser ailleurs) ;
+# - nosniff : un fichier ne peut pas etre execute comme un script s'il n'en est pas un ;
+# - X-Frame-Options DENY : aucun autre site ne peut afficher le wallet dans un cadre
+#   invisible pour faire cliquer l'utilisateur a son insu (clickjacking) ;
+# - Referrer-Policy : les autres sites ne voient que le domaine, jamais l'adresse complete
+#   (qui peut contenir une adresse de wallet) ; l'en-tete Origin reste envoye ;
+# - Permissions-Policy : camera seulement pour notre propre page (scan de QR code),
+#   micro et position GPS jamais.
+/*
+  Strict-Transport-Security: max-age=31536000
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()
