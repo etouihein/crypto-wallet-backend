@@ -68,14 +68,24 @@ test('non configuree sans cle ou sans reseau Alchemy', () => {
 test('avec ALCHEMY_API_KEY, Base et Polygon passent par Alchemy ; les autres ne changent pas', () => {
   const chemin = require.resolve('../src/revenue/chains');
   const avant = process.env.ALCHEMY_API_KEY;
+  const avantBase = process.env.BASE_RPC_URL;
+  const avantPolygon = process.env.POLYGON_RPC_URL;
+  delete process.env.BASE_RPC_URL;
+  delete process.env.POLYGON_RPC_URL;
   delete require.cache[chemin];
   process.env.ALCHEMY_API_KEY = 'k';
   try {
     const { CHAINS } = require('../src/revenue/chains');
     const s = Object.fromEntries(CHAINS.map((c) => [c.key, c.source]));
     assert.deepEqual(s, { ethereum: 'blockscout', bsc: 'nodereal', polygon: 'alchemy', arbitrum: 'blockscout', optimism: 'blockscout', base: 'alchemy' });
+    const rpc = Object.fromEntries(CHAINS.map((c) => [c.key, c.rpcUrl]));
+    assert.equal(rpc.base, 'https://base-mainnet.g.alchemy.com/v2/k', 'Base lit ses blocs chez Alchemy (RPC public refuse)');
+    assert.equal(rpc.polygon, 'https://polygon-mainnet.g.alchemy.com/v2/k');
+    assert.ok(!rpc.ethereum.includes('alchemy'), 'les autres reseaux ne changent pas');
   } finally {
     if (avant === undefined) delete process.env.ALCHEMY_API_KEY; else process.env.ALCHEMY_API_KEY = avant;
+    if (avantBase !== undefined) process.env.BASE_RPC_URL = avantBase;
+    if (avantPolygon !== undefined) process.env.POLYGON_RPC_URL = avantPolygon;
     delete require.cache[chemin];
     require('../src/revenue/chains');
   }

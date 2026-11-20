@@ -414,7 +414,9 @@ const NETWORKS = {
   base: {
     chainId: 8453,
     nativeSymbol: 'ETH',
-    rpcUrl: process.env.BASE_RPC_URL || 'https://base-rpc.publicnode.com',
+    // Le noeud public de Base refuse les serveurs (HTTP 403, constate le 20/11/2026) :
+    // avec la cle Alchemy deja configuree, Base passe par Alchemy.
+    rpcUrl: process.env.BASE_RPC_URL || (process.env.ALCHEMY_API_KEY ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : 'https://base-rpc.publicnode.com'),
   },
 };
 
