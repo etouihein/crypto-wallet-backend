@@ -23,6 +23,11 @@ const ZEROX_NATIVE_PLACEHOLDER = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 // Base et Polygon : plus couverts par l'offre gratuite de Blockscout (HTTP 402
 // depuis le 1er octobre 2026) -> Alchemy si sa cle est presente (sources/alchemy.js).
 const ALCHEMY_SOURCE = process.env.ALCHEMY_API_KEY ? 'alchemy' : 'blockscout';
+// Les noeuds RPC publics de Base refusent les serveurs (HTTP 403) : avec la cle
+// Alchemy, Base et Polygon lisent aussi les blocs chez Alchemy (sauf si un RPC
+// est impose par BASE_RPC_URL / POLYGON_RPC_URL). La cle reste dans l'URL et
+// n'apparait jamais dans les messages d'erreur (rpc.js n'y met que la methode).
+const alchemyRpc = (network) => (process.env.ALCHEMY_API_KEY ? `https://${network}.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : null);
 
 const CHAINS = [
   {
@@ -43,7 +48,7 @@ const CHAINS = [
     chainId: 137, key: 'polygon', name: 'Polygon', nativeSymbol: 'POL',
     nativeCoingeckoId: 'polygon-ecosystem-token', coingeckoPlatform: 'polygon-pos',
     explorerTx: 'https://polygonscan.com/tx/', source: ALCHEMY_SOURCE, alchemyNetwork: 'polygon-mainnet', blockscoutHost: 'https://polygon.blockscout.com',
-    rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
+    rpcUrl: process.env.POLYGON_RPC_URL || alchemyRpc('polygon-mainnet') || 'https://polygon-bor-rpc.publicnode.com',
     confirmations: 64,
   },
   {
@@ -64,7 +69,7 @@ const CHAINS = [
     chainId: 8453, key: 'base', name: 'Base', nativeSymbol: 'ETH',
     nativeCoingeckoId: 'ethereum', coingeckoPlatform: 'base',
     explorerTx: 'https://basescan.org/tx/', source: ALCHEMY_SOURCE, alchemyNetwork: 'base-mainnet', blockscoutHost: 'https://base.blockscout.com',
-    rpcUrl: process.env.BASE_RPC_URL || 'https://base-rpc.publicnode.com',
+    rpcUrl: process.env.BASE_RPC_URL || alchemyRpc('base-mainnet') || 'https://base-rpc.publicnode.com',
     confirmations: 20,
   },
 ];
