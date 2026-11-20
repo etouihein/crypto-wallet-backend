@@ -32,7 +32,7 @@ function createIndexer({ db, sources, rpc, pricing, feeAddress, chains = CHAINS,
   // sur le RPC qu'en dernier recours : certains nœuds publics refusent
   // eth_getTransactionReceipt (Optimism répond 403).
   async function parentTarget(chain, txHash) {
-    const source = chain.source === 'nodereal' ? sources.nodereal : sources.blockscout;
+    const source = sources[chain.source] || sources.blockscout;
     if (source && typeof source.getTransactionTarget === 'function') {
       try {
         const target = await source.getTransactionTarget(chain, txHash);
@@ -53,7 +53,7 @@ function createIndexer({ db, sources, rpc, pricing, feeAddress, chains = CHAINS,
     VALUES (@chain_id, @tx_hash, @kind, @sub_index, @block_number, @block_time, @from_address, @token_address, @token_symbol, @token_decimals, @amount_raw, @indexed_at)`);
 
   async function indexChain(chain) {
-    const source = chain.source === 'nodereal' ? sources.nodereal : sources.blockscout;
+    const source = sources[chain.source] || sources.blockscout;
     if (!source || !source.isConfigured(chain)) return { chainId: chain.chainId, skipped: `${chain.source} non configuré` };
 
     const head = await rpc.getBlockNumber(chain);
