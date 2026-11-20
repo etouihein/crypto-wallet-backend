@@ -134,8 +134,13 @@ app.get('/', (req, res) => {
   res.json({ status: "OK", message: "Le serveur du Crypto Wallet fonctionne parfaitement !" });
 });
 
+// version = 7 premiers caracteres du commit deploye (variable fournie par Railway) :
+// la surveillance compare avec le dernier commit de main pour verifier que la
+// derniere fusion est bien en ligne. Lue a chaque appel (tests).
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', network: 'mainnet-ready', timestamp: new Date().toISOString() });
+  const sha = String(process.env.RAILWAY_GIT_COMMIT_SHA || '').toLowerCase();
+  const version = /^[0-9a-f]{7,40}$/.test(sha) ? sha.slice(0, 7) : 'inconnue';
+  res.json({ status: 'OK', network: 'mainnet-ready', version, timestamp: new Date().toISOString() });
 });
 
 // Erreur CORS (origine refusée) → 403 propre, jamais de stack trace exposée.
