@@ -28,6 +28,7 @@ function getRevenueServices() {
   const { createLifiFees } = require('./lifi');
   const { createBlockscoutSource } = require('./sources/blockscout');
   const { createNodeRealSource } = require('./sources/nodereal');
+  const { createAlchemySource } = require('./sources/alchemy');
 
   const feeAddress = feeRecipientAddress();
   if (!feeAddress) throw new Error('FEE_RECIPIENT_ADDRESS invalide');
@@ -43,7 +44,7 @@ function getRevenueServices() {
     feeAddress,
     indexer: createIndexer({
       db, rpc, pricing, feeAddress,
-      sources: { blockscout: blockscoutSource, nodereal: nodeRealSource },
+      sources: { blockscout: blockscoutSource, nodereal: nodeRealSource, alchemy: createAlchemySource() },
     }),
     balances: createBalances({ db, rpc, pricing, feeAddress }),
     lifiFees: createLifiFees(),
