@@ -10748,36 +10748,7 @@ function AppContent({ themeMode, changeTheme }) {
         </LinearGradient>
       </View>
 
-      <View style={{ marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
-        <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 8 }}>Convertisseur rapide</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TextInput
-            style={[st.form_input, { flex: 1, marginBottom: 0 }]}
-            value={converterAmount}
-            onChangeText={(v) => setConverterAmount(normalizeDecimalInput(v))}
-            placeholder="Montant en EUR" placeholderTextColor={T.text3} keyboardType="decimal-pad"
-          />
-          <Text style={{ color: T.text2, fontSize: 13, fontWeight: '700' }}>EUR →</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
-          {['ETH', 'BTC', 'BNB', 'SOL', 'USDT', 'USDC', 'MATIC', 'ADA'].filter((sym) => tokens[sym]).map((sym) => (
-            <TouchableOpacity key={sym} style={[st.chip_pill, converterToken === sym && st.chip_pill_on]} onPress={() => setConverterToken(sym)}>
-              <Text style={[st.chip_pill_txt, converterToken === sym && st.chip_pill_txt_on]}>{sym}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        <Text style={{ color: T.gold, fontWeight: '700', fontSize: 15, marginTop: 10 }}>
-          ≈ {(() => {
-            const amt = parseFloat(converterAmount);
-            const priceUsd = tokens[converterToken]?.price;
-            if (!amt || !priceUsd) return '—';
-            const fx = p7FxRates || { EUR: CURRENCIES.EUR.rate, CHF: CURRENCIES.CHF.rate };
-            const qty = phase7.convertFiatToCrypto(amt, 'EUR', priceUsd, fx);
-            return qty == null ? '—' : (phase7.formatCryptoAmount(qty, converterToken) || '—');
-          })()}
-        </Text>
-        <Text style={{ color: T.text3, fontSize: 11, marginTop: 4 }}>Conversion avec les prix existants (CoinGecko via /market) ; aucun taux inventé{p7FxRates ? '' : ' — taux EUR CoinGecko indisponible, taux d’affichage existant utilisé'}.</Text>
-      </View>
+      {/* Convertisseur rapide retire de l'accueil (demande de Pablo, 20/11/2026) */}
 
       {portfolioHistory.length >= 2 && (
         <View style={st.sparkline_wrap}>
@@ -10788,38 +10759,7 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
       )}
 
-      {!discreetMode && (
-        <View style={{ marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13 }}>Évolution du solde total</Text>
-            <View style={{ flexDirection: 'row', gap: 4 }}>
-              {[['7d', '7j'], ['30d', '30j'], ['1y', '1 an']].map(([key, label]) => (
-                <TouchableOpacity key={key} style={[st.period_chip, p7ChartPeriod === key && st.period_chip_on]} onPress={() => setP7ChartPeriod(key)}>
-                  <Text style={[st.period_chip_txt, p7ChartPeriod === key && st.period_chip_txt_on]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-          {(() => {
-            const ms = p7ChartPeriod === '7d' ? 7 * 24 * 3600 * 1000 : p7ChartPeriod === '30d' ? 30 * 24 * 3600 * 1000 : 365 * 24 * 3600 * 1000;
-            const pts = portfolioHistory.filter((pt) => pt.t >= Date.now() - ms);
-            if (pts.length < 2) return (
-              <Text style={{ color: T.text2, fontSize: 12, marginTop: 10, lineHeight: 18 }}>
-                Historique insuffisant pour cette période — la courbe apparaîtra au fil du temps : un point de solde est enregistré toutes les 10 minutes quand le solde est supérieur à 0 (200 points max). Aucune courbe n’est inventée.
-              </Text>
-            );
-            const chg = phase7.balanceHistoryChange(pts.map((pt) => ({ t: pt.t, totalUsd: pt.v })));
-            return (
-              <>
-                <PortfolioSparkline points={pts} />
-                <Text style={{ color: T.text2, fontSize: 12, marginTop: 8 }}>
-                  {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)} % sur la période`} • {pts.length} points réels{marketStale ? ' • prix différés' : ''}
-                </Text>
-              </>
-            );
-          })()}
-        </View>
-      )}
+      {/* Evolution du solde total retiree de l'accueil (demande de Pablo, 20/11/2026) */}
 
       <View style={st.quick_actions}>
         {visibleQuickActions.filter(a => !(discreetMode && a.id === 'history')).map(a => (
@@ -11140,48 +11080,6 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={st.warning_txt}>⚠️ Prix différés : CoinGecko est indisponible, les prix affichés sont des prix de secours figés, pas des prix en direct. Ne décide pas d'un échange sur ces seuls prix.</Text>
           </View>
         )}
-        {marketOverviewStatus === 'loading' && !marketOverview && (
-          <View style={{ marginHorizontal: 16, marginTop: 12, alignItems: 'center' }}>
-            <ActivityIndicator color={T.gold} />
-            <Text style={{ color: T.text2, fontSize: 12, marginTop: 6 }}>Chargement des indicateurs de marché…</Text>
-          </View>
-        )}
-        {marketOverviewStatus === 'unavailable' && !marketOverview && (
-          <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 12 }]}>
-            <Text style={st.warning_txt}>Indicateurs de marché indisponibles pour le moment — aucune valeur inventée.</Text>
-            <TouchableOpacity onPress={fetchMarketOverview} style={{ marginTop: 8 }}>
-              <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>Réessayer</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {!!marketOverview && (
-          <View style={{ marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
-            <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 10 }}>Marché global</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-              <View style={{ flex: 1, minWidth: 120 }}>
-                <Text style={{ color: T.text3, fontSize: 11 }}>Fear & Greed</Text>
-                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.fearGreed?.value ?? '—'}{marketOverview.fearGreed?.classification ? ` (${marketOverview.fearGreed.classification})` : ''}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120 }}>
-                <Text style={{ color: T.text3, fontSize: 11 }}>Dominance BTC</Text>
-                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.btcDominance != null ? `${Number(marketOverview.btcDominance).toFixed(1)} %` : '—'}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120 }}>
-                <Text style={{ color: T.text3, fontSize: 11 }}>Capitalisation totale</Text>
-                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalMarketCapUsd != null ? `$${fmtCompactNumber(marketOverview.totalMarketCapUsd)}` : '—'}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120 }}>
-                <Text style={{ color: T.text3, fontSize: 11 }}>Volume 24h</Text>
-                <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalVolume24hUsd != null ? `$${fmtCompactNumber(marketOverview.totalVolume24hUsd)}` : '—'}</Text>
-              </View>
-            </View>
-            <Text style={{ color: T.text3, fontSize: 11, marginTop: 10 }}>
-              Sources : {marketOverview.sources?.fearGreed || '—'} · {marketOverview.sources?.global || '—'}
-              {marketOverviewFetchedAt ? ` • Mis à jour le ${new Date(marketOverviewFetchedAt).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ' • Dernier cache affiché'}
-              {marketOverview.stale ? ' • Données partielles' : ''}
-            </Text>
-          </View>
-        )}
         <View style={st.search_wrap}>
           <TextInput style={st.search_input} value={marketSearch} onChangeText={setMarketSearch}
             placeholder="🔍 Bitcoin, Ethereum…" placeholderTextColor={T.text3} />
@@ -11253,6 +11151,49 @@ function AppContent({ themeMode, changeTheme }) {
                   </ScrollView>
                 </View>
               )}
+              {/* Marche global : sous l'actu, pour descendre dans la page et bien voir les cryptos (Pablo, 20/11/2026) */}
+          {marketOverviewStatus === 'loading' && !marketOverview && (
+            <View style={{ marginHorizontal: 16, marginTop: 12, alignItems: 'center' }}>
+              <ActivityIndicator color={T.gold} />
+              <Text style={{ color: T.text2, fontSize: 12, marginTop: 6 }}>Chargement des indicateurs de marché…</Text>
+            </View>
+          )}
+          {marketOverviewStatus === 'unavailable' && !marketOverview && (
+            <View style={[st.warning_box, { marginHorizontal: 16, marginTop: 12 }]}>
+              <Text style={st.warning_txt}>Indicateurs de marché indisponibles pour le moment — aucune valeur inventée.</Text>
+              <TouchableOpacity onPress={fetchMarketOverview} style={{ marginTop: 8 }}>
+                <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>Réessayer</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {!!marketOverview && (
+            <View style={{ marginHorizontal: 16, marginTop: 0, marginBottom: 20, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: T.border, backgroundColor: T.card }}>
+              <Text style={{ color: T.text, fontWeight: '700', fontSize: 13, marginBottom: 10 }}>Marché global</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+                <View style={{ flex: 1, minWidth: 120 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }}>Fear & Greed</Text>
+                  <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.fearGreed?.value ?? '—'}{marketOverview.fearGreed?.classification ? ` (${marketOverview.fearGreed.classification})` : ''}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 120 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }}>Dominance BTC</Text>
+                  <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.btcDominance != null ? `${Number(marketOverview.btcDominance).toFixed(1)} %` : '—'}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 120 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }}>Capitalisation totale</Text>
+                  <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalMarketCapUsd != null ? `$${fmtCompactNumber(marketOverview.totalMarketCapUsd)}` : '—'}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 120 }}>
+                  <Text style={{ color: T.text3, fontSize: 11 }}>Volume 24h</Text>
+                  <Text style={{ color: T.text, fontWeight: '700', fontSize: 15 }}>{marketOverview.totalVolume24hUsd != null ? `$${fmtCompactNumber(marketOverview.totalVolume24hUsd)}` : '—'}</Text>
+                </View>
+              </View>
+              <Text style={{ color: T.text3, fontSize: 11, marginTop: 10 }}>
+                Sources : {marketOverview.sources?.fearGreed || '—'} · {marketOverview.sources?.global || '—'}
+                {marketOverviewFetchedAt ? ` • Mis à jour le ${new Date(marketOverviewFetchedAt).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ' • Dernier cache affiché'}
+                {marketOverview.stale ? ' • Données partielles' : ''}
+              </Text>
+            </View>
+          )}
               <View style={st.section_hdr}>
                 <SectionTitle>Tous les cours</SectionTitle>
                 <Text style={st.section_sub}>{filteredCoins.length} cryptos • {marketFreshness}</Text>
