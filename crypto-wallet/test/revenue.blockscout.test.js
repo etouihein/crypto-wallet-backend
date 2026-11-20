@@ -71,3 +71,30 @@ test('ERC-20 : le logIndex réel sert d\'identifiant unique', async () => {
 test('ERC-20 : la plage de blocs est respectée', async () => {
   assert.deepEqual(await source().fetch('erc20', getChain(1), FEE, 999999999, 1999999999), []);
 });
+
+test('cle PRO (proapi_) : toutes les requetes passent par api.blockscout.com/<chainId> avec la cle', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(String(url));
+    const u = String(url);
+    const body = u.includes('/api/v2/') ? { items: [], next_page_params: null } : { status: '0', message: 'No transactions found', result: [] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  const src = createBlockscoutSource({ fetchImpl, sleep: async () => {}, apiKey: 'proapi_test123' });
+  await src.fetch('native', getChain(137), FEE, 0, 10);
+  await src.fetch('erc20', getChain(42161), FEE, 0, 10);
+  assert.ok(urls.length >= 2);
+  for (const u of urls) {
+    assert.match(u, /^https:\/\/api\.blockscout\.com\/(137|42161)\/api/, u);
+    assert.match(u, /apikey=proapi_test123/, u);
+    assert.ok(!u.includes('polygon.blockscout.com') && !u.includes('arbitrum.blockscout.com'));
+  }
+});
+
+test('sans cle PRO : hote public, et un 403 anti-robot donne un message qui dit quoi faire', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(String(url)); return new Response('<html>Just a moment...</html>', { status: 403 }); };
+  const src = createBlockscoutSource({ fetchImpl, sleep: async () => {}, apiKey: '' });
+  await assert.rejects(src.fetch('native', getChain(137), FEE, 0, 10), /proapi_.*BLOCKSCOUT_API_KEY/);
+  assert.match(urls[0], /^https:\/\/polygon\.blockscout\.com\/api\?/);
+});
