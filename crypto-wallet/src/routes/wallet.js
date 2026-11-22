@@ -1374,6 +1374,17 @@ router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
 
     res.set('Content-Type', contentType);
     res.set('Cache-Control', 'public, max-age=86400');
+    // L'app web (nexiawallet.com) affiche ces images depuis un AUTRE domaine
+    // que ce serveur : avec le "same-origin" mis par defaut par helmet, le
+    // navigateur refusait de les afficher (galerie NFT vide sur le web).
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    // Une image SVG peut contenir du script. Affichee par <img>, il ne
+    // s'execute jamais ; mais ouverte DIRECTEMENT (lien piege), elle
+    // tournerait sur le domaine du serveur, celui de la page d'administration,
+    // avec la politique globale qui autorise les scripts integres. Pour ces
+    // reponses : rien d'actif, et document isole (sandbox).
+    res.set('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
+    res.set('X-Content-Type-Options', 'nosniff');
     res.send(Buffer.concat(chunks));
   } catch (error) {
     res.status(400).json({ success: false, error: 'Impossible de charger cette image.' });
