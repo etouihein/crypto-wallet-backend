@@ -39,4 +39,23 @@ function montantVersTexte(n, decimales = 8) {
   return tronque.toFixed(Math.min(d, 15)).replace(/\.?0+$/, '') || '0';
 }
 
-module.exports = { normalizeDecimalInput, lienExterneSur, montantVersTexte };
+// Montant tape -> unites entieres EXACTES du token (wei, lamports, satoshis),
+// en texte, pour un devis de swap. Avant le 22/11/2026, l'app faisait
+// parseUnits(parseFloat(montant).toFixed(decimales)) : la virgule flottante
+// ajoutait du "bruit" ("0.1" en 18 decimales donnait 0.100000000000000006,
+// soit un peu PLUS que le montant tape, et plus que le solde avec le bouton
+// MAX), et toFixed ARRONDISSAIT les decimales en trop vers le haut. Ici le
+// calcul se fait sur le texte, chiffre par chiffre : les decimales en trop
+// sont coupees (jamais plus que ce qui est tape). Montant illisible -> erreur.
+function montantEnUnites(texte, decimales) {
+  const d = Math.floor(Number(decimales));
+  if (!Number.isFinite(d) || d < 0 || d > 36) throw new Error('Montant invalide.');
+  const txt = normalizeDecimalInput(texte);
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(txt);
+  if (!m || (m[1] === '' && (m[2] || '') === '')) throw new Error('Montant invalide.');
+  const fraction = ((m[2] || '') + '0'.repeat(d)).slice(0, d);
+  const unites = BigInt(m[1] || '0') * (10n ** BigInt(d)) + BigInt(fraction || '0');
+  return unites.toString();
+}
+
+module.exports = { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites };
