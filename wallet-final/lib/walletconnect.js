@@ -160,14 +160,24 @@ async function rejectSessionRequest(topic, id, message = "Refusé par l'utilisat
 // clé privée déjà déverrouillée en mémoire — jamais persistée, jamais
 // envoyée au relais WalletConnect. Lève une erreur pour toute méthode/chaîne
 // non supportée, à charge de l'appelant de répondre par rejectSessionRequest.
+// Le compte demande par la dApp doit etre le compte actif (jamais signer
+// "pour" une autre adresse que celle affichee a l'utilisateur).
+function verifierCompte(adresseDemandee, wallet) {
+  if (typeof adresseDemandee !== 'string' || adresseDemandee.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new Error('Adresse demandée différente du compte actif.');
+  }
+}
+
 async function executeSessionRequest({ chainId, method, params }, privateKey) {
-  const network = SUPPORTED_EVM_CHAINS[chainId];
+  // Entree PROPRE seulement : "constructor" ou "__proto__" ne sont pas des chaines.
+  const network = Object.prototype.hasOwnProperty.call(SUPPORTED_EVM_CHAINS, chainId) ? SUPPORTED_EVM_CHAINS[chainId] : undefined;
   if (!network) throw new Error(`Chaîne non supportée : ${chainId}`);
+  const chainIdNumerique = Number(String(chainId).split(':')[1]);
   const wallet = new ethers.Wallet(privateKey, getProvider(network));
 
   if (method === 'personal_sign') {
     const [messageHex, address] = params;
-    if (address.toLowerCase() !== wallet.address.toLowerCase()) throw new Error('Adresse demandée différente du compte actif.');
+    verifierCompte(address, wallet);
     const message = ethers.utils.isHexString(messageHex) ? ethers.utils.arrayify(messageHex) : messageHex;
     return wallet.signMessage(message);
   }
@@ -175,9 +185,23 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
   // eth_sign : retiré en Phase 6 (voir SUPPORTED_METHODS) — on laisse
   // tomber dans l'erreur "Méthode non supportée" ci-dessous, jamais signer.
   if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
-    const [, typedDataJson] = params;
+    const [address, typedDataJson] = params;
+    // Meme garde que personal_sign (absente avant le 22/11/2026).
+    verifierCompte(address, wallet);
     const typedData = typeof typedDataJson === 'string' ? JSON.parse(typedDataJson) : typedDataJson;
     const { domain, types, message } = typedData;
+    // Un message EIP-712 (Permit, ordre...) porte son reseau dans
+    // domain.chainId : s'il differe du reseau de la session (celui que
+    // l'utilisateur voit), la signature servirait sur un autre reseau que
+    // celui affiche (ex. dApp sur Polygon qui fait signer un Permit valable
+    // sur Ethereum). Refuse, comme MetaMask. Sans chainId : signable.
+    if (domain && domain.chainId !== undefined && domain.chainId !== null) {
+      let chainDuMessage;
+      try { chainDuMessage = ethers.BigNumber.from(domain.chainId).toNumber(); } catch { chainDuMessage = NaN; }
+      if (chainDuMessage !== chainIdNumerique) {
+        throw new Error(`Ce message est prévu pour un autre réseau (chainId ${domain.chainId}) que celui de la connexion : signature refusée.`);
+      }
+    }
     const typesWithoutDomain = { ...types };
     delete typesWithoutDomain.EIP712Domain;
     return wallet._signTypedData(domain, typesWithoutDomain, message);
@@ -185,6 +209,9 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
 
   if (method === 'eth_sendTransaction') {
     const [tx] = params;
+    // Une transaction demandee pour un autre compte n'est jamais envoyee
+    // depuis le compte actif a sa place.
+    if (tx && tx.from !== undefined && tx.from !== null) verifierCompte(tx.from, wallet);
     const populated = await wallet.populateTransaction({
       to: tx.to,
       value: tx.value ? ethers.BigNumber.from(tx.value) : undefined,
