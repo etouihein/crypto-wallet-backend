@@ -58,7 +58,7 @@ import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectD
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError } from './lib/txErrors';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
-import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites } from './lib/saisie';
+import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -6843,7 +6843,10 @@ function AppContent({ themeMode, changeTheme }) {
     const price = tokens[sendToken]?.price || 0;
     const fiatNum = parseFloat(fiatStr) || 0;
     const cryptoVal = (price > 0 && fxRate > 0) ? (fiatNum / fxRate) / price : 0;
-    setSendAmount(cryptoVal ? String(cryptoVal) : '');
+    // Montant en crypto arrondi VERS LE BAS aux decimales du jeton : avant le
+    // 23/11/2026, String(50 / 2800) donnait 0.017857142857142856, refuse a la
+    // signature pour BTC, SOL, USDC et USDT (trop de decimales).
+    setSendAmount(cryptoVal ? montantVersTexte(cryptoVal, decimalesEnvoi(sendToken)) : '');
   };
   const toggleSendAmountMode = () => {
     if (sendAmountMode === 'crypto') {
@@ -7196,7 +7199,7 @@ function AppContent({ themeMode, changeTheme }) {
                     <TouchableOpacity
                       key={pct}
                       style={st.quick_pct_btn}
-                      onPress={() => setSendCryptoAmount(String(sendableBalance * pct))}
+                      onPress={() => setSendCryptoAmount(montantVersTexte(sendableBalance * pct, decimalesEnvoi(sendToken)))}
                     >
                       <Text style={st.quick_pct_txt}>{pct * 100}%</Text>
                     </TouchableOpacity>

@@ -39,6 +39,17 @@ function montantVersTexte(n, decimales = 8) {
   return tronque.toFixed(Math.min(d, 15)).replace(/\.?0+$/, '') || '0';
 }
 
+// Nombre de decimales qu'un montant d'ENVOI peut avoir pour ce jeton (le
+// minimum, toutes chaines confondues : USDC/USDT ont 6 decimales sur
+// Ethereum). Au-dela, la signature refuse le montant ("8 decimales au
+// maximum" pour BTC, "fractional component exceeds decimals" pour USDC).
+function decimalesEnvoi(symbole) {
+  if (symbole === 'BTC') return 8;
+  if (symbole === 'SOL') return 9;
+  if (symbole === 'USDC' || symbole === 'USDT') return 6;
+  return 18;
+}
+
 // Montant tape -> unites entieres EXACTES du token (wei, lamports, satoshis),
 // en texte, pour un devis de swap. Avant le 22/11/2026, l'app faisait
 // parseUnits(parseFloat(montant).toFixed(decimales)) : la virgule flottante
@@ -58,4 +69,4 @@ function montantEnUnites(texte, decimales) {
   return unites.toString();
 }
 
-module.exports = { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites };
+module.exports = { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi };
