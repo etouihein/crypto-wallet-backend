@@ -3,7 +3,7 @@
 (meme quand le PC de Pablo est eteint).
 
 Verifie : le site (avec et sans www), l'API, que l'application se charge vraiment,
-les certificats HTTPS et les protections du navigateur.
+les certificats HTTPS, les protections du navigateur et le relais d'images NFT.
 - tout va bien      -> le passage est vert ;
 - panne / probleme  -> le passage est ROUGE : GitHub envoie un e-mail a Pablo, et le
                        PC de Pablo l'affiche dans la cloche Jarvis des qu'il est rallume.
@@ -20,6 +20,7 @@ import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 SITE = "https://www.nexiawallet.com"
@@ -49,6 +50,22 @@ def lire_avec_reessai(url):
         time.sleep(20)
         r = lire(url)
     return r
+
+
+def images_nft():
+    """Le relais d'images NFT du serveur doit renvoyer une image que le navigateur accepte
+    d'afficher sur nexiawallet.com (Cross-Origin-Resource-Policy: cross-origin). Jamais une
+    panne (le site reste utilisable), seulement ATTENTION."""
+    nom = "Images NFT (relais du serveur)"
+    r = lire(API + "/wallet/nft/image-proxy?url=" + urllib.parse.quote("https://nexiawallet.com/icon.png", safe=""))
+    if r["status"] != 200:
+        return (nom, "ATTENTION", "le serveur ne relaie pas l'image de test (%s)" % (r["erreur"] or r["status"]))
+    if not r["entetes"].get("content-type", "").startswith("image/"):
+        return (nom, "ATTENTION", "le relais ne renvoie pas une image")
+    corp = r["entetes"].get("cross-origin-resource-policy", "")
+    if corp and corp != "cross-origin":
+        return (nom, "ATTENTION", "images bloquees par le navigateur sur le site (Cross-Origin-Resource-Policy: %s)" % corp)
+    return (nom, "OK", "image relayee et affichable sur le site")
 
 
 def main():
@@ -96,6 +113,8 @@ def main():
     if page["status"] == 200:
         res.append(("Protections du navigateur", "ATTENTION" if manque else "OK",
                     ("manquant : " + ", ".join(manque)) if manque else "presentes"))
+
+    res.append(images_nft())
 
     pannes = [r for r in res if r[1] == "PANNE"]
     global_ = "PROBLEME DETECTE" if pannes else ("ATTENTION" if any(r[1] in ("LENT", "ATTENTION") for r in res) else "TOUT VA BIEN")
