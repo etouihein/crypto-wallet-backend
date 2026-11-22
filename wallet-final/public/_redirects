@@ -8,4 +8,12 @@
 # rewrite makes requests for the original (still-referenced-by-the-JS-bundle)
 # node_modules path transparently serve the copy instead. Status 200 = a
 # rewrite (keeps the original URL, serves the new file), not an HTTP redirect.
+# Constate le 22/11/2026 dans le navigateur : la copie assets/vendor/... n'est
+# pas publiee non plus (le chemin copie contient encore "node_modules"
+# imbrique : assets/vendor/expo/node_modules/@expo/...), donc la police
+# d'icones arrivait en HTML ("ionicons:error", "OTS parsing error" en
+# console). La police Ionicons est deja publiee sous assets/assets/fonts/
+# avec EXACTEMENT le meme nom (meme empreinte) : on y renvoie directement.
+# Placee AVANT la regle generale (la premiere regle qui correspond gagne).
+/assets/node_modules/expo/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/:font  /assets/assets/fonts/:font  200
 /assets/node_modules/*  /assets/vendor/:splat  200
