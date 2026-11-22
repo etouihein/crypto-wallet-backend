@@ -29,14 +29,17 @@ function getRevenueServices() {
   const { createBlockscoutSource } = require('./sources/blockscout');
   const { createNodeRealSource } = require('./sources/nodereal');
   const { createAlchemySource } = require('./sources/alchemy');
+  const { fetchAvecDelai } = require('./http');
 
   const feeAddress = feeRecipientAddress();
   if (!feeAddress) throw new Error('FEE_RECIPIENT_ADDRESS invalide');
   const db = getRevenueDb();
-  const rpc = createRpc();
-  const blockscoutSource = createBlockscoutSource();
-  const nodeRealSource = createNodeRealSource({ rpc });
-  const pricing = createPricing({ db });
+  // Chaque appel extérieur a un délai maximum (voir ./http.js).
+  const fetchImpl = fetchAvecDelai();
+  const rpc = createRpc({ fetchImpl });
+  const blockscoutSource = createBlockscoutSource({ fetchImpl });
+  const nodeRealSource = createNodeRealSource({ fetchImpl, rpc });
+  const pricing = createPricing({ db, fetchImpl });
   services = {
     db,
     rpc,
@@ -44,10 +47,10 @@ function getRevenueServices() {
     feeAddress,
     indexer: createIndexer({
       db, rpc, pricing, feeAddress,
-      sources: { blockscout: blockscoutSource, nodereal: nodeRealSource, alchemy: createAlchemySource() },
+      sources: { blockscout: blockscoutSource, nodereal: nodeRealSource, alchemy: createAlchemySource({ fetchImpl }) },
     }),
     balances: createBalances({ db, rpc, pricing, feeAddress }),
-    lifiFees: createLifiFees(),
+    lifiFees: createLifiFees({ fetchImpl }),
   };
   return services;
 }
