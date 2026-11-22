@@ -42,10 +42,17 @@ async function saveAll(all) {
   try { await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(all)); } catch { /* rien à faire */ }
 }
 
+// Liste d'un wallet, toujours un tableau : une entree abimee (objet, texte,
+// nombre...) ferait sinon planter l'ecran (.map/.filter sur un non-tableau).
+function listOf(all, key) {
+  const list = Object.prototype.hasOwnProperty.call(all, key) ? all[key] : null;
+  return Array.isArray(list) ? list : [];
+}
+
 async function getApprovals(walletAddress) {
   if (!walletAddress) return [];
   const all = await loadAll();
-  return all[walletAddress.toLowerCase()] || [];
+  return listOf(all, walletAddress.toLowerCase());
 }
 
 // Enregistre une approbation qu'on vient de faire signer. `amount` doit
@@ -56,7 +63,7 @@ async function recordApproval(walletAddress, {
   if (!walletAddress) return;
   const all = await loadAll();
   const key = walletAddress.toLowerCase();
-  const list = all[key] || [];
+  const list = listOf(all, key);
   const id = `${network}-${tokenAddress}-${spender}`.toLowerCase();
   const entry = {
     id, network, tokenAddress, tokenSymbol: tokenSymbol || '?', spender,
@@ -75,7 +82,7 @@ async function markRevoked(walletAddress, id) {
   if (!walletAddress) return;
   const all = await loadAll();
   const key = walletAddress.toLowerCase();
-  const list = all[key] || [];
+  const list = listOf(all, key);
   all[key] = list.map(e => (e.id === id ? { ...e, revoked: true, revokedAt: Date.now() } : e));
   await saveAll(all);
 }
@@ -84,7 +91,7 @@ async function removeApproval(walletAddress, id) {
   if (!walletAddress) return;
   const all = await loadAll();
   const key = walletAddress.toLowerCase();
-  all[key] = (all[key] || []).filter(e => e.id !== id);
+  all[key] = listOf(all, key).filter(e => e.id !== id);
   await saveAll(all);
 }
 
