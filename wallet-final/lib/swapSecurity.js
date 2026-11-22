@@ -11,6 +11,9 @@
 //    approbation sur le Settler = perte de fonds potentielle), et jamais
 //    le routeur de la transaction (H2). Pour LI.FI EVM, tx.to == diamant
 //    LI.FI officiel de la chaîne de départ.
+//  - GARANTI (depuis le 23/11/2026, si l'appelant passe sellAmount) :
+//    quote.sellAmount == montant demandé ; transaction.value <= montant
+//    demandé pour une vente d'ETH/BNB, et == 0 pour une vente de token.
 //  - GARANTI (partiel) : montant minimum reçu calculé avec le slippage
 //    choisi (défaut 1 %) et affiché dans l'écran de confirmation ; le
 //    slippage est aussi transmis à 0x via le backend (voir /swap/quote).
@@ -54,6 +57,9 @@ const LARGE_SWAP_USD_HINT = 1000; // seuil d'avertissement "gros montant" (affic
 
 const lower = (v) => (typeof v === 'string' ? v.toLowerCase() : '');
 const isAddr = (v) => typeof v === 'string' && ethers.utils.isAddress(v);
+// Jeton natif (ETH, BNB) dans les devis 0x.
+const NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const bn = (v) => { try { return ethers.BigNumber.from(v); } catch { return null; } };
 
 function minBuyAmount(buyAmount, slippageBps) {
   try {
@@ -70,15 +76,32 @@ function minBuyAmount(buyAmount, slippageBps) {
 // champs présents et incohérents : un champ absent n'est pas une preuve
 // de fraude (le format 0x v2 peut évoluer), mais un champ présent et
 // faux est un rejet immédiat.
-function validateZeroXQuote({ quote, sellAddress, buyAddress, taker, chainId, slippageBps }) {
+function validateZeroXQuote({ quote, sellAddress, buyAddress, taker, chainId, slippageBps, sellAmount }) {
   const errors = [];
   if (!quote || typeof quote !== 'object') return { ok: false, errors: ['Devis invalide.'], minBuyAmount: null, buyAmount: null };
   const tx = quote.transaction || {};
   if (quote.buyToken && lower(quote.buyToken) !== lower(buyAddress)) errors.push('Le devis porte sur un autre token à recevoir que celui demandé.');
   if (quote.sellToken && lower(quote.sellToken) !== lower(sellAddress)) errors.push('Le devis porte sur un autre token à vendre que celui demandé.');
-  if (quote.sellAmount && quote.sellAmount !== undefined && quote.sellAmount !== null) {
-    // sellAmount du devis doit correspondre à la demande ; comparé par
-    // l'appelant si besoin, ici on ne fait que l'exposer (voir buyAmount).
+  // Montant vendu et valeur native envoyée (depuis le 23/11/2026) : avant,
+  // ni quote.sellAmount ni transaction.value n'étaient contrôlés, alors que
+  // l'écran affiche « Tu paies » d'après la saisie de l'utilisateur et que
+  // transaction.value est signé tel quel. Un devis qui envoie plus d'ETH/BNB
+  // que demandé, ou de l'ETH/BNB lors de la vente d'un token, est rejeté.
+  if (sellAmount !== undefined && sellAmount !== null) {
+    const demande = bn(sellAmount);
+    if (!demande) {
+      errors.push('Montant vendu de la demande invalide.');
+    } else {
+      if (quote.sellAmount !== undefined && quote.sellAmount !== null) {
+        const duDevis = bn(quote.sellAmount);
+        if (!duDevis || !duDevis.eq(demande)) errors.push('Le devis porte sur un autre montant à vendre que celui demandé.');
+      }
+      const valeur = bn(tx.value ?? '0');
+      const venteNative = lower(sellAddress) === NATIVE_TOKEN;
+      if (!valeur) errors.push('La valeur de la transaction du devis est invalide.');
+      else if (venteNative && valeur.gt(demande)) errors.push('Le devis enverrait plus que le montant demandé depuis ton wallet.');
+      else if (!venteNative && !valeur.isZero()) errors.push('Le devis enverrait aussi de la crypto native alors que tu vends un token.');
+    }
   }
   if (quote.taker && lower(quote.taker) !== lower(taker)) errors.push('Le devis est destiné à une autre adresse que ton wallet.');
   const quoteChainId = quote.chainId ?? tx.chainId;
