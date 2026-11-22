@@ -740,6 +740,33 @@ async function getBitcoinMaxSendable(mnemonic) {
   return maxSats >= 546 ? maxSats / 1e8 : 0;
 }
 
+// Frais d'un envoi BTC tels que signBitcoinTransferTx les paiera : memes
+// pieces (UTXO) choisies, meme taux, meme taille, et la petite monnaie
+// (<= 546 sats) laissee aux mineurs comptee dans les frais. Avant le
+// 23/11/2026, l'ecran de confirmation affichait les frais d'une transaction
+// a UNE seule piece : un wallet aux nombreux petits UTXO payait bien plus
+// que le montant affiche. Doit rester aligne sur signBitcoinTransferTx
+// (verifie par test/wallet.frais-btc.test.js). Renvoie aussi le taux utilise.
+async function estimateBitcoinTransferFee({ fromAddress, amountBtc }) {
+  const amountSats = Number(parseAmountUnits(amountBtc, 8));
+  const utxos = await getBitcoinUtxos(fromAddress);
+  const feeRate = await getBitcoinFeeRate();
+  const sorted = [...(Array.isArray(utxos) ? utxos : [])].sort((a, b) => b.value - a.value);
+  let inputSum = 0;
+  let count = 0;
+  let estFeeSats = 0;
+  for (const utxo of sorted) {
+    count += 1;
+    inputSum += utxo.value;
+    estFeeSats = Math.ceil((10 + count * 68 + 2 * 31) * feeRate);
+    if (inputSum >= amountSats + estFeeSats) break;
+  }
+  if (!count || inputSum < amountSats + estFeeSats) return { ok: false, feeSats: estFeeSats, inputs: count, feeRate };
+  const changeSats = inputSum - amountSats - estFeeSats;
+  const feeSats = changeSats > 546 ? estFeeSats : inputSum - amountSats;
+  return { ok: true, feeSats, inputs: count, feeRate };
+}
+
 // Construit + signe un transfert BTC natif (P2WPKH) en local ; retourne une
 // transaction sérialisée en hex, diffusée ensuite par le backend (POST
 // /wallet/tx/broadcast-bitcoin) exactement comme un rawTx EVM/Solana.
@@ -893,6 +920,7 @@ module.exports = {
   isValidBitcoinAddress,
   getBitcoinBalance,
   getBitcoinMaxSendable,
+  estimateBitcoinTransferFee,
   getBitcoinTxStatus,
   signBitcoinTransferTx,
   getBitcoinFeeRate,

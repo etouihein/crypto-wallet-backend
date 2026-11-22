@@ -5439,12 +5439,12 @@ function AppContent({ themeMode, changeTheme }) {
       setSendNetworkLocked('bitcoin');
       setSendDestIsContract(false);
       setSendStep('confirm');
-      // Phase 6 (audit basse) : frais BTC estimés avec le VRAI taux du
-      // moment (Blockstream, via getBitcoinFeeRate) et la taille estimée
-      // d'une tx P2WPKH (1 entrée, 2 sorties), au lieu du 0,00005 codé en dur.
+      // Frais BTC calculés avec les pièces (UTXO) que l'envoi utilisera
+      // vraiment (estimateBitcoinTransferFee, aligné sur la signature). Avant
+      // le 23/11/2026 : frais d'une seule pièce, souvent bien sous le réel.
       try {
-        const rate = await localWallet.getBitcoinFeeRate();
-        const estSats = Math.ceil((10 + 68 + 2 * 31) * rate);
+        const est = await localWallet.estimateBitcoinTransferFee({ fromAddress: bitcoinAddr, amountBtc: sendAmount });
+        const estSats = est.ok ? est.feeSats : Math.ceil((10 + 68 + 2 * 31) * est.feeRate);
         setSendFeeEstimate({ feeNative: (estSats / 1e8).toFixed(8), nativeSymbol: 'BTC', approximate: true, tiers: null });
       } catch {
         setSendFeeEstimate({ feeNative: '0.00005', nativeSymbol: 'BTC', approximate: true, tiers: null });
