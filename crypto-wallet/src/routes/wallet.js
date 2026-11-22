@@ -65,15 +65,37 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const EMAIL_PROFILES_FILE = path.join(DATA_DIR, 'email-profiles.json');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Lecture PRUDENTE : fichier absent = aucun profil ; fichier present mais
+// illisible (ecriture coupee, disque plein...) = ERREUR, jamais "{}". Sinon
+// le prochain enregistrement reecrivait le fichier avec un seul profil et
+// effacait les e-mails de tous les autres utilisateurs.
 function loadEmailProfiles() {
-  try { return JSON.parse(fs.readFileSync(EMAIL_PROFILES_FILE, 'utf8')); } catch { return {}; }
+  let brut;
+  try { brut = fs.readFileSync(EMAIL_PROFILES_FILE, 'utf8'); } catch (e) {
+    if (e && e.code === 'ENOENT') return {};
+    throw e;
+  }
+  const profiles = JSON.parse(brut);
+  if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) throw new Error('email-profiles.json illisible');
+  return profiles;
 }
 
-function saveEmailProfile(address, email) {
+// Ecriture en deux temps (fichier temporaire puis remplacement) : une
+// coupure pendant l'ecriture laisse l'ancien fichier intact.
+function writeEmailProfiles(profiles) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = `${EMAIL_PROFILES_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(profiles, null, 2));
+  fs.renameSync(tmp, EMAIL_PROFILES_FILE);
+}
+
+// "__proto__", "constructor"... ne sont pas des adresses de wallet.
+const RESERVED_PROFILE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function saveEmailProfile(address, email) {
   const profiles = loadEmailProfiles();
   profiles[address.toLowerCase()] = { email, updatedAt: new Date().toISOString() };
-  fs.writeFileSync(EMAIL_PROFILES_FILE, JSON.stringify(profiles, null, 2));
+  writeEmailProfiles(profiles);
 }
 
 function deleteEmailProfile(address) {
@@ -82,8 +104,7 @@ function deleteEmailProfile(address) {
   const existed = Object.prototype.hasOwnProperty.call(profiles, key);
   if (existed) {
     delete profiles[key];
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(EMAIL_PROFILES_FILE, JSON.stringify(profiles, null, 2));
+    writeEmailProfiles(profiles);
   }
   return existed;
 }
@@ -1699,7 +1720,7 @@ router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
 // avec une clé inventée (voir le commentaire sur verifyOptionalEmailSignature).
 router.post('/profile/email', sensitiveLimiter, (req, res) => {
   const { address, email, signature } = req.body || {};
-  if (!address || typeof address !== 'string' || address.length > 100) {
+  if (!address || typeof address !== 'string' || address.length > 100 || RESERVED_PROFILE_KEYS.has(address.toLowerCase())) {
     return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
   }
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254) {
@@ -1728,7 +1749,7 @@ router.delete('/profile/email', sensitiveLimiter, (req, res) => {
   const body = req.body || {};
   const address = body.address || req.query.address;
   const signature = body.signature !== undefined ? body.signature : req.query.signature;
-  if (!address || typeof address !== 'string' || address.length > 100) {
+  if (!address || typeof address !== 'string' || address.length > 100 || RESERVED_PROFILE_KEYS.has(address.toLowerCase())) {
     return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
   }
   const ownership = verifyOptionalEmailSignature(address, signature);
