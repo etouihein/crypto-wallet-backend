@@ -76,6 +76,45 @@ test('entrees vides ou carnet absent -> null, sans planter', () => {
   assert.equal(looksLikePoisonedAddress(WALLET, [null, '', undefined]), null);
 });
 
+test('adresse piegee SOLANA : 4 memes premiers et derniers caracteres -> detectee', () => {
+  const contact = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk';
+  const piege = 'HAgkZ9xWq3RtYuP2mN8bVcLkJhGfDsAa1QwErTyDKpqk';
+  assert.equal(looksLikePoisonedAddress(piege, [contact]), contact);
+  // longueur differente (43 au lieu de 44) : toujours detectee
+  assert.equal(looksLikePoisonedAddress('HAgkZ9xWq3RtYuP2mN8bVcLkJhGfDsAa1QwErTyKpqk', [contact]), contact);
+});
+
+test('adresse piegee BITCOIN bc1q : 4 memes caracteres apres bc1q et a la fin -> detectee', () => {
+  const contact = 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu';
+  const piege = 'bc1qcr8tq9w2h7x5yu3ne4ld6kfp0sgm2ac8zv06fyu';
+  assert.equal(looksLikePoisonedAddress(piege, [contact]), contact);
+  assert.equal(looksLikePoisonedAddress(piege.toUpperCase(), [contact]), contact, 'bech32 : casse ignoree');
+});
+
+test('Solana / Bitcoin : adresse identique ou sans ressemblance -> pas d alerte', () => {
+  const sol = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk';
+  const btc = 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu';
+  assert.equal(looksLikePoisonedAddress(sol, [sol, btc, WALLET]), null);
+  assert.equal(looksLikePoisonedAddress(btc, [sol, btc, WALLET]), null);
+  assert.equal(looksLikePoisonedAddress('9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', [sol, btc, WALLET]), null);
+  assert.equal(looksLikePoisonedAddress('bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', [sol, btc, WALLET]), null);
+  // "bc1q" commun a toutes les adresses : ne suffit jamais a declencher
+  assert.equal(looksLikePoisonedAddress('bc1qzzzzkr609gcawutmrza0j4xv80jy8z30zzzz', [btc]), null);
+});
+
+test("App.js : le controle d'adresse piegee passe AVANT les envois SOL et BTC", () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'App.js'), 'utf8');
+  const debut = src.indexOf('const prepareSend = async');
+  assert.ok(debut > 0);
+  const corps = src.slice(debut, src.indexOf('const confirmAndSend = async', debut));
+  const controle = corps.indexOf('looksLikePoisonedAddress(sendAddress');
+  assert.ok(controle > 0, 'controle present dans prepareSend');
+  assert.ok(controle < corps.indexOf("if (sendToken === 'SOL')"), 'avant la branche SOL');
+  assert.ok(controle < corps.indexOf("if (sendToken === 'BTC')"), 'avant la branche BTC');
+  // l'alerte rouge sous le champ ne se limite plus aux adresses de 42 caracteres
+  assert.doesNotMatch(src, /sendAddress\.length === 42 && \(\(\) => \{\s*const poisonedMatch/);
+});
+
 // ─── minBuyAmount ────────────────────────────────────────────────
 
 test('montant minimum recu : 1 % de slippage retire exactement 1 %', () => {

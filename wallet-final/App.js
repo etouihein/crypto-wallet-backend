@@ -5384,6 +5384,30 @@ function AppContent({ themeMode, changeTheme }) {
     const amt = parseFloat(sendAmount);
     if (isNaN(amt) || amt <= 0) { showAlert('Montant invalide'); return; }
 
+    // Phase 6 (audit M3) : adresse piégée, pour EVM, Solana ET Bitcoin (avant
+    // le 23/11/2026, les envois SOL et BTC sortaient plus bas, AVANT ce
+    // contrôle) — comparée aux adresses récentes (carnet) ET aux propres adresses du wallet (un leurre peut imiter ta
+    // propre adresse). Sans confirmation explicite pour CETTE adresse, on
+    // bloque ici ; le bouton "continuer" relance prepareSend(true).
+    if (!forcePoison) {
+      const knownAddrs = [
+        ...recentAddresses.map(a => a.address),
+        walletAddr, solanaAddr, bitcoinAddr,
+      ].filter(Boolean);
+      const poisoned = looksLikePoisonedAddress(sendAddress, knownAddrs);
+      if (poisoned && sendPoisonConfirmedFor.toLowerCase() !== sendAddress.toLowerCase()) {
+        showAlert(
+          'Adresse piégée ?',
+          `Cette adresse ressemble énormément à une adresse connue (${poisoned.slice(0, 8)}…${poisoned.slice(-6)}) mais N'EST PAS la même. C'est la technique de l'adresse piégée : vérifie chaque caractère avant d'envoyer.`,
+          [
+            { text: 'Annuler', style: 'cancel' },
+            { text: "J'ai vérifié chaque caractère, continuer", onPress: () => { setSendPoisonConfirmedFor(sendAddress.toLowerCase()); prepareSend(true); } },
+          ]
+        );
+        return;
+      }
+    }
+
     // Solana — adresse base58 (rien à voir avec le format 0x), pas d'estimation
     // de frais EVM (frais Solana quasi fixes, ~0.000005 SOL par signature).
     if (sendToken === 'SOL') {
@@ -5442,29 +5466,6 @@ function AppContent({ themeMode, changeTheme }) {
     if (!isNative && !isErc20) {
       showAlert('Token non supporté', `L'envoi de ${sendToken} n'est pas encore supporté.`);
       return;
-    }
-
-    // Phase 6 (audit M3) : adresse piégée — comparée aux adresses récentes
-    // (carnet) ET aux propres adresses du wallet (un leurre peut imiter ta
-    // propre adresse). Sans confirmation explicite pour CETTE adresse, on
-    // bloque ici ; le bouton "continuer" relance prepareSend(true).
-    if (!forcePoison) {
-      const knownAddrs = [
-        ...recentAddresses.map(a => a.address),
-        walletAddr, solanaAddr, bitcoinAddr,
-      ].filter(Boolean);
-      const poisoned = looksLikePoisonedAddress(sendAddress, knownAddrs);
-      if (poisoned && sendPoisonConfirmedFor.toLowerCase() !== sendAddress.toLowerCase()) {
-        showAlert(
-          'Adresse piégée ?',
-          `Cette adresse ressemble énormément à une adresse connue (${poisoned.slice(0, 8)}…${poisoned.slice(-6)}) mais N'EST PAS la même. C'est la technique de l'adresse piégée : vérifie chaque caractère avant d'envoyer.`,
-          [
-            { text: 'Annuler', style: 'cancel' },
-            { text: "J'ai vérifié chaque caractère, continuer", onPress: () => { setSendPoisonConfirmedFor(sendAddress.toLowerCase()); prepareSend(true); } },
-          ]
-        );
-        return;
-      }
     }
 
     // Phase 6 (audit basse) : destination = contrat ? Envoyer des fonds
@@ -7205,7 +7206,7 @@ function AppContent({ themeMode, changeTheme }) {
               );
             })()}
 
-            {!!sendAddress && sendAddress.length === 42 && (() => {
+            {!!sendAddress && sendAddress.length >= 26 && (() => {
               const poisonedMatch = looksLikePoisonedAddress(sendAddress, [...recentAddresses.map(a => a.address), walletAddr, solanaAddr, bitcoinAddr].filter(Boolean));
               if (poisonedMatch) {
                 return (
