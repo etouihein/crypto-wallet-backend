@@ -57,6 +57,7 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError } from './lib/txErrors';
+import { normalizeDecimalInput, lienExterneSur } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -204,7 +205,13 @@ const CURRENCIES = {
 // (il s'arrête à la virgule), silencieusement : un montant tronqué envoyé/
 // swappé sans aucune erreur visible. On normalise donc dès la saisie, sur
 // TOUS les champs de montant (swap, envoi, achat/vente, pont, alertes...).
-const normalizeDecimalInput = (v) => v.replace(',', '.');
+// (voir lib/saisie.js : TOUTES les virgules et les espaces depuis le 22/11/2026)
+// Liens exterieurs (actualites, fiche CoinGecko) : ouverts seulement s'ils
+// sont http(s) (voir lienExterneSur dans lib/saisie.js).
+const ouvrirLienExterne = (url) => {
+  const sur = lienExterneSur(url);
+  if (sur) Linking.openURL(sur).catch(() => {});
+};
 
 // humanizeTxError (message clair a partir d'une erreur de transaction,
 // d'ethers ou du serveur) : voir lib/txErrors.js.
@@ -5156,7 +5163,7 @@ function AppContent({ themeMode, changeTheme }) {
           ))}
         </View>
         {!!info.homepage && (
-          <AnimPressable style={st.about_link_btn} onPress={() => Linking.openURL(info.homepage)}>
+          <AnimPressable style={st.about_link_btn} onPress={() => ouvrirLienExterne(info.homepage)}>
             <Text style={st.about_link_txt}>🔗 Site officiel</Text>
           </AnimPressable>
         )}
@@ -6858,7 +6865,7 @@ function AppContent({ themeMode, changeTheme }) {
                     </View>
                   )}
                   {linkUrl && (
-                    <TouchableOpacity onPress={() => Linking.openURL(linkUrl)}>
+                    <TouchableOpacity onPress={() => ouvrirLienExterne(linkUrl)}>
                       <Text style={{ color: T.gold, fontSize: 12, fontWeight: '700' }}>🔗 {linkLabel}</Text>
                     </TouchableOpacity>
                   )}
@@ -10309,7 +10316,7 @@ function AppContent({ themeMode, changeTheme }) {
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
             {newsItems.slice(0, 10).map((item, i) => (
-              <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+              <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                 {item.image ? (
                   <Image source={{ uri: item.image }} style={st.news_img} />
                 ) : (
@@ -10462,7 +10469,7 @@ function AppContent({ themeMode, changeTheme }) {
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
                     {newsItems.slice(0, 10).map((item, i) => (
-                      <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => item.link && Linking.openURL(item.link)}>
+                      <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                         {item.image ? (
                           <Image source={{ uri: item.image }} style={st.news_img} />
                         ) : (
