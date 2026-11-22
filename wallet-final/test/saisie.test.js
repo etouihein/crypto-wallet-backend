@@ -25,3 +25,14 @@ test('liens exterieurs : seuls http(s) s ouvrent', () => {
     assert.equal(lienExterneSur(mauvais), '', String(mauvais));
   }
 });
+
+test('montant MAX ecrit dans le champ : arrondi vers le bas, jamais "1e-7"', () => {
+  const { montantVersTexte } = require('../lib/saisie');
+  assert.equal(montantVersTexte(0.0000001, 8), '0.0000001');
+  assert.equal(montantVersTexte(1.23456789123, 8), '1.23456789');
+  assert.equal(montantVersTexte(0.999999999, 6), '0.999999', 'jamais arrondi au-dessus du solde');
+  assert.equal(montantVersTexte(2, 9), '2');
+  assert.equal(montantVersTexte(0.1 + 0.2, 8), '0.3');
+  for (const v of [0, -1, NaN, undefined, 'abc']) assert.equal(montantVersTexte(v, 8), '0');
+  assert.doesNotMatch(montantVersTexte(1e-9, 9), /e/);
+});

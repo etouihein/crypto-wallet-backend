@@ -57,7 +57,7 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError } from './lib/txErrors';
-import { normalizeDecimalInput, lienExterneSur } from './lib/saisie';
+import { normalizeDecimalInput, lienExterneSur, montantVersTexte } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -226,6 +226,8 @@ const ouvrirLienExterne = (url) => {
 // n'affecte que ces boutons de raccourci, jamais le solde réel affiché.
 const NATIVE_GAS_RESERVE = { ethereum: 0.004, bsc: 0.002, polygon: 0.05, arbitrum: 0.001, optimism: 0.001, base: 0.001 };
 const getNativeGasReserve = (net) => NATIVE_GAS_RESERVE[net] ?? 0.003;
+// Frais d'un envoi SOL : 5 000 lamports par signature ; on garde le double.
+const SOLANA_SEND_FEE_RESERVE = 0.00001;
 
 // Affichage de l'indicateur de gas en direct (voir addGasSample) — 'low'/
 // 'high'/'normal' viennent de la comparaison à l'historique du réseau,
@@ -7413,13 +7415,26 @@ function AppContent({ themeMode, changeTheme }) {
               )}
               <TouchableOpacity
                 style={st.max_btn}
-                onPress={() => {
+                onPress={async () => {
                   const bal = tokens[sendToken]?.balance || 0;
-                  // Réserve de gas si on vide le token NATIF (voir
-                  // getNativeGasReserve) : sinon plus rien pour payer la
-                  // transaction elle-même, qui échoue.
-                  const max = sendToken === nativeSymbol ? Math.max(0, bal - getNativeGasReserve(network)) : bal;
-                  setSendCryptoAmount(String(max));
+                  // Réserve de frais si on vide le token qui les paie :
+                  // sinon plus rien pour payer la transaction elle-même, qui
+                  // échoue. BTC et SOL ont leurs propres frais (avant le
+                  // 22/11/2026, MAX y mettait le solde entier : l'envoi BTC
+                  // échouait toujours, celui de SOL était rejeté).
+                  let max;
+                  let decimales = 8;
+                  if (sendToken === 'BTC') {
+                    try { max = await localWallet.getBitcoinMaxSendable(unlockedMnemonic); } catch { max = 0; }
+                    if (!max) { showToast('Solde BTC trop faible pour couvrir les frais du réseau', 'error'); }
+                  } else if (sendToken === 'SOL') {
+                    max = Math.max(0, parseFloat(solanaBalance || '0') - SOLANA_SEND_FEE_RESERVE);
+                    decimales = 9;
+                  } else {
+                    max = sendToken === nativeSymbol ? Math.max(0, bal - getNativeGasReserve(network)) : bal;
+                    if (sendToken === 'USDT' || sendToken === 'USDC') decimales = 6;
+                  }
+                  setSendCryptoAmount(montantVersTexte(max, decimales));
                 }}
               >
                 <Text style={st.max_btn_txt}>MAX</Text>

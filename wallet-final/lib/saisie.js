@@ -27,4 +27,16 @@ function lienExterneSur(url) {
   } catch { return ''; }
 }
 
-module.exports = { normalizeDecimalInput, lienExterneSur };
+// Nombre -> texte de montant pour un champ de saisie : arrondi VERS LE BAS
+// (jamais plus que le solde) a `decimales` chiffres, sans zeros inutiles, et
+// jamais en notation scientifique (String(0.0000001) = "1e-7", illisible).
+function montantVersTexte(n, decimales = 8) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return '0';
+  const d = Math.max(0, Math.min(18, Math.floor(decimales)));
+  const facteur = 10 ** Math.min(d, 15);
+  const tronque = Math.floor(x * facteur + 1e-9) / facteur;
+  return tronque.toFixed(Math.min(d, 15)).replace(/\.?0+$/, '') || '0';
+}
+
+module.exports = { normalizeDecimalInput, lienExterneSur, montantVersTexte };
