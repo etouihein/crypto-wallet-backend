@@ -638,7 +638,7 @@ async function fetchCoinDetailUncached(cgId) {
     // Première phrase de la description CoinGecko : mentionne en général qui/quelle
     // fondation a créé le projet et son objectif — pas de donnée inventée.
     description: (d.description?.en || '').split(/(?<=\.)\s+/)[0] || '',
-    homepage: d.links?.homepage?.find(Boolean) || '',
+    homepage: lienExterneSur(d.links?.homepage?.find(Boolean) || ''),
     genesisDate: d.genesis_date || null,
     categories: (d.categories || []).filter(Boolean),
     marketCapRank: d.market_cap_rank ?? null,
@@ -795,6 +795,18 @@ router.get('/coin/:cgId/candles', async (req, res) => {
 // Économie. Cache 5 min côté backend, rafraîchissement 5 min côté client.
 // Une source en panne ne casse pas les autres : chaque flux est récupéré
 // séparément, les échecs sont ignorés, le tri se fait par date décroissante.
+// Lien venant d'une source exterieure (flux RSS, CoinGecko) et ouvert tel
+// quel par l'app : seuls http(s) passent. Un flux pirate ne doit jamais
+// pouvoir glisser "javascript:..." ou "data:..." dans la version web.
+function lienExterneSur(url) {
+  if (typeof url !== 'string') return '';
+  const u = url.trim();
+  try {
+    const p = new URL(u);
+    return p.protocol === 'https:' || p.protocol === 'http:' ? u : '';
+  } catch { return ''; }
+}
+
 const NEWS_SOURCES = [
   { name: 'CoinDesk', category: 'crypto', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
   { name: 'CoinTelegraph', category: 'crypto', url: 'https://cointelegraph.com/rss' },
@@ -849,10 +861,10 @@ async function fetchCryptoNewsUncached() {
       .slice(0, 15)
       .map(([, block]) => ({
         title: pick(block, 'title'),
-        link: pick(block, 'link'),
+        link: lienExterneSur(pick(block, 'link')),
         pubDate: pick(block, 'pubDate'),
         description: pick(block, 'description').replace(/<[^>]+>/g, '').slice(0, 220),
-        image: pickImage(block),
+        image: lienExterneSur(pickImage(block)),
         source: source.name,
         category: source.category,
       }))
