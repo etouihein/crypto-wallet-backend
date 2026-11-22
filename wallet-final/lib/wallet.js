@@ -840,8 +840,33 @@ async function signBitcoinSwapPsbt({ mnemonic, psbtHex }) {
   return { rawTx: psbt.extractTransaction().toHex() };
 }
 
+// Identifiant (hash) d'une transaction DEJA signee, calcule sur l'appareil
+// AVANT de la diffuser : si le serveur ne repond pas a temps, l'app peut
+// quand meme suivre la transaction (elle est peut-etre partie) au lieu
+// d'inviter a recommencer, ce qui pouvait faire payer deux fois.
+// EVM : hash de la transaction signee ; Solana : 1re signature en base58 ;
+// Bitcoin : txid. Renvoie null si la transaction est illisible.
+function hashLocalTransaction(rawTx, reseau) {
+  try {
+    if (typeof rawTx !== 'string' || !rawTx) return null;
+    if (reseau === 'bitcoin') return bitcoin.Transaction.fromHex(rawTx).getId();
+    if (reseau === 'solana') {
+      const octets = Buffer.from(rawTx, 'base64');
+      // octet 0 = nombre de signatures (forme courte < 128), puis 64 octets.
+      if (octets.length < 65 || octets[0] < 1 || octets[0] > 127) return null;
+      return ethers.utils.base58.encode(octets.subarray(1, 65));
+    }
+    // parseTransaction refuse ce qui n'est pas une transaction signee.
+    const tx = ethers.utils.parseTransaction(rawTx);
+    return tx.hash || null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   normalizeMnemonic,
+  hashLocalTransaction,
   NETWORKS,
   ERC20_TOKENS,
   NATIVE_PLACEHOLDER,

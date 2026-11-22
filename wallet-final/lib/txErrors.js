@@ -49,4 +49,16 @@ function humanizeTxError(err) {
   return raw;
 }
 
-module.exports = { humanizeTxError };
+// Diffusion d'une transaction signee : le serveur n'a PAS repondu (delai
+// depasse, connexion coupee, passerelle 502/504). La transaction a donc
+// PEUT-ETRE ete transmise au reseau. Dans ce cas, il ne faut surtout pas
+// dire « reessaie » : un second envoi serait une seconde transaction (EVM,
+// Solana), donc un double paiement.
+function diffusionIncertaine(err) {
+  if (!err || typeof err !== 'object') return false;
+  if (err.response) return err.response.status === 502 || err.response.status === 504;
+  if (['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK', 'ECONNRESET'].includes(err.code)) return true;
+  return err.isAxiosError === true;
+}
+
+module.exports = { humanizeTxError, diffusionIncertaine };
