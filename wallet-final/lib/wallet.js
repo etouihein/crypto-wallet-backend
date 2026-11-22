@@ -109,6 +109,30 @@ function getErc20Config(symbol, network = 'ethereum') {
   return ERC20_TOKENS[network]?.[symbol?.toUpperCase()] || null;
 }
 
+// Montant saisi -> unites entieres exactes (satoshis, lamports), SANS
+// virgule flottante. Refuse tout ce qui n'est pas un nombre propre : avant,
+// parseFloat("1,5") donnait 1 (on envoyait 1 BTC au lieu de 1,5),
+// parseFloat("0.001abc") donnait 0.001, et "1 000" donnait 1.
+function parseAmountUnits(value, decimals) {
+  let txt;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) throw new Error('Montant invalide.');
+    txt = value.toFixed(decimals).replace(/\.?0+$/, '') || '0';
+  } else if (typeof value === 'string') {
+    txt = value.trim();
+  } else {
+    throw new Error('Montant invalide.');
+  }
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(txt);
+  if (!m || (m[1] === '' && (m[2] || '') === '')) throw new Error('Montant invalide.');
+  const frac = m[2] || '';
+  if (frac.length > decimals) throw new Error(`Montant invalide : ${decimals} decimales au maximum.`);
+  return BigInt(m[1] || '0') * (10n ** BigInt(decimals)) + BigInt((frac + '0'.repeat(decimals)).slice(0, decimals) || '0');
+}
+
+// Sous ce seuil, le reseau Bitcoin refuse la sortie (poussiere).
+const BITCOIN_DUST_SATS = 546;
+
 // ── Génération / import — 100% local ────────────────────────────
 
 function createLocalWallet() {
@@ -472,7 +496,10 @@ async function signSolanaTransferTx({ mnemonic, to, amountSol }) {
   const keypair = solanaKeypairFromMnemonic(mnemonic);
   const connection = getSolanaConnection();
 
-  const lamports = Math.round(parseFloat(amountSol) * 1_000_000_000);
+  const lamportsExacts = parseAmountUnits(amountSol, 9);
+  if (lamportsExacts <= 0n) throw new Error('Montant invalide : il doit etre superieur a 0.');
+  if (lamportsExacts > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Montant invalide.');
+  const lamports = Number(lamportsExacts);
   const currentBalance = await connection.getBalance(keypair.publicKey);
   if (currentBalance < lamports) throw new Error('Fonds SOL insuffisants sur le wallet.');
 
@@ -724,7 +751,12 @@ async function signBitcoinTransferTx({ mnemonic, to, amountBtc }) {
   const keyPair = bitcoinKeyPairFromMnemonic(mnemonic);
   const { address: fromAddress, output: fromScript } = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(keyPair.publicKey), network: BITCOIN_NETWORK });
 
-  const amountSats = Math.round(parseFloat(amountBtc) * 1e8);
+  const satsExacts = parseAmountUnits(amountBtc, 8);
+  if (satsExacts < BigInt(BITCOIN_DUST_SATS)) {
+    throw new Error(`Montant trop faible : le reseau Bitcoin refuse les envois de moins de ${BITCOIN_DUST_SATS} satoshis (0,00000546 BTC).`);
+  }
+  if (satsExacts > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Montant invalide.');
+  const amountSats = Number(satsExacts);
   const utxos = await getBitcoinUtxos(fromAddress);
   const feeRate = await getBitcoinFeeRate();
 
@@ -850,4 +882,5 @@ module.exports = {
   signRawTx,
   signApproveTx,
   waitForTx,
+  parseAmountUnits,
 };
