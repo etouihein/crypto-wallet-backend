@@ -56,7 +56,7 @@ import * as defiPositions from './lib/defiPositions';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
-import { humanizeTxError } from './lib/txErrors';
+import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
@@ -5497,12 +5497,39 @@ function AppContent({ themeMode, changeTheme }) {
 
   // Étape 2 : déclenchée depuis l'écran de confirmation — c'est ici, et
   // seulement ici, que la transaction est vraiment signée et diffusée.
+  // Le serveur n'a pas repondu apres la signature : la transaction est
+  // PEUT-ETRE partie. Avant le 23/11/2026, l'app affichait « Le réseau ne
+  // répond pas — réessaie » : un second clic signait une NOUVELLE
+  // transaction (EVM, Solana) et l'utilisateur pouvait payer deux fois. On
+  // suit maintenant la transaction par son hash (calcule sur l'appareil),
+  // on ferme le formulaire et on demande de ne pas recommencer.
+  const alerteEnvoiIncertain = (rawTx, net, token, amount) => {
+    const hash = localWallet.hashLocalTransaction(rawTx, net === 'solana' || net === 'bitcoin' ? net : 'evm');
+    if (hash) trackTransaction({ txHash: hash, net, token, amount, kind: 'Envoi' });
+    playTone('error');
+    showAlert(
+      '⏳ Envoi peut-être parti',
+      `Le serveur n'a pas répondu à temps, mais ta transaction de ${amount} ${token} a peut-être DÉJÀ été envoyée.\n\nNE RECOMMENCE PAS tout de suite : tu risquerais de payer deux fois.${hash ? `\nTu seras prévenu dès qu'elle est confirmée.\nHash : ${hash.slice(0, 10)}…` : ''}\nVérifie ton solde et ton historique dans quelques minutes.`,
+      hash
+        ? [{ text: 'Copier Hash', onPress: () => copyToClipboard(hash, 'Hash copié'), style: 'default' }, { text: 'OK' }]
+        : [{ text: 'OK' }]
+    );
+    setShowSend(false);
+    setSendStep('form');
+    setSendAddress('');
+    setSendAmount('');
+    setSendFeeEstimate(null);
+  };
+
   const confirmAndSend = async () => {
     if (sendToken === 'SOL') {
       setSendLoading(true);
+      let rawTxSigne = null;
       try {
         const { rawTx } = await localWallet.signSolanaTransferTx({ mnemonic: unlockedMnemonic, to: sendAddress, amountSol: sendAmount });
+        rawTxSigne = rawTx;
         const response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+        rawTxSigne = null; // le serveur a répondu : plus d'incertitude
         if (!response.data?.success) throw new Error(response.data?.error || 'Échec du transfert');
 
         const txHash = response.data.txHash;
@@ -5533,8 +5560,12 @@ function AppContent({ themeMode, changeTheme }) {
         setSendAmount('');
         setSendFeeEstimate(null);
       } catch (e) {
-        playTone('error');
-        showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+        if (rawTxSigne && diffusionIncertaine(e)) {
+          alerteEnvoiIncertain(rawTxSigne, 'solana', 'SOL', sendAmount);
+        } else {
+          playTone('error');
+          showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+        }
       }
       setSendLoading(false);
       return;
@@ -5542,9 +5573,12 @@ function AppContent({ themeMode, changeTheme }) {
 
     if (sendToken === 'BTC') {
       setSendLoading(true);
+      let rawTxSigne = null;
       try {
         const { rawTx } = await localWallet.signBitcoinTransferTx({ mnemonic: unlockedMnemonic, to: sendAddress, amountBtc: sendAmount });
+        rawTxSigne = rawTx;
         const response = await axios.post(`${API_BASE}/tx/broadcast-bitcoin`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+        rawTxSigne = null; // le serveur a répondu : plus d'incertitude
         if (!response.data?.success) throw new Error(response.data?.error || 'Échec du transfert');
 
         const txHash = response.data.txHash;
@@ -5575,8 +5609,12 @@ function AppContent({ themeMode, changeTheme }) {
         setSendAmount('');
         setSendFeeEstimate(null);
       } catch (e) {
-        playTone('error');
-        showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+        if (rawTxSigne && diffusionIncertaine(e)) {
+          alerteEnvoiIncertain(rawTxSigne, 'bitcoin', 'BTC', sendAmount);
+        } else {
+          playTone('error');
+          showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+        }
       }
       setSendLoading(false);
       return;
@@ -5599,6 +5637,7 @@ function AppContent({ themeMode, changeTheme }) {
     const chosenGasPrice = sendFeeEstimate?.tiers?.[sendGasTier]?.gasPriceWei;
 
     setSendLoading(true);
+    let rawTxSigne = null;
     try {
       // Signature 100% locale — la clé privée ne quitte jamais l'appareil.
       // Le backend ne reçoit que la transaction déjà signée pour la relayer
@@ -5608,8 +5647,10 @@ function AppContent({ themeMode, changeTheme }) {
       const { rawTx } = isNative
         ? await localWallet.signNativeTx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, network, gasPrice: chosenGasPrice })
         : await localWallet.signErc20Tx({ privateKey: unlockedPrivateKey, to: sendAddress, amount: sendAmount, symbol: sendToken, network, gasPrice: chosenGasPrice });
+      rawTxSigne = rawTx;
 
       const response = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network }, { timeout: 25000, headers: API_HEADERS });
+      rawTxSigne = null; // le serveur a répondu : plus d'incertitude
       if (!response.data?.success) {
         throw new Error(response.data?.error || 'Échec du transfert');
       }
@@ -5644,8 +5685,12 @@ function AppContent({ themeMode, changeTheme }) {
       setSendFeeEstimate(null);
       fetchMarket();
     } catch (e) {
-      playTone('error');
-      showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+      if (rawTxSigne && diffusionIncertaine(e)) {
+        alerteEnvoiIncertain(rawTxSigne, network, sendToken, sendAmount);
+      } else {
+        playTone('error');
+        showAlert('❌ Erreur', humanizeTxError(e) || 'Transaction échouée');
+      }
     }
     setSendLoading(false);
   };
