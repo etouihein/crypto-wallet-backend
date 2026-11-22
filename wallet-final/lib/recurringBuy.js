@@ -55,7 +55,11 @@ async function scheduleReminder({ amountUsd, token, frequency }) {
       body: `C'est le moment de ton achat de ${amountUsd}€ en ${token} — appuie pour valider.`,
       data: { type: 'recurring-buy', amountUsd, token },
     },
-    trigger: { seconds, repeats: true },
+    // "type" obligatoire depuis expo-notifications 0.32 (SDK 54) : sans lui,
+    // scheduleNotificationAsync rejette le declencheur (TypeError) et aucun
+    // rappel n'etait jamais programme. 'timeInterval' =
+    // Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL.
+    trigger: { type: 'timeInterval', seconds, repeats: true },
   });
   await AsyncStorage.setItem(NOTIFICATION_ID_KEY, id);
   return id;
