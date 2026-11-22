@@ -14,7 +14,7 @@ const { Core } = require('@walletconnect/core');
 const { WalletKit } = require('@reown/walletkit');
 const { buildApprovedNamespaces } = require('@walletconnect/utils');
 const { ethers } = require('ethers');
-const { Linking } = require('react-native');
+const { Linking, Platform } = require('react-native');
 const { getProvider } = require('./wallet');
 
 const PROJECT_ID = (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID)
@@ -51,9 +51,31 @@ let walletKitInitPromise = null;
 // main sur leur onglet/appli (comme le fait MetaMask/Trust Wallet). Ce champ
 // est facultatif : silencieux si absent ou si l'ouverture échoue (jamais
 // affiché à l'utilisateur, ça ne doit jamais faire échouer l'approbation).
+//
+// SECURITE (22/11/2026) : cette adresse est fournie par la dApp elle-meme.
+// Avant, elle etait ouverte telle quelle : une dApp malveillante pouvait
+// faire ouvrir "javascript:..." (code execute sur nexiawallet.com dans la
+// version web), "data:", "file:"... Desormais : sur le web, https
+// seulement ; sur mobile, https ou le lien vers l'app de la dApp
+// ("uniswap://"), jamais un schema dangereux.
+const SCHEMAS_INTERDITS = new Set(['javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:', 'content:', 'intent:']);
+function lienRetourSur(url) {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  let p;
+  try { p = new URL(url.trim()); } catch { return null; }
+  const schema = p.protocol.toLowerCase();
+  if (schema === 'https:') return url.trim();
+  if (Platform && Platform.OS === 'web') return null;
+  if (SCHEMAS_INTERDITS.has(schema) || schema === 'http:') return null;
+  return /^[a-z][a-z0-9+.-]*:$/.test(schema) ? url.trim() : null;
+}
+
 function redirectToDappIfPossible(metadata) {
   try {
-    const url = metadata?.redirect?.native || metadata?.redirect?.universal;
+    const candidats = Platform && Platform.OS === 'web'
+      ? [metadata?.redirect?.universal, metadata?.redirect?.native]
+      : [metadata?.redirect?.native, metadata?.redirect?.universal];
+    const url = candidats.map(lienRetourSur).find(Boolean);
     if (!url) return;
     Linking.openURL(url).catch(() => { /* dApp non joignable, rien à faire */ });
   } catch { /* pas de Linking dispo (ex: web) ou métadonnées invalides */ }
