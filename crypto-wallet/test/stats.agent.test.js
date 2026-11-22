@@ -177,3 +177,16 @@ test('erreurs du calcul des revenus : transmises nettoyees (ni lien ni cle)', as
     assert.equal(d.indexeur.erreurs[0], 'Polygon native : Blockscout HTTP 403');
   } finally { server.close(); db.close(); }
 });
+
+test('GET /stats/agent : indique le mode du serveur et s il voit la vraie adresse des visiteurs', async () => {
+  for (const [envNode, trust, mode, ip] of [['production', 1, 'production', true], [undefined, false, 'developpement', false]]) {
+    const app = express();
+    if (trust) app.set('trust proxy', trust);
+    monterStats(app, creerCompteur(), { env: { STATS_TOKEN_SHA256: EMPREINTE, NODE_ENV: envNode }, getServices: () => null });
+    const { server, base } = await demarrer(app);
+    try {
+      const d = await (await fetch(`${base}/stats/agent`, { headers: { authorization: `Bearer ${JETON}` } })).json();
+      assert.deepEqual(d.serveur, { mode, ip_reelle_visiteurs: ip });
+    } finally { server.close(); }
+  }
+});
