@@ -149,3 +149,40 @@ test('listes de methodes : eth_sign jamais relaye, aucune signature en "lecture 
   }
   for (const m of READ_ONLY_METHODS) assert.equal(CONFIRMATION_METHODS.has(m), false, m);
 });
+
+// ── Origine de confiance (trustedDappOrigin, utilisee par App.js) ──
+// Une page sans origine HTTPS ne doit jamais pouvoir se connecter : toutes
+// les pages data:/about:blank partagent l'origine "null".
+const { trustedDappOrigin } = require('../lib/dappBrowserProvider');
+
+test('origine de confiance : une page HTTPS garde son origine exacte', () => {
+  assert.equal(trustedDappOrigin('https://app.uniswap.org/swap?x=1'), 'https://app.uniswap.org');
+  assert.equal(trustedDappOrigin('https://app.uniswap.org:8443/'), 'https://app.uniswap.org:8443');
+  assert.equal(trustedDappOrigin('HTTPS://App.Uniswap.org/'), 'https://app.uniswap.org');
+});
+
+test('origine de confiance : data:, about:blank, blob:, file:, javascript: sont refusees', () => {
+  for (const url of [
+    'data:text/html,<script>alert(1)</script>',
+    'about:blank',
+    'blob:https://app.uniswap.org/1234-5678',
+    'file:///sdcard/page.html',
+    'javascript:alert(1)',
+  ]) {
+    assert.equal(trustedDappOrigin(url), '', url);
+  }
+});
+
+test('origine de confiance : HTTP (apres une redirection) et adresses invalides sont refusees', () => {
+  assert.equal(trustedDappOrigin('http://app.uniswap.org'), '');
+  assert.equal(trustedDappOrigin(''), '');
+  assert.equal(trustedDappOrigin(undefined), '');
+  assert.equal(trustedDappOrigin('pas une url'), '');
+});
+
+test('origine de confiance : deux pages data: differentes ne partagent jamais une autorisation', () => {
+  const a = trustedDappOrigin('data:text/html,page-a');
+  const b = trustedDappOrigin('data:text/html,page-b');
+  const autorisees = [a].filter(Boolean); // App.js n'enregistre jamais une origine vide
+  assert.equal(autorisees.includes(b) && Boolean(b), false);
+});

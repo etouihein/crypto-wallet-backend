@@ -156,4 +156,22 @@ true;
 `;
 }
 
-module.exports = { buildInjectedProvider, READ_ONLY_METHODS, CONFIRMATION_METHODS };
+// Origine de confiance d'une page du navigateur dApp, calculee cote natif a
+// partir de l'URL reelle suivie par la WebView (voir dappTrustedOrigin dans
+// App.js). Seule une page HTTPS a une origine qui l'identifie vraiment :
+// data:, about:blank, blob:, file:... ont toutes l'origine "null", si bien
+// qu'une page "null" autorisee une fois l'aurait ete pour toutes les autres
+// (une page piegee ouverte ensuite aurait vu l'adresse sans rien demander).
+// HTTP est deja refuse a l'ouverture, mais une redirection peut y mener.
+// Renvoie '' quand la page ne doit pas pouvoir se connecter au wallet.
+function trustedDappOrigin(url) {
+  try {
+    const u = new URL(url || '');
+    if (u.protocol !== 'https:' || !u.hostname || u.origin === 'null') return '';
+    return u.origin;
+  } catch {
+    return '';
+  }
+}
+
+module.exports = { buildInjectedProvider, trustedDappOrigin, READ_ONLY_METHODS, CONFIRMATION_METHODS };

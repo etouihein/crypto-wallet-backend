@@ -44,7 +44,7 @@ import * as Font from 'expo-font';
 Font.loadAsync({ Ionicons: require('./assets/fonts/Ionicons.ttf') });
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
-import { buildInjectedProvider } from './lib/dappBrowserProvider';
+import { buildInjectedProvider, trustedDappOrigin } from './lib/dappBrowserProvider';
 import { simulateTransaction, decodeKnownCall, analyzeTypedData } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
@@ -4517,9 +4517,13 @@ function AppContent({ themeMode, changeTheme }) {
   // suivie par la WebView (`dappDisplayUrl`, mis à jour par
   // `onNavigationStateChange` — un événement natif qu'une page ne peut pas
   // falsifier), et on ignore complètement `msg.origin`.
-  const dappTrustedOrigin = useCallback(() => {
-    try { return new URL(dappDisplayUrl || dappCurrentUrl || '').origin; } catch { return ''; }
-  }, [dappDisplayUrl, dappCurrentUrl]);
+  // Seules les pages HTTPS ont une origine fiable : une page data: ou
+  // about:blank vaut "null" (partagee par toutes ces pages) -> '' et refus
+  // (voir trustedDappOrigin dans lib/dappBrowserProvider.js).
+  const dappTrustedOrigin = useCallback(
+    () => trustedDappOrigin(dappDisplayUrl || dappCurrentUrl || ''),
+    [dappDisplayUrl, dappCurrentUrl],
+  );
 
   const handleDappMessage = useCallback((event) => {
     let msg;
@@ -4535,7 +4539,12 @@ function AppContent({ themeMode, changeTheme }) {
       return dappBridgeRespond(id, null, String(localWallet.getNetworkConfig(network).chainId));
     }
     if (method === 'eth_accounts') {
-      return dappBridgeRespond(id, null, dappConnectedOrigins.includes(origin) && walletAddr ? [walletAddr] : []);
+      return dappBridgeRespond(id, null, origin && dappConnectedOrigins.includes(origin) && walletAddr ? [walletAddr] : []);
+    }
+    // Page sans origine HTTPS (data:, about:blank, http:...) : aucune
+    // connexion, signature ni transaction, sans meme ouvrir la modale.
+    if (!origin) {
+      return dappBridgeRespond(id, "Cette page n'a pas d'adresse web sécurisée (HTTPS) : NexiaWallet refuse de s'y connecter.", null);
     }
     // eth_requestAccounts / personal_sign / eth_signTypedData(_v4)
     // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
