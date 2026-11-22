@@ -5776,6 +5776,25 @@ function AppContent({ themeMode, changeTheme }) {
     });
   };
 
+  // Échange signé, serveur muet (délai dépassé, connexion coupée, 502/504) :
+  // la transaction est PEUT-ÊTRE partie. Avant le 23/11/2026, l'app affichait
+  // « Le réseau ne répond pas — réessaie » : un second clic signait un second
+  // échange (double dépense). Désormais on suit la transaction par son hash
+  // calculé sur l'appareil et on dit de NE PAS recommencer.
+  const alerteEchangeIncertain = (rawTx, net, confirm) => {
+    const hash = localWallet.hashLocalTransaction(rawTx, net === 'solana' || net === 'bitcoin' ? net : 'evm');
+    if (hash) trackTransaction({ txHash: hash, net, token: confirm.fromSymbol, amount: confirm.fromAmount, kind: 'Échange' });
+    playTone('error');
+    showAlert(
+      '⏳ Échange peut-être parti',
+      `Le serveur n'a pas répondu à temps, mais ton échange de ${confirm.fromAmount} ${confirm.fromSymbol} → ${confirm.toSymbol} a peut-être DÉJÀ été envoyé.\n\nNE RECOMMENCE PAS tout de suite : tu risquerais d'échanger deux fois.${hash ? `\nTu seras prévenu dès qu'il est confirmé.\nHash : ${hash.slice(0, 10)}…` : ''}\nVérifie ton solde et ton historique dans quelques minutes.`,
+      hash
+        ? [{ text: 'Copier Hash', onPress: () => copyToClipboard(hash, 'Hash copié'), style: 'default' }, { text: 'OK' }]
+        : [{ text: 'OK' }]
+    );
+    setSwapAmt('');
+  };
+
   const executeCrossFromQuote = async (confirm) => {
     const { quote, ecosystemeDepart, tx } = confirm;
     let rawTx;
@@ -5807,7 +5826,13 @@ function AppContent({ themeMode, changeTheme }) {
       routeDiffusion = '/tx/broadcast';
       corps = { rawTx, network: confirm.fromNetwork };
     }
-    const diffusion = await axios.post(`${API_BASE}${routeDiffusion}`, corps, { timeout: 25000, headers: API_HEADERS });
+    let diffusion;
+    try {
+      diffusion = await axios.post(`${API_BASE}${routeDiffusion}`, corps, { timeout: 25000, headers: API_HEADERS });
+    } catch (e) {
+      if (diffusionIncertaine(e)) { alerteEchangeIncertain(rawTx, ecosystemeDepart === 'evm' ? confirm.fromNetwork : ecosystemeDepart, confirm); return; }
+      throw e;
+    }
     if (!diffusion.data?.success) throw new Error(diffusion.data?.error || "Échec de la diffusion de l'échange.");
     const txHash = diffusion.data.txHash;
     trackTransaction({ txHash, net: confirm.fromNetwork, token: confirm.fromSymbol, amount: confirm.fromAmount, kind: 'Échange' });
@@ -5919,7 +5944,13 @@ function AppContent({ themeMode, changeTheme }) {
       gasLimit: quote.transaction.gas,
       network,
     });
-    const swapResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: swapRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+    let swapResp;
+    try {
+      swapResp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx: swapRawTx, network }, { timeout: 25000, headers: API_HEADERS });
+    } catch (e) {
+      if (diffusionIncertaine(e)) { alerteEchangeIncertain(swapRawTx, network, confirm); return; }
+      throw e;
+    }
     if (!swapResp.data?.success) {
       throw new Error(swapResp.data?.error || 'Échec du swap.');
     }
