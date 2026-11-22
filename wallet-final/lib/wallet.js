@@ -120,21 +120,39 @@ function createLocalWallet() {
   };
 }
 
+// Forme standard d'une phrase de recuperation : minuscules, mots separes
+// par un seul espace (tout blanc Unicode : espace insecable, tabulation,
+// retour a la ligne).
+function normalizeMnemonic(value) {
+  return String(value || '').normalize('NFKD').toLowerCase().split(/\s+/u).filter(Boolean).join(' ');
+}
+
 function importLocalWallet(value, type) {
   const trimmed = (value || '').trim();
   if (!trimmed) throw new Error('Mnémonique ou clé privée requise.');
 
   let wallet;
+  let phrase = null;
   if (type === 'privateKey') {
     const pk = trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
     wallet = new ethers.Wallet(pk);
   } else {
-    wallet = ethers.Wallet.fromMnemonic(trimmed.toLowerCase());
+    // Phrase COLLEE (notes, gestionnaire de mots de passe...) : espaces en
+    // double, retours a la ligne, tabulations, majuscules. On la ramene a sa
+    // forme standard (mots en minuscules separes par UN espace) AVANT tout
+    // calcul. Avant le 22/11/2026, ethers la nettoyait pour l'adresse EVM,
+    // mais la phrase brute etait enregistree puis utilisee telle quelle pour
+    // Solana et Bitcoin : un espace en trop donnait d'AUTRES adresses que
+    // dans Phantom ou tout autre wallet, et un retour a la ligne faisait
+    // echouer l'import. Les phrases deja enregistrees ne sont pas
+    // recalculees (leurs adresses ne changent pas).
+    phrase = normalizeMnemonic(trimmed);
+    wallet = ethers.Wallet.fromMnemonic(phrase);
   }
 
   return {
     address: wallet.address,
-    mnemonic: type === 'mnemonic' ? trimmed.toLowerCase() : null,
+    mnemonic: phrase,
     privateKey: wallet.privateKey,
   };
 }
@@ -773,6 +791,7 @@ async function signBitcoinSwapPsbt({ mnemonic, psbtHex }) {
 }
 
 module.exports = {
+  normalizeMnemonic,
   NETWORKS,
   ERC20_TOKENS,
   NATIVE_PLACEHOLDER,
