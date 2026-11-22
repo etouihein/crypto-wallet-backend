@@ -256,7 +256,15 @@ function monterStats(app, compteur, { env = process.env, getServices, now = () =
       revenus = { disponible: false, raison: 'erreur de lecture des revenus' };
     }
     res.set('Cache-Control', 'no-store');
-    res.json({ genere_le: new Date(nowMs).toISOString(), requetes: compteur.resume(), ...revenus });
+    // Reglage du serveur a surveiller : hors mode production, ou sans
+    // "trust proxy", le serveur ne voit que l'adresse du relais Railway, pas
+    // celle des visiteurs -> limites anti-abus partagees par TOUS les
+    // visiteurs, et adresse fausse envoyee a Coinbase. Rien de secret ici.
+    const serveur = {
+      mode: env.NODE_ENV === 'production' ? 'production' : 'developpement',
+      ip_reelle_visiteurs: Boolean(req.app && req.app.get('trust proxy')),
+    };
+    res.json({ genere_le: new Date(nowMs).toISOString(), serveur, requetes: compteur.resume(), ...revenus });
   });
   app.use('/stats', router);
   return true;
