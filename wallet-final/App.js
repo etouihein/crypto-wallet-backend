@@ -57,11 +57,12 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError } from './lib/txErrors';
-import { LEGAL_DOCS, LANDING_FAQ } from './lib/contenus';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
+// Documents legaux et FAQ de l'accueil (textes longs) : lib/contenus.js
+import { LEGAL_DOCS, LANDING_FAQ } from './lib/contenus';
 import { ethers } from 'ethers';
 import { pbkdf2 } from '@ethersproject/pbkdf2';
 // react-native-webview n'a pas d'implémentation web (pas de fichier .web.*
