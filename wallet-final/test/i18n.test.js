@@ -123,3 +123,19 @@ test('langue de depart : francais si l\'appareil est en francais, anglais sinon'
     else delete globalThis.navigator;
   }
 });
+
+test('une cle ou une langue au nom "piege" (toString, constructor...) renvoie toujours un texte', () => {
+  // Avant : la cle etait lue sur le prototype de l'objet, translate()
+  // renvoyait une fonction (affichee comme du code) et plantait des qu'on
+  // lui passait des variables (text.replace n'existe pas sur une fonction).
+  for (const cle of ['toString', 'constructor', 'hasOwnProperty', '__proto__', 'valueOf']) {
+    for (const langue of ['fr', 'en', 'de']) {
+      assert.equal(translate(langue, cle), cle, `${langue}/${cle}`);
+      assert.equal(translate(langue, cle, { n: 1 }), cle, `${langue}/${cle} avec variables`);
+    }
+  }
+  // Langue au nom piege : repli sur le francais comme une langue inconnue.
+  const cleFr = Object.keys(DICTIONARIES.fr)[0];
+  assert.equal(translate('constructor', cleFr), DICTIONARIES.fr[cleFr]);
+  assert.equal(translate('__proto__', cleFr), DICTIONARIES.fr[cleFr]);
+});
