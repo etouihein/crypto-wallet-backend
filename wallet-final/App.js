@@ -5322,7 +5322,22 @@ function AppContent({ themeMode, changeTheme }) {
         gasLimit: ethers.BigNumber.from(tx.gasLimit || '0x0').toString(),
         network: bridgeFromNetwork,
       });
-      const resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
+      let resp;
+      try {
+        resp = await axios.post(`${API_BASE}/tx/broadcast`, { rawTx, network: bridgeFromNetwork }, { timeout: 25000, headers: API_HEADERS });
+      } catch (e) {
+        if (!diffusionIncertaine(e)) throw e;
+        // Serveur muet après la signature : le pont est PEUT-ÊTRE parti.
+        // Avant le 23/11/2026, l'app affichait « réessaie » : un second clic
+        // signait un second pont (double dépense). On suit la transaction.
+        const hash = localWallet.hashLocalTransaction(rawTx, 'evm');
+        if (hash) trackTransaction({ txHash: hash, net: bridgeFromNetwork, token: ({ bsc: 'BNB', polygon: 'MATIC' }[bridgeFromNetwork] || 'ETH'), amount: bridgeAmount, kind: 'Pont' });
+        showAlert('⏳ Pont peut-être envoyé', `Le serveur n'a pas répondu à temps, mais ton pont de ${bridgeAmount} a peut-être DÉJÀ été envoyé.\n\nNE RECOMMENCE PAS tout de suite : tu risquerais de payer deux fois.${hash ? `\nHash : ${hash.slice(0, 10)}…` : ''}\nVérifie ton solde dans quelques minutes.`, [{ text: 'OK' }]);
+        setShowBridge(false);
+        setBridgeQuote(null);
+        setBridgeAmount('');
+        return;
+      }
       if (!resp.data?.success) throw new Error(resp.data?.error || 'Échec de la diffusion.');
       etape('bridge_envoye');
       // Confirmation du DÉPART sur le réseau d'origine. L'arrivée sur l'autre
