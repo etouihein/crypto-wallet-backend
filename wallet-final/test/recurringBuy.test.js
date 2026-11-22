@@ -40,6 +40,7 @@ const fauxNotifications = {
     return id;
   },
   cancelScheduledNotificationAsync: async (id) => { etat.annulees.push(id); planifiees.delete(id); },
+  getAllScheduledNotificationsAsync: async () => [...planifiees].map(([identifier, n]) => ({ identifier, ...n })),
 };
 
 function remplacerModule(nom, exportsFaux) {
@@ -118,4 +119,42 @@ test('getConfig / saveConfig : aller-retour, et stockage abime = null', async ()
   assert.deepEqual(await recurringBuy.getConfig(), config);
   memoire.set('wallet-pro-recurring-buy-v1', '{pas du json');
   assert.equal(await recurringBuy.getConfig(), null);
+});
+
+test('frequence "toString" (entree du prototype) = hebdomadaire, jamais une fonction', async () => {
+  remiseAZero();
+  const id = await recurringBuy.scheduleReminder({ amountUsd: 5, token: 'ETH', frequency: 'toString' });
+  assert.equal(planifiees.get(id).trigger.seconds, 7 * 24 * 60 * 60);
+});
+
+test('stockage en panne : le rappel est quand meme planifie, sans plantage', async () => {
+  remiseAZero();
+  const { setItem, removeItem } = fauxStockage;
+  fauxStockage.setItem = async () => { throw new Error('stockage plein'); };
+  fauxStockage.removeItem = async () => { throw new Error('stockage plein'); };
+  try {
+    const id = await recurringBuy.scheduleReminder({ amountUsd: 10, token: 'ETH', frequency: 'weekly' });
+    assert.equal(id, 'notif-1');
+    assert.equal(planifiees.size, 1);
+    await recurringBuy.cancelReminder(); // ne plante pas non plus
+  } finally {
+    fauxStockage.setItem = setItem;
+    fauxStockage.removeItem = removeItem;
+  }
+});
+
+test('id perdu : replanifier annule quand meme l ancien rappel (pas de double rappel)', async () => {
+  remiseAZero();
+  await recurringBuy.scheduleReminder({ amountUsd: 10, token: 'ETH', frequency: 'weekly' });
+  memoire.delete(CLE_ID); // id perdu (stockage efface, echec d'ecriture...)
+  const second = await recurringBuy.scheduleReminder({ amountUsd: 12, token: 'ETH', frequency: 'weekly' });
+  assert.deepEqual([...planifiees.keys()], [second]);
+});
+
+test('annulation : les autres notifications de l app (alertes de prix) ne sont pas touchees', async () => {
+  remiseAZero();
+  planifiees.set('alerte-prix', { content: { data: { type: 'price-alert' } }, trigger: null });
+  await recurringBuy.scheduleReminder({ amountUsd: 10, token: 'ETH', frequency: 'weekly' });
+  await recurringBuy.cancelReminder();
+  assert.deepEqual([...planifiees.keys()], ['alerte-prix']);
 });

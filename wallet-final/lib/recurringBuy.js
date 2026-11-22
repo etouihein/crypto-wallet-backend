@@ -34,12 +34,25 @@ async function saveConfig(config) {
   try { await AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* rien à faire */ }
 }
 
+// Annule le rappel : celui dont l'id est garde, ET tout rappel "achat
+// recurrent" encore planifie sur l'appareil (si l'id avait ete perdu, par
+// exemple stockage plein au moment de l'enregistrer, l'ancien rappel
+// continuait sinon a sonner en plus du nouveau). Ne plante jamais : un
+// stockage ou des notifications indisponibles ne bloquent pas la suite.
 async function cancelReminder() {
   try {
     const id = await AsyncStorage.getItem(NOTIFICATION_ID_KEY);
     if (id) await Notifications.cancelScheduledNotificationAsync(id);
   } catch { /* pas grave si déjà annulée/inexistante */ }
-  await AsyncStorage.removeItem(NOTIFICATION_ID_KEY);
+  try {
+    const planifiees = await Notifications.getAllScheduledNotificationsAsync();
+    for (const n of Array.isArray(planifiees) ? planifiees : []) {
+      if (n?.content?.data?.type === 'recurring-buy' && n.identifier) {
+        await Notifications.cancelScheduledNotificationAsync(n.identifier);
+      }
+    }
+  } catch { /* liste indisponible : l'annulation par id ci-dessus suffit */ }
+  try { await AsyncStorage.removeItem(NOTIFICATION_ID_KEY); } catch { /* rien à faire */ }
 }
 
 // Planifie (ou replanifie) le rappel local. Retourne l'id de notification,
@@ -48,7 +61,10 @@ async function scheduleReminder({ amountUsd, token, frequency }) {
   await cancelReminder();
   const { status } = await Notifications.requestPermissionsAsync();
   if (status !== 'granted') return null;
-  const seconds = FREQUENCY_SECONDS[frequency] || FREQUENCY_SECONDS.weekly;
+  // Entree PROPRE seulement ("toString" ne doit pas donner une fonction).
+  const seconds = Object.prototype.hasOwnProperty.call(FREQUENCY_SECONDS, frequency)
+    ? FREQUENCY_SECONDS[frequency]
+    : FREQUENCY_SECONDS.weekly;
   const id = await Notifications.scheduleNotificationAsync({
     content: {
       title: '💰 Achat récurrent NexiaWallet',
@@ -61,7 +77,10 @@ async function scheduleReminder({ amountUsd, token, frequency }) {
     // Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL.
     trigger: { type: 'timeInterval', seconds, repeats: true },
   });
-  await AsyncStorage.setItem(NOTIFICATION_ID_KEY, id);
+  // Le rappel est planifie : un echec d'enregistrement de son id ne doit
+  // pas faire croire a l'utilisateur que ca a rate (cancelReminder le
+  // retrouve de toute facon par son type).
+  try { await AsyncStorage.setItem(NOTIFICATION_ID_KEY, id); } catch { /* rien à faire */ }
   return id;
 }
 
