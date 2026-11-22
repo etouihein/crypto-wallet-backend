@@ -364,11 +364,20 @@ function buildMoonPaySellUrl({ currencyCode, refundWalletAddress, baseCurrencyAm
 // Clé distincte de MOONPAY_SECRET_KEY — dashboard.moonpay.com > Developers > Webhooks.
 const MOONPAY_WEBHOOK_KEY = (process.env.MOONPAY_WEBHOOK_KEY || '').trim();
 
+const MOONPAY_WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
+
 function verifyMoonPayWebhook(req) {
   const header = req.header('moonpay-signature-v2');
   const match = header && /t=([^,]+),s=(.+)/.exec(header);
   if (!match) return false;
   const [, timestamp, signature] = match;
+  // Fraicheur du message (recommandation MoonPay) : sans elle, un vrai
+  // message intercepte pouvait etre rejoue indefiniment. 5 minutes d'ecart
+  // tolerees dans les deux sens (horloges) ; date en secondes ou en ms.
+  const t = Number(timestamp);
+  if (!Number.isFinite(t)) return false;
+  const tMs = t > 1e12 ? t : t * 1000;
+  if (Math.abs(Date.now() - tMs) > MOONPAY_WEBHOOK_TOLERANCE_MS) return false;
   const signedPayload = `${timestamp}.${req.rawBody || ''}`;
   const expected = crypto.createHmac('sha256', MOONPAY_WEBHOOK_KEY).update(signedPayload).digest('hex');
   try {
