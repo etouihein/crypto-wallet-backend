@@ -695,6 +695,24 @@ async function getBitcoinFeeRate() {
   }
 }
 
+// Montant maximum envoyable en BTC (bouton MAX) : tout le solde moins les
+// frais, calcules EXACTEMENT comme signBitcoinTransferTx (toutes les entrees,
+// 2 sorties), avec 1 sat/vB de marge si les frais montent entre le clic et
+// l'envoi. Avant le 22/11/2026, MAX mettait le solde entier : l'envoi
+// echouait toujours ("Fonds BTC insuffisants (montant + frais reseau)").
+// Renvoie 0 si le solde ne couvre pas les frais + le minimum du reseau.
+async function getBitcoinMaxSendable(mnemonic) {
+  const keyPair = bitcoinKeyPairFromMnemonic(mnemonic);
+  const { address } = bitcoin.payments.p2wpkh({ pubkey: Buffer.from(keyPair.publicKey), network: BITCOIN_NETWORK });
+  const utxos = await getBitcoinUtxos(address);
+  if (!Array.isArray(utxos) || !utxos.length) return 0;
+  const feeRate = (await getBitcoinFeeRate()) + 1;
+  const totalSats = utxos.reduce((sum, u) => sum + u.value, 0);
+  const feeSats = Math.ceil((10 + utxos.length * 68 + 2 * 31) * feeRate);
+  const maxSats = totalSats - feeSats;
+  return maxSats >= 546 ? maxSats / 1e8 : 0;
+}
+
 // Construit + signe un transfert BTC natif (P2WPKH) en local ; retourne une
 // transaction sérialisée en hex, diffusée ensuite par le backend (POST
 // /wallet/tx/broadcast-bitcoin) exactement comme un rawTx EVM/Solana.
@@ -817,6 +835,7 @@ module.exports = {
   getBitcoinAddress,
   isValidBitcoinAddress,
   getBitcoinBalance,
+  getBitcoinMaxSendable,
   getBitcoinTxStatus,
   signBitcoinTransferTx,
   getBitcoinFeeRate,
