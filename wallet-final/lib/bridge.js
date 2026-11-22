@@ -23,8 +23,11 @@ const axios = require('axios');
 const CHAIN_IDS = { ethereum: 1, arbitrum: 42161, optimism: 10, base: 8453 };
 
 async function getBridgeQuote({ fromNetwork, toNetwork, fromAddress, amountWei, apiBase, apiHeaders }) {
-  const fromChain = CHAIN_IDS[fromNetwork];
-  const toChain = CHAIN_IDS[toNetwork];
+  // Lecture d'une entree PROPRE a CHAIN_IDS : sinon "toString" ou
+  // "constructor" etaient lus sur le prototype et passaient le controle.
+  const chainOf = (n) => (Object.prototype.hasOwnProperty.call(CHAIN_IDS, n) ? CHAIN_IDS[n] : undefined);
+  const fromChain = chainOf(fromNetwork);
+  const toChain = chainOf(toNetwork);
   if (!fromChain || !toChain) throw new Error('Réseau non supporté pour le pont.');
   if (fromChain === toChain) throw new Error('Choisis deux réseaux différents.');
 
