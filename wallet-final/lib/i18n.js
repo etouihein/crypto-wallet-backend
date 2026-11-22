@@ -646,13 +646,18 @@ const DICTIONARIES = { fr, en, es, de, pt };
 // (Stats, documents légaux...) reste en 'fr-FR' pour cette phase.
 const INTL_LOCALE_TAG = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', de: 'de-DE', pt: 'pt-PT' };
 
+// Lecture d'une entree PROPRE a l'objet : sans ce garde-fou, une cle comme
+// "toString" ou "constructor" etait lue sur le prototype et translate()
+// renvoyait une fonction au lieu d'un texte.
+const own = (obj, k) => (Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : undefined);
+
 function translate(locale, key, vars) {
-  const dict = DICTIONARIES[locale] || DICTIONARIES.fr;
+  const dict = own(DICTIONARIES, locale) || DICTIONARIES.fr;
   // Hors français, une clé pas encore traduite (es/de/pt sont partiels)
   // retombe d'abord sur l'anglais : pour un visiteur étranger, un texte en
   // anglais reste lisible, un texte en français non.
-  const englishFallback = locale === 'fr' ? undefined : DICTIONARIES.en[key];
-  let text = dict[key] ?? englishFallback ?? DICTIONARIES.fr[key] ?? key;
+  const englishFallback = locale === 'fr' ? undefined : own(DICTIONARIES.en, key);
+  let text = own(dict, key) ?? englishFallback ?? own(DICTIONARIES.fr, key) ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
       // Fonction de remplacement (et non la valeur directement) : sinon un
