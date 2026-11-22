@@ -43,6 +43,9 @@ const num = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim().length > 0;
+// Entree PROPRE d'un objet de reference ("toString", "constructor"...
+// ne doivent jamais etre lus sur le prototype).
+const own = (obj, k) => (Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : undefined);
 
 // ── 1. Historique de solde ──────────────────────────────────────────
 //  Entrées :
@@ -252,7 +255,7 @@ const GAS_THRESHOLDS_GWEI = {
 function classifyGasPrice(gasPriceGwei, network) {
   const gwei = num(gasPriceGwei);
   if (gwei === null || gwei < 0) return null;
-  const threshold = (GAS_THRESHOLDS_GWEI[network] || GAS_THRESHOLDS_GWEI.default).high;
+  const threshold = (own(GAS_THRESHOLDS_GWEI, network) || GAS_THRESHOLDS_GWEI.default).high;
   if (gwei >= threshold * 3) return 'tres-eleve';
   if (gwei >= threshold) return 'eleve';
   return 'normal';
@@ -275,7 +278,7 @@ const HISTORY_LABELS = {
 };
 
 function historyLabel(type, fallback) {
-  if (isNonEmptyString(type) && HISTORY_LABELS[type]) return HISTORY_LABELS[type];
+  if (isNonEmptyString(type) && own(HISTORY_LABELS, type)) return HISTORY_LABELS[type];
   return isNonEmptyString(fallback) ? fallback : HISTORY_LABELS.unknown;
 }
 
@@ -316,23 +319,31 @@ function isValidAddressForNetwork(address, network) {
 // Fonctions pures sur la liste (l'UI gère le state, le stockage suit).
 // Une entrée : { label, address, network }. Déduplication sur
 // (network, address en minuscules pour l'EVM) — un doublon remplace.
+// Une entree lisible du carnet (le stockage peut contenir n'importe quoi
+// apres une ancienne version ou une ecriture ratee : null, texte...). Les
+// entrees illisibles sont ignorees au lieu de faire planter l'ecran d'envoi.
+const entreeLisible = (e) => Boolean(e) && typeof e === 'object' && typeof e.address === 'string' && typeof e.network === 'string';
+
 function addAddressBookEntry(list, entry) {
-  const current = Array.isArray(list) ? list : [];
-  if (!entry || !isNonEmptyString(entry.label) || !isNonEmptyString(entry.network)) return current;
-  if (!isValidAddressForNetwork(entry.address, entry.network)) return current;
+  // Entree refusee : liste rendue telle quelle (l'ecran compare les longueurs
+  // pour afficher "Adresse invalide").
+  const original = Array.isArray(list) ? list : [];
+  if (!entry || !isNonEmptyString(entry.label) || !isNonEmptyString(entry.network)) return original;
+  if (!isValidAddressForNetwork(entry.address, entry.network)) return original;
+  const current = original.filter(entreeLisible);
   const key = (a, n) => `${n}:${n === 'solana' || n === 'bitcoin' ? a : String(a).toLowerCase()}`;
   const next = current.filter((e) => key(e.address, e.network) !== key(entry.address, entry.network));
   return [...next, { label: entry.label.trim(), address: entry.address.trim(), network: entry.network }];
 }
 
 function removeAddressBookEntry(list, address, network) {
-  const current = Array.isArray(list) ? list : [];
+  const current = Array.isArray(list) ? list.filter(entreeLisible) : [];
   const target = `${network}:${network === 'solana' || network === 'bitcoin' ? address : String(address).toLowerCase()}`;
   return current.filter((e) => `${e.network}:${e.network === 'solana' || e.network === 'bitcoin' ? e.address : String(e.address).toLowerCase()}` !== target);
 }
 
 function findAddressBookEntry(list, address, network) {
-  const current = Array.isArray(list) ? list : [];
+  const current = Array.isArray(list) ? list.filter(entreeLisible) : [];
   return current.find((e) => e.network === network
     && (network === 'solana' || network === 'bitcoin'
       ? e.address === address
