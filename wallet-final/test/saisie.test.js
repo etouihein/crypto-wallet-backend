@@ -57,3 +57,39 @@ test('montant de swap -> unites exactes du token, sans bruit de virgule flottant
   }
   assert.throws(() => montantEnUnites('1', -1), /Montant invalide/);
 });
+
+test('envoi : montant venant du mode euros ou des boutons 25/50/75 % accepte a la signature', () => {
+  const { montantVersTexte, decimalesEnvoi } = require('../lib/saisie');
+  const { parseAmountUnits } = require('../lib/wallet');
+  const { ethers } = require('ethers');
+  // Avant le 23/11/2026 l'app ecrivait String(nombre) : trop de decimales.
+  const cas = [
+    ['BTC', 50 / 0.92 / 91000, (t) => parseAmountUnits(t, 8)],
+    ['BTC', 0.0000123 * 0.75, (t) => parseAmountUnits(t, 8)],
+    ['SOL', 20 / 0.92 / 137.3, (t) => parseAmountUnits(t, 9)],
+    ['USDC', 20 / 0.92 / 1, (t) => ethers.utils.parseUnits(t, 6)],
+    ['USDT', 10.123457 * 0.25, (t) => ethers.utils.parseUnits(t, 6)],
+    ['ETH', 1.1 * 0.75, (t) => ethers.utils.parseEther(t)],
+    ['ETH', 0.00000012345 * 0.5, (t) => ethers.utils.parseEther(t)],
+  ];
+  for (const [jeton, valeur, signer] of cas) {
+    const texte = montantVersTexte(valeur, decimalesEnvoi(jeton));
+    assert.doesNotThrow(() => signer(texte), `${jeton} ${texte}`);
+    assert.ok(Number(texte) <= valeur && Number(texte) > 0, `${jeton} ${texte} jamais au-dessus`);
+  }
+  // Le probleme d'origine existe bien : String() donne un texte refuse.
+  assert.throws(() => parseAmountUnits(String(50 / 0.92 / 91000), 8));
+  assert.throws(() => ethers.utils.parseUnits(String(10.123457 * 0.25), 6));
+  assert.equal(decimalesEnvoi('BTC'), 8);
+  assert.equal(decimalesEnvoi('SOL'), 9);
+  assert.equal(decimalesEnvoi('USDC'), 6);
+  assert.equal(decimalesEnvoi('BNB'), 18);
+});
+
+test("App.js : le mode euros et les boutons 25/50/75 % n'ecrivent plus String(nombre)", () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'App.js'), 'utf8');
+  assert.doesNotMatch(src, /setSendAmount\(cryptoVal \? String\(cryptoVal\)/);
+  assert.doesNotMatch(src, /setSendCryptoAmount\(String\(sendableBalance \* pct\)\)/);
+  assert.match(src, /montantVersTexte\(cryptoVal, decimalesEnvoi\(sendToken\)\)/);
+  assert.match(src, /montantVersTexte\(sendableBalance \* pct, decimalesEnvoi\(sendToken\)\)/);
+});
