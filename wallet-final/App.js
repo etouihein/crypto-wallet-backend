@@ -57,7 +57,7 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError } from './lib/txErrors';
-import { normalizeDecimalInput, lienExterneSur, montantVersTexte } from './lib/saisie';
+import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites } from './lib/saisie';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -5942,7 +5942,7 @@ function AppContent({ themeMode, changeTheme }) {
     const fromAddress = adresseDuReseau(reseauDepart);
     const toAddress = adresseDuReseau(reseauArrivee);
     if (!fromAddress || !toAddress) throw new Error('Adresse de wallet indisponible pour ce réseau.');
-    const montantUnites = ethers.utils.parseUnits(parseFloat(swapAmt).toFixed(decimales), decimales).toString();
+    const montantUnites = montantEnUnites(swapAmt, decimales);
     const devis = await axios.get(`${API_BASE}/swap/cross-quote`, {
       params: {
         fromNetwork: reseauDepart, toNetwork: reseauArrivee,
@@ -6040,10 +6040,7 @@ function AppContent({ themeMode, changeTheme }) {
       showAlert('Token non supporté', `Le swap ${swapFrom} → ${swapTo} n'est pas encore supporté sur ${activeNetwork.label}.`);
       return;
     }
-    const sellAmountUnits = ethers.utils.parseUnits(
-      parseFloat(swapAmt).toFixed(resolveDecimals(swapFrom)),
-      resolveDecimals(swapFrom)
-    ).toString();
+    const sellAmountUnits = montantEnUnites(swapAmt, resolveDecimals(swapFrom));
     const quoteRes = await axios.get(`${API_BASE}/swap/quote`, {
       params: {
         network,

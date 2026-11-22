@@ -36,3 +36,24 @@ test('montant MAX ecrit dans le champ : arrondi vers le bas, jamais "1e-7"', () 
   for (const v of [0, -1, NaN, undefined, 'abc']) assert.equal(montantVersTexte(v, 8), '0');
   assert.doesNotMatch(montantVersTexte(1e-9, 9), /e/);
 });
+
+test('montant de swap -> unites exactes du token, sans bruit de virgule flottante', () => {
+  const { montantEnUnites } = require('../lib/saisie');
+  // Avant : parseUnits(parseFloat('0.1').toFixed(18)) = 100000000000000006 (un peu plus que tape)
+  assert.equal(montantEnUnites('0.1', 18), '100000000000000000');
+  assert.equal(montantEnUnites('0.3', 18), '300000000000000000');
+  assert.equal(montantEnUnites('1234.5678', 18), '1234567800000000000000');
+  assert.equal(montantEnUnites('0,1', 18), '100000000000000000');
+  assert.equal(montantEnUnites('1 000,5', 6), '1000500000');
+  assert.equal(montantEnUnites('.5', 9), '500000000');
+  assert.equal(montantEnUnites('2', 8), '200000000');
+  // Decimales en trop : coupees, jamais arrondies vers le haut (USDC = 6 decimales)
+  assert.equal(montantEnUnites('1.9999999', 6), '1999999');
+  assert.equal(montantEnUnites('0.0000009', 6), '0');
+  // Grand montant : pas de notation scientifique ni de perte de precision
+  assert.equal(montantEnUnites('123456789012345678.123456789012345678', 18), '123456789012345678123456789012345678');
+  for (const mauvais of ['', '.', 'abc', '1.2.3', '-1', '1e5', null, undefined]) {
+    assert.throws(() => montantEnUnites(mauvais, 18), /Montant invalide/, String(mauvais));
+  }
+  assert.throws(() => montantEnUnites('1', -1), /Montant invalide/);
+});
