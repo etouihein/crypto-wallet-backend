@@ -107,3 +107,15 @@ test('stockage abime (texte invalide, null, tableau) : liste vide, puis enregist
     assert.equal((await approvals.getApprovals(WALLET)).length, 1, `recordApproval avec ${abime}`);
   }
 });
+
+test('liste d un wallet abimee (objet, texte, nombre) : liste vide, aucune fonction ne plante', async () => {
+  for (const abime of [{ a: 1 }, 'texte', 42, true]) {
+    memoire.set(CLE, JSON.stringify({ [WALLET.toLowerCase()]: abime }));
+    assert.deepEqual(await approvals.getApprovals(WALLET), [], `getApprovals avec ${JSON.stringify(abime)}`);
+    await approvals.markRevoked(WALLET, 'x');
+    await approvals.removeApproval(WALLET, 'x');
+    memoire.set(CLE, JSON.stringify({ [WALLET.toLowerCase()]: abime }));
+    await approvals.recordApproval(WALLET, autorisation());
+    assert.equal((await approvals.getApprovals(WALLET)).length, 1, `recordApproval avec ${JSON.stringify(abime)}`);
+  }
+});
