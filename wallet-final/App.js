@@ -5713,7 +5713,10 @@ function AppContent({ themeMode, changeTheme }) {
     } else if (ecosystemeDepart === 'solana') {
       decoded = swapSecurity.decodeSolanaTx(tx.data);
     } else if (ecosystemeDepart === 'bitcoin') {
+      // Montant qui quitte le wallet et frais du reseau controles AVANT
+      // l'affichage (avant le 23/11/2026 : seulement affiches, sans total).
       decoded = swapSecurity.decodeBitcoinPsbtOutputs(tx.data, bitcoinAddr);
+      errors.push(...swapSecurity.validateBitcoinPsbt({ decoded, requestedSats: montantUnites }).errors);
     }
     if (errors.length) throw new Error(`Devis rejeté pour ta sécurité : ${errors.join(' ')}`);
     const toAmountRaw = quote?.estimate?.toAmount;
@@ -5722,6 +5725,7 @@ function AppContent({ themeMode, changeTheme }) {
       kind: 'cross', ecosystemeDepart, quote, tx, decoded,
       fromSymbol: swapFrom, toSymbol: swapTo, fromAmount: swapAmt, toAmount,
       fromNetwork: reseauDepart, toNetwork: reseauArrivee, fromAddress, toAddress,
+      requestedUnits: montantUnites,
       largeAmount: ((parseFloat(swapAmt) || 0) * (tokens[swapFrom]?.price || 0)) >= swapSecurity.LARGE_SWAP_USD_HINT,
     });
   };
@@ -5736,6 +5740,10 @@ function AppContent({ themeMode, changeTheme }) {
       routeDiffusion = '/tx/broadcast-solana';
       corps = { rawTx };
     } else if (ecosystemeDepart === 'bitcoin') {
+      // Re-verification au moment de signer, comme pour EVM ci-dessous.
+      const relu = swapSecurity.decodeBitcoinPsbtOutputs(tx.data, bitcoinAddr);
+      const check = swapSecurity.validateBitcoinPsbt({ decoded: relu, requestedSats: confirm.requestedUnits });
+      if (!check.ok) throw new Error(`Devis rejeté pour ta sécurité : ${check.errors.join(' ')}`);
       ({ rawTx } = await localWallet.signBitcoinSwapPsbt({ mnemonic: unlockedMnemonic, psbtHex: tx.data }));
       routeDiffusion = '/tx/broadcast-bitcoin';
       corps = { rawTx };
@@ -5986,6 +5994,9 @@ function AppContent({ themeMode, changeTheme }) {
                   ? c.decoded.outputs.map((o, i) => (
                     <Text key={i} style={[st.warning_txt, { marginTop: 6 }]}>{o.isOwn ? '↩ Monnaie rendue vers toi' : '→ Sortie'} : {o.address || 'adresse indécodable'} — {o.valueSats} sats</Text>
                   ))
+                  : null}
+                {c.decoded?.ok
+                  ? <Text style={[st.warning_txt, { marginTop: 8, fontWeight: '700' }]}>Quitte ton wallet : {c.decoded.sentToOthersSats} sats (demandé : {c.requestedUnits} sats) · Frais du réseau : {c.decoded.feeSats === null ? 'inconnus' : `${c.decoded.feeSats} sats`}</Text>
                   : <Text style={[st.warning_txt, { marginTop: 8 }]}>Décodage impossible : {c.decoded?.error || 'inconnu'}.</Text>}
               </View>
             )}

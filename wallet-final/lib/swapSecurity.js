@@ -25,6 +25,10 @@
 //    décodable (programmes Solana, sorties PSBT Bitcoin) mais on ne peut
 //    pas prouver que l'adresse de dépôt du pont est légitime — d'où
 //    l'avertissement rouge explicite dans l'UI (voir App.js).
+//  - GARANTI (Bitcoin, depuis le 23/11/2026) : le PSBT ne fait pas sortir
+//    du wallet plus que le montant demande (+3 % de commissions au plus) et
+//    ses frais de reseau ne depassent pas le montant echange
+//    (validateBitcoinPsbt) ; montant sortant et frais sont affiches.
 //
 //  Adresses vérifiées (docs officielles 0x et LI.FI, octobre 2026) :
 //  - AllowanceHolder 0x, chaînes Cancun (1, 56, 137, 42161, 10, 8453) :
@@ -146,20 +150,87 @@ function decodeSolanaTx(base64Tx) {
 // Une sortie vers un tiers est NORMALE pour un pont (adresse de dépôt
 // du protocole), donc on ne rejette pas dessus — on affiche, et l'UI
 // exige une confirmation explicite avec avertissement rouge.
+// Lit un PSBT Bitcoin (devis LI.FI) : sorties, total entre/sorti, frais du
+// reseau et montant qui quitte le wallet. Les montants sont des nombres
+// (bitcoinjs-lib 7 rend des BigInt). Avant le 23/11/2026, totalOutSats
+// valait toujours 0 (il additionnait un champ inexistant) et ni les frais
+// ni le montant total qui part n'etaient calcules.
 function decodeBitcoinPsbtOutputs(psbtHex, ownAddress) {
   try {
     const bitcoin = require('bitcoinjs-lib');
-    const psbt = bitcoin.Psbt.fromHex(psbtHex);
+    const reseau = bitcoin.networks.bitcoin;
+    const psbt = bitcoin.Psbt.fromHex(String(psbtHex || '').replace(/^0x/i, ''), { network: reseau });
+    const adresseDe = (script) => { try { return bitcoin.address.fromOutputScript(script, reseau); } catch { return null; } };
     const outputs = psbt.txOutputs.map((o) => {
-      let address = null;
-      try { address = bitcoin.address.fromOutputScript(o.script, bitcoin.networks.bitcoin); } catch { address = null; }
-      return { address, valueSats: o.value, isOwn: !!ownAddress && address === ownAddress };
+      const address = adresseDe(o.script);
+      return { address, valueSats: Number(o.value), isOwn: !!ownAddress && address === ownAddress };
     });
-    const totalOut = outputs.reduce((s, o) => s + (o.value || 0), 0);
-    return { ok: true, outputs, totalOutSats: totalOut };
+    const totalOut = outputs.reduce((s, o) => s + o.valueSats, 0);
+    // Entrees : montant connu par witnessUtxo, ou par la transaction
+    // precedente complete (nonWitnessUtxo).
+    let totalIn = 0;
+    let entreesConnues = true;
+    let entreesEtrangeres = 0;
+    psbt.data.inputs.forEach((entree, i) => {
+      let valeur = null;
+      let script = null;
+      if (entree.witnessUtxo) {
+        valeur = Number(entree.witnessUtxo.value);
+        script = entree.witnessUtxo.script;
+      } else if (entree.nonWitnessUtxo) {
+        const precedente = bitcoin.Transaction.fromBuffer(entree.nonWitnessUtxo);
+        const sortie = precedente.outs[psbt.txInputs[i].index];
+        if (sortie) { valeur = Number(sortie.value); script = sortie.script; }
+      }
+      if (valeur === null) { entreesConnues = false; return; }
+      totalIn += valeur;
+      if (!ownAddress || adresseDe(script) !== ownAddress) entreesEtrangeres += 1;
+    });
+    const sentToOthersSats = outputs.filter((o) => !o.isOwn).reduce((s, o) => s + o.valueSats, 0);
+    return {
+      ok: true,
+      outputs,
+      totalOutSats: totalOut,
+      totalInSats: entreesConnues ? totalIn : null,
+      feeSats: entreesConnues ? totalIn - totalOut : null,
+      sentToOthersSats,
+      foreignInputs: entreesEtrangeres,
+    };
   } catch (e) {
     return { ok: false, error: e?.message || 'Décodage PSBT impossible.', outputs: [], totalOutSats: 0 };
   }
+}
+
+// Marge sur le montant demande : LI.FI ajoute ses commissions et celles de
+// l'integrateur comme sorties en plus du montant envoye au pont (doc LI.FI,
+// « Bitcoin transaction requirements »). 3 % couvre largement 0,25 % + 0,25 %.
+const BTC_PSBT_MARGE_BPS = 300;
+
+// Controle d'un PSBT AVANT de l'afficher et de le signer. Bloque :
+//  - un PSBT illisible ;
+//  - un PSBT qui fait sortir du wallet nettement PLUS que le montant demande ;
+//  - des frais de reseau superieurs au montant echange lui-meme.
+// (Un PSBT sans entree de ce wallet echoue de toute facon a la signature.)
+function validateBitcoinPsbt({ decoded, requestedSats }) {
+  const errors = [];
+  if (!decoded || !decoded.ok) {
+    errors.push('Le PSBT Bitcoin du devis est illisible.');
+    return { ok: false, errors };
+  }
+  const demande = Number(requestedSats);
+  if (!Number.isFinite(demande) || demande <= 0) {
+    errors.push('Montant demandé invalide.');
+    return { ok: false, errors };
+  }
+  const plafond = Math.floor(demande * (10000 + BTC_PSBT_MARGE_BPS) / 10000);
+  if (decoded.sentToOthersSats > plafond) {
+    errors.push(`Le devis ferait sortir ${decoded.sentToOthersSats} sats de ton wallet alors que tu as demandé ${demande} sats.`);
+  }
+  if (decoded.feeSats !== null && decoded.feeSats !== undefined) {
+    if (decoded.feeSats < 0) errors.push('Le PSBT Bitcoin du devis est incohérent (sorties supérieures aux entrées).');
+    else if (decoded.feeSats > demande) errors.push(`Frais du réseau anormaux : ${decoded.feeSats} sats, plus que le montant échangé.`);
+  }
+  return { ok: errors.length === 0, errors };
 }
 
 module.exports = {
@@ -173,4 +244,6 @@ module.exports = {
   validateLifiEvmTx,
   decodeSolanaTx,
   decodeBitcoinPsbtOutputs,
+  validateBitcoinPsbt,
+  BTC_PSBT_MARGE_BPS,
 };
