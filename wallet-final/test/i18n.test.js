@@ -77,9 +77,15 @@ test('les {{variables}} sont les memes dans toutes les langues', () => {
 });
 
 test('repli : es/de/pt -> anglais, langue inconnue -> francais, cle inconnue -> la cle', () => {
-  const seulementEnFr = Object.keys(DICTIONARIES.fr).find((k) => !(k in DICTIONARIES.es));
-  assert.ok(seulementEnFr, 'il devrait rester des cles non traduites en espagnol');
-  assert.equal(translate('es', seulementEnFr), DICTIONARIES.en[seulementEnFr]);
+  // Depuis le 22/11/2026 l'espagnol est complet : on retire une cle le temps du test.
+  const cle = 'home_sort_name';
+  const gardee = DICTIONARIES.es[cle];
+  delete DICTIONARIES.es[cle];
+  try {
+    assert.equal(translate('es', cle), DICTIONARIES.en[cle]);
+  } finally {
+    DICTIONARIES.es[cle] = gardee;
+  }
   assert.equal(translate('xx', 'nav_home'), DICTIONARIES.fr.nav_home);
   assert.equal(translate(undefined, 'nav_home'), DICTIONARIES.fr.nav_home);
   assert.equal(translate('en', 'cle_qui_n_existe_pas'), 'cle_qui_n_existe_pas');
@@ -138,4 +144,12 @@ test('une cle ou une langue au nom "piege" (toString, constructor...) renvoie to
   const cleFr = Object.keys(DICTIONARIES.fr)[0];
   assert.equal(translate('constructor', cleFr), DICTIONARIES.fr[cleFr]);
   assert.equal(translate('__proto__', cleFr), DICTIONARIES.fr[cleFr]);
+});
+
+test('espagnol, allemand et portugais couvrent toutes les cles du francais (rien ne s affiche en anglais)', () => {
+  const fr = Object.keys(DICTIONARIES.fr);
+  for (const langue of ['es', 'de', 'pt']) {
+    const manquantes = fr.filter((k) => !Object.prototype.hasOwnProperty.call(DICTIONARIES[langue], k));
+    assert.deepEqual(manquantes, [], `${langue} : ${manquantes.length} texte(s) non traduit(s)`);
+  }
 });
