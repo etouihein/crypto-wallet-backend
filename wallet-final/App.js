@@ -1294,17 +1294,6 @@ const saveWatchAddresses = async (list) => {
   try { await AsyncStorage.setItem(WATCH_ADDRESSES_KEY, JSON.stringify(list)); } catch { /* rien à faire */ }
 };
 
-// ═══════════════════════════════════════════════════════════
-//  CONFIGURATION BLOCKCHAIN RÉELLE
-// ═══════════════════════════════════════════════════════════
-const BLOCKCHAIN_CONFIG = {
-  NETWORK: 'ethereum',
-  CHAIN_ID: 1,
-  RPC_URL: 'https://eth.llamarpc.com',
-  EXPLORER: 'https://etherscan.io',
-  GAS_LIMIT: 21000,
-};
-
 // Scanner QR du web (WebQrScanner) : voir components/WebQrScanner.js.
 
 function QRCodeMock({ address }) {
@@ -1679,54 +1668,6 @@ function AnimPressable({ style, onPress, disabled, children, scaleTo = 0.95, ...
 }
 
 // ═══════════════════════════════════════════════════════════
-//  LOGO ANIMÉ (halo qui pulse + badge qui respire) — écran d'accueil
-// ═══════════════════════════════════════════════════════════
-function AnimatedLogo({ size = 92, icon = '🛡️' }) {
-  const { T } = useTheme();
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 1900, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-
-  const glowScale   = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.3] });
-  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.05] });
-  const badgeScale  = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.045] });
-
-  return (
-    <View style={{ width: size * 1.9, height: size * 1.9, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View
-        style={{
-          position: 'absolute', width: size * 1.9, height: size * 1.9, borderRadius: size,
-          backgroundColor: T.cyan, opacity: glowOpacity, transform: [{ scale: glowScale }],
-        }}
-      />
-      <Animated.View style={{ transform: [{ scale: badgeScale }] }}>
-        <LinearGradient
-          colors={[T.violet, T.card2, T.deepBg]}
-          start={{ x: 0.1, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
-          style={{
-            width: size, height: size, borderRadius: size / 2,
-            alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1, borderColor: 'rgba(124,58,237,0.45)',
-            shadowColor: T.violet, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16, elevation: 8,
-          }}
-        >
-          <Text style={{ fontSize: size * 0.42 }}>{icon}</Text>
-        </LinearGradient>
-      </Animated.View>
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
 //  WALLET — bloc "skeleton" (placeholder qui respire) affiché tant que les
 //  prix n'ont pas encore été chargés, au lieu d'une liste vide ou figée.
 // ═══════════════════════════════════════════════════════════
@@ -1939,60 +1880,6 @@ function BalanceGlow() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — visuel section sécurité (anneaux rotatifs + halo qui
-//  pulse). Équivalent RN du torus knot Three.js du fichier de référence,
-//  sans WebGL — juste des View/Animated, donc ça tourne aussi sur mobile.
-// ═══════════════════════════════════════════════════════════
-function SecurityOrb({ size = 220 }) {
-  const { T } = useTheme();
-  const rot1 = useRef(new Animated.Value(0)).current;
-  const rot2 = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const l1 = Animated.loop(Animated.timing(rot1, { toValue: 1, duration: 9000, easing: Easing.linear, useNativeDriver: true }));
-    const l2 = Animated.loop(Animated.timing(rot2, { toValue: 1, duration: 14000, easing: Easing.linear, useNativeDriver: true }));
-    const l3 = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
-    l1.start(); l2.start(); l3.start();
-    return () => { l1.stop(); l2.stop(); l3.stop(); };
-  }, [rot1, rot2, pulse]);
-
-  const spin1 = rot1.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const spin2 = rot2.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
-  const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.5] });
-  const glowScale   = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] });
-
-  return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View style={{
-        position: 'absolute', width: size, height: size, borderRadius: size / 2,
-        borderWidth: 1, borderColor: 'rgba(124,58,237,0.35)', borderStyle: 'dashed',
-        transform: [{ rotate: spin1 }],
-      }} />
-      <Animated.View style={{
-        position: 'absolute', width: size * 0.72, height: size * 0.72, borderRadius: (size * 0.72) / 2,
-        borderWidth: 1, borderColor: 'rgba(34,211,238,0.4)',
-        transform: [{ rotate: spin2 }],
-      }} />
-      <Animated.View style={{
-        position: 'absolute', width: size * 0.5, height: size * 0.5, borderRadius: (size * 0.5) / 2,
-        backgroundColor: T.violet, opacity: glowOpacity, transform: [{ scale: glowScale }],
-      }} />
-      <View style={{
-        width: size * 0.34, height: size * 0.34, borderRadius: (size * 0.34) / 2,
-        alignItems: 'center', justifyContent: 'center', backgroundColor: T.deepBg,
-        borderWidth: 1, borderColor: 'rgba(124,58,237,0.5)',
-      }}>
-        <Text style={{ fontSize: size * 0.15 }}>🛡️</Text>
-      </View>
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
 //  APPARITION EN FONDU + GLISSEMENT (pour les fiches crypto)
 // ═══════════════════════════════════════════════════════════
 function FadeInView({ children, style, deps = [] }) {
@@ -2045,228 +1932,6 @@ function SupplyBar({ circulating, max, color }) {
         {max ? `${pct.toFixed(1)}% de l'offre max en circulation 🚀` : 'Offre illimitée ♾️'}
       </Text>
     </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — pièce en orbite (halo NEXIA)
-//  Une pièce tourne autour du logo central : conteneur qui pivote en continu
-//  + enfant contre-pivoté à la même vitesse pour que l'icône reste droite
-//  (équivalent RN de l'orbite Three.js de la page vitrine, sans WebGL).
-// ═══════════════════════════════════════════════════════════
-function OrbitCoin({ angle, radius, size, duration, icon, bg }) {
-  const rot = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(rot, { toValue: 1, duration, easing: Easing.linear, useNativeDriver: true })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [rot, duration]);
-
-  const rotate = rot.interpolate({ inputRange: [0, 1], outputRange: [`${angle}deg`, `${angle + 360}deg`] });
-  const counterRotate = rot.interpolate({ inputRange: [0, 1], outputRange: [`${-angle}deg`, `${-angle - 360}deg`] });
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', transform: [{ rotate }] }]}
-    >
-      <Animated.View style={{ transform: [{ translateX: radius }, { rotate: counterRotate }] }}>
-        <View
-          style={{
-            width: size, height: size, borderRadius: size / 2, backgroundColor: bg,
-            alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
-            shadowColor: bg, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 6, elevation: 4,
-          }}
-        >
-          <Text style={{ fontSize: size * 0.46, color: '#fff', fontWeight: 'bold' }}>{icon}</Text>
-        </View>
-      </Animated.View>
-    </Animated.View>
-  );
-}
-
-function OrbitHero() {
-  const { st } = useTheme();
-  return (
-    <View style={st.land_orbit_wrap}>
-      <View style={st.land_orbit_center}><AnimatedLogo size={78} /></View>
-      <OrbitCoin angle={0}   radius={118} size={40} duration={9000}  icon="₿" bg="#F7931A" />
-      <OrbitCoin angle={140} radius={98}  size={34} duration={12500} icon="Ξ" bg="#627EEA" />
-      <OrbitCoin angle={250} radius={128} size={30} duration={16000} icon="◎" bg="#9945FF" />
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — bandeau de prix défilant (marquee)
-//  Utilise les vraies données `tokens` (déjà chargées via fetchMarket au
-//  montage, même avant création du wallet) plutôt que des chiffres inventés.
-// ═══════════════════════════════════════════════════════════
-function PriceMarquee({ tokens }) {
-  const { T, st } = useTheme();
-  const translateX = useRef(new Animated.Value(0)).current;
-  const [trackWidth, setTrackWidth] = useState(0);
-  const items = Object.entries(tokens).filter(([, t]) => t.price > 0);
-
-  useEffect(() => {
-    if (!trackWidth) return undefined;
-    translateX.setValue(0);
-    const loop = Animated.loop(
-      Animated.timing(translateX, { toValue: -trackWidth / 2, duration: 16000, easing: Easing.linear, useNativeDriver: true })
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [trackWidth, translateX]);
-
-  if (!items.length) return null;
-  const doubled = [...items, ...items];
-
-  return (
-    <View style={st.land_marquee}>
-      <Animated.View
-        style={[st.land_marquee_track, { transform: [{ translateX }] }]}
-        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
-      >
-        {doubled.map(([sym, t], i) => {
-          const up = (t.change24h || 0) >= 0;
-          return (
-            <View key={`${sym}-${i}`} style={st.land_marquee_item}>
-              <Text style={st.land_marquee_icon}>{t.icon}</Text>
-              <Text style={st.land_marquee_sym}>{sym}</Text>
-              <Text style={[st.land_marquee_chg, { color: up ? T.up : T.down }]}>
-                {up ? '+' : ''}{(t.change24h || 0).toFixed(1)}%
-              </Text>
-            </View>
-          );
-        })}
-      </Animated.View>
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — compteur animé (stats)
-// ═══════════════════════════════════════════════════════════
-function CountStat({ value, suffix = '', label, decimals = 0, style }) {
-  const { st } = useTheme();
-  const [display, setDisplay] = useState(decimals ? (0).toFixed(decimals) : '0');
-  useEffect(() => {
-    let raf;
-    const t0 = Date.now();
-    const dur = 1200;
-    const tick = () => {
-      const p = Math.min((Date.now() - t0) / dur, 1);
-      const ease = 1 - Math.pow(1 - p, 3);
-      const v = value * ease;
-      setDisplay(decimals ? v.toFixed(decimals) : Math.round(v).toString());
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    tick();
-    return () => raf && cancelAnimationFrame(raf);
-  }, [value, decimals]);
-
-  return (
-    <View style={[st.land_stat, style]}>
-      <Text style={st.land_stat_num}>{display}{suffix}</Text>
-      <Text style={st.land_stat_lbl}>{label}</Text>
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — carte fonctionnalité (bascule 3D + lueur au survol,
-//  web uniquement — équivalent léger de l'effet "tilt" du fichier de
-//  référence, sans dépendre de Three.js/WebGL qui ne tourne pas sur mobile).
-// ═══════════════════════════════════════════════════════════
-function FeatureCard({ icon, title, desc, style }) {
-  const { st } = useTheme();
-  const [hover, setHover] = useState(null);
-  const webHoverProps = Platform.OS === 'web' ? {
-    onMouseMove: (e) => {
-      const rect = e.currentTarget.getBoundingClientRect?.();
-      if (!rect) return;
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      setHover({ x, y });
-    },
-    onMouseLeave: () => setHover(null),
-  } : {};
-
-  const tiltStyle = hover ? {
-    transform: [
-      { perspective: 900 },
-      { rotateX: `${(0.5 - hover.y) * 8}deg` },
-      { rotateY: `${(hover.x - 0.5) * 8}deg` },
-    ],
-    borderColor: 'rgba(34,211,238,0.45)',
-  } : null;
-
-  return (
-    <View style={[st.land_feature_card, style, tiltStyle]} {...webHoverProps}>
-      {hover && (
-        <View
-          pointerEvents="none"
-          style={[st.land_feature_glare, { left: `${hover.x * 100}%`, top: `${hover.y * 100}%` }]}
-        />
-      )}
-      <View style={st.land_feature_icon}><Text style={{ fontSize: 22 }}>{icon}</Text></View>
-      <Text style={st.land_feature_title}>{title}</Text>
-      <Text style={st.land_feature_desc}>{desc}</Text>
-    </View>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════
-//  LANDING PUBLIQUE — fond de particules flottantes (équivalent léger du
-//  champ de points Three.js du fichier de référence, en pur RN Animated).
-// ═══════════════════════════════════════════════════════════
-function StarField({ count = 30 }) {
-  const { T } = useTheme();
-  const stars = useMemo(() => Array.from({ length: count }, (_, i) => ({
-    id: i,
-    left: Math.random() * 100,
-    top: Math.random() * 100,
-    size: 1.5 + Math.random() * 2.5,
-    delay: Math.random() * 2500,
-    duration: 2600 + Math.random() * 2600,
-    color: [T.cyan, T.violet, T.magenta][i % 3],
-  })), [count]);
-
-  return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {stars.map(s => <Star key={s.id} {...s} />)}
-    </View>
-  );
-}
-
-function Star({ left, top, size, delay, duration, color }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(anim, { toValue: 1, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(anim, { toValue: 0, duration, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [anim, delay, duration]);
-
-  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.85] });
-  const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.5] });
-
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute', left: `${left}%`, top: `${top}%`,
-        width: size, height: size, borderRadius: size / 2, backgroundColor: color,
-        opacity, transform: [{ scale }],
-      }}
-    />
   );
 }
 
@@ -4643,7 +4308,6 @@ function AppContent({ themeMode, changeTheme }) {
     loadWatchAddresses().then(list => { setWatchAddresses(list); setWatchAddressesLoaded(true); });
   }, []);
 
-
   useEffect(() => {
     if (customTokensLoaded) saveCustomTokens(customTokens.map(({ balance, ...rest }) => rest));
     // Le solde n'est pas persisté (il serait périmé au prochain lancement) —
@@ -6593,7 +6257,6 @@ function AppContent({ themeMode, changeTheme }) {
       </Modal>
     );
   };
-
 
   const renderMnemonicReauth = () => (
     <Modal visible={showMnemonicReauth} animationType="fade" transparent>
