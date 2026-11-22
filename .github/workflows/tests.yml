@@ -54,7 +54,10 @@ jobs:
       - name: Tests de l'app
         run: npm run test:lib
       - name: Construction du site web
-        run: npx expo export -p web --output-dir /tmp/site
+        run: npx expo export -p web --output-dir /tmp/site --source-maps
+      - name: Poids du site (resume visible dans l'onglet Checks)
+        continue-on-error: true
+        run: node scripts/poids-site.js /tmp/site
 
   securite:
     name: Audit des bibliotheques (information)
