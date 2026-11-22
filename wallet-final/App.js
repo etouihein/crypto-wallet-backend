@@ -53,6 +53,7 @@ import * as top20Logos from './lib/top20Logos';
 import * as recurringBuy from './lib/recurringBuy';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
+import { refsAGarder } from './lib/stakeRefs';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
@@ -3728,8 +3729,9 @@ function AppContent({ themeMode, changeTheme }) {
       const refs = await loadStakeRefs(walletAddr);
       const accounts = await localWallet.getSolanaStakeAccountsInfo(refs.map(r => r.stakePubkey));
       setStakeAccounts(accounts);
-      const stillExisting = new Set(accounts.map(a => a.stakePubkey));
-      const prunedRefs = refs.filter(r => stillExisting.has(r.stakePubkey));
+      // Une référence récente est gardée même si le compte n'est pas encore
+      // visible (transaction pas encore confirmée) : voir lib/stakeRefs.js.
+      const prunedRefs = refsAGarder(refs, accounts.map(a => a.stakePubkey));
       if (prunedRefs.length !== refs.length) await saveStakeRefs(walletAddr, prunedRefs);
     } catch (err) {
       console.warn('getSolanaStakeAccountsInfo error', err.message);
@@ -3775,10 +3777,25 @@ function AppContent({ themeMode, changeTheme }) {
       const { rawTx, stakePubkey } = await localWallet.createAndDelegateStake({
         mnemonic: unlockedMnemonic, votePubkey: selectedValidator, amountSol: stakeAmount,
       });
-      const response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
-      if (!response.data?.success) throw new Error(response.data?.error || 'Échec de la mise en stake.');
+      // Référence enregistrée AVANT la diffusion : si le serveur ne répond
+      // pas mais que le stake part quand même, l'app le retrouvera (son
+      // adresse ne peut pas être recalculée). Une référence dont le compte
+      // n'existe pas est effacée au bout d'une heure (lib/stakeRefs.js).
       const refs = await loadStakeRefs(walletAddr);
       await saveStakeRefs(walletAddr, [...refs, { stakePubkey, createdAt: Date.now() }]);
+      let response;
+      try {
+        response = await axios.post(`${API_BASE}/tx/broadcast-solana`, { rawTx }, { timeout: 25000, headers: API_HEADERS });
+      } catch (e) {
+        if (!diffusionIncertaine(e)) throw e;
+        // Stake peut-être parti : surtout ne pas inviter à recommencer.
+        const hash = localWallet.hashLocalTransaction(rawTx, 'solana');
+        if (hash) trackTransaction({ txHash: hash, net: 'solana', token: 'SOL', amount: stakeAmount, kind: 'Stake' });
+        showAlert('⏳ Stake peut-être créé', `Le serveur n'a pas répondu à temps, mais ton stake de ${stakeAmount} SOL a peut-être DÉJÀ été créé.\n\nNE RECOMMENCE PAS tout de suite. Il apparaîtra dans cette liste dès qu'il sera confirmé (quelques minutes).`, [{ text: 'OK' }]);
+        setStakeAmount('');
+        return;
+      }
+      if (!response.data?.success) throw new Error(response.data?.error || 'Échec de la mise en stake.');
       showToast('✓ Stake créé — activation sous ~1 epoch (2-3 jours)', 'success');
       setStakeAmount('');
       await loadStakeAccounts();
@@ -3788,7 +3805,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setStakeLoading(false);
     }
-  }, [stakeAmount, selectedValidator, unlockedMnemonic, walletAddr, loadStakeAccounts, showToast]);
+  }, [stakeAmount, selectedValidator, unlockedMnemonic, walletAddr, loadStakeAccounts, showToast, trackTransaction]);
 
   const handleDeactivateStake = useCallback((stakePubkey) => {
     showAlert(
