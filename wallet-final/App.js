@@ -68,6 +68,7 @@ import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnite
 import { montantRapideVente } from './lib/venteMontant';
 import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
+import { adresseLeurre } from './lib/leurreDetresse';
 import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
 import { montantCourt, libelleFraisPont } from './lib/affichagePont';
@@ -3145,6 +3146,9 @@ function AppContent({ themeMode, changeTheme }) {
         setPinLockedUntil(0);
         await clearPinFailRecord();
         setIsDuressMode(true);
+        // Adresse LEURRE (lib/leurreDetresse.js) : sans elle, Activite, NFT,
+        // Stats et l'accueil montraient la VRAIE adresse et son historique.
+        setWalletAddr(adresseLeurre(walletSession.address));
         setIsUnlocked(true);
         setWalletBalance('0');
         setTokens(prev => Object.fromEntries(Object.entries(prev).map(([sym, t]) => [sym, { ...t, balance: 0 }])));
@@ -3162,6 +3166,8 @@ function AppContent({ themeMode, changeTheme }) {
       setUnlockedPrivateKey(result.privateKey);
       setUnlockedMnemonic(result.mnemonic);
       setIsDuressMode(false);
+      // Vraie adresse (apres un passage en mode detresse, walletAddr etait le leurre).
+      setWalletAddr(walletSession.address);
       setIsUnlocked(true);
       setPinCode('');
       setPinError(null);
@@ -3258,6 +3264,7 @@ function AppContent({ themeMode, changeTheme }) {
   // recalculent tout seuls une fois déverrouillé (dérivés de walletAddr /
   // unlockedMnemonic, voir plus haut).
   const switchAccount = useCallback(async (id) => {
+    if (isDuressMode) return; // la vraie liste des comptes n'existe pas en mode detresse
     if (id === activeAccountId) { setShowSettings(false); return; }
     const target = accounts.find(a => a.id === id);
     if (!target) return;
@@ -3277,7 +3284,7 @@ function AppContent({ themeMode, changeTheme }) {
     setPinError(null);
     setHistoryItems(null);
     setShowSettings(false);
-  }, [accounts, activeAccountId, network]);
+  }, [accounts, activeAccountId, network, isDuressMode]);
 
   const renameAccount = useCallback(async (id, label) => {
     const trimmed = (label || '').trim();
@@ -3296,6 +3303,9 @@ function AppContent({ themeMode, changeTheme }) {
   // Trust Wallet n'a pas de bouton "tout effacer" séparé, seulement la
   // suppression individuelle qui peut aller jusqu'à zéro compte.
   const deleteAccount = useCallback((id) => {
+    // Mode detresse : la personne qui force l'ouverture ne doit pas pouvoir
+    // effacer le vrai wallet (la liste des comptes y est d'ailleurs masquee).
+    if (isDuressMode) return;
     const target = accounts.find(a => a.id === id);
     const isLast = accounts.length <= 1;
     showAlert(
@@ -3361,7 +3371,7 @@ function AppContent({ themeMode, changeTheme }) {
         },
       ]
     );
-  }, [accounts, activeAccountId, network]);
+  }, [accounts, activeAccountId, network, isDuressMode]);
 
   // "+ Ajouter un compte" — deux entrées possibles, toutes deux réutilisent
   // le flux PIN existant (createWallet/pendingWalletForPin) : la nouvelle
@@ -9323,7 +9333,7 @@ function AppContent({ themeMode, changeTheme }) {
             </AnimPressable>
           )}
 
-          {!!walletSession && (
+          {!!walletSession && !isDuressMode && (
             <>
               <Text style={[st.settings_section, { marginTop: 24 }]}>👤 {t('settings_accounts')}</Text>
               {accounts.map(acc => (
