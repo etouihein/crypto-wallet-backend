@@ -186,3 +186,25 @@ test('origine de confiance : deux pages data: differentes ne partagent jamais un
   const autorisees = [a].filter(Boolean); // App.js n'enregistre jamais une origine vide
   assert.equal(autorisees.includes(b) && Boolean(b), false);
 });
+
+test('chainChanged met a jour chainId / networkVersion ; une valeur piegee est ignoree', () => {
+  const f = fausseFenetre();
+  injecter(f, '0x1');
+  const p = f.window.ethereum;
+  const recus = [];
+  p.on('chainChanged', (c) => recus.push(c));
+  f.window.__nexiaEmit('chainChanged', '0x89');
+  assert.equal(p.chainId, '0x89');
+  assert.equal(p.networkVersion, '137');
+  assert.deepEqual(recus, ['0x89']);
+  f.window.__nexiaEmit('chainChanged', '0x1; alert(1)');
+  f.window.__nexiaEmit('chainChanged', { toString: () => '0x2' });
+  assert.equal(p.chainId, '0x89', 'valeur non hexadecimale ignoree');
+});
+
+test("App.js : tout changement de reseau previent la page du navigateur dApp", () => {
+  const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+  const effet = source.match(/useEffect\(\(\) => \{\n    if \(!dappWebViewRef\.current\) return;[\s\S]*?\}, \[network\]\);/);
+  assert.ok(effet, "un effet sur [network] doit envoyer chainChanged a la page");
+  assert.match(effet[0], /__nexiaEmit\('chainChanged'/);
+});

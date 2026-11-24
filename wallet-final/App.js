@@ -3669,6 +3669,18 @@ function AppContent({ themeMode, changeTheme }) {
     [dappDisplayUrl, dappCurrentUrl],
   );
 
+  // reseauDapp : a chaque changement de reseau (selecteur de l'app OU
+  // wallet_switchEthereumChain), la page du navigateur dApp recoit
+  // chainChanged. Avant le 24/11/2026, seul wallet_switchEthereumChain la
+  // prevenait : apres un changement via le selecteur, la page restait sur
+  // l'ancien reseau et preparait ses transactions pour lui.
+  useEffect(() => {
+    if (!dappWebViewRef.current) return;
+    let hex;
+    try { hex = '0x' + localWallet.getNetworkConfig(network).chainId.toString(16); } catch { return; }
+    dappWebViewRef.current.injectJavaScript(`window.__nexiaEmit && window.__nexiaEmit('chainChanged', ${JSON.stringify(hex)}); true;`);
+  }, [network]);
+
   const handleDappMessage = useCallback((event) => {
     let msg;
     try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
@@ -3728,7 +3740,7 @@ function AppContent({ themeMode, changeTheme }) {
         if (!targetNetwork) throw new Error('Réseau non supporté par NexiaWallet.');
         setNetwork(targetNetwork);
         dappBridgeRespond(id, null, null);
-        dappWebViewRef.current?.injectJavaScript(`window.__nexiaEmit('chainChanged', ${JSON.stringify(requestedHex)}); true;`);
+        // chainChanged est envoye a la page par l'effet « reseauDapp » ci-dessous.
       } else {
         if (!unlockedPrivateKey) throw new Error('Wallet verrouillé.');
         const chainIdCaip = `eip155:${localWallet.getNetworkConfig(network).chainId}`;
