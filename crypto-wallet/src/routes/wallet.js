@@ -780,7 +780,13 @@ router.get('/coin/:cgId', async (req, res) => {
 
 router.get('/coin/:cgId/candles', async (req, res) => {
   try {
-    const timeframe = (req.query.timeframe || '1J').toUpperCase();
+    // Seules les periodes connues entrent dans la cle du cache : avant le
+    // 24/11/2026, un timeframe invente (?timeframe=a, b, c...) creait a
+    // chaque fois une entree en memoire et un nouvel appel CoinGecko, de
+    // quoi epuiser le quota (429) et faire passer tout le monde en prix
+    // differes. Valeur inconnue = graphique 1J, comme avant.
+    const demande = String(req.query.timeframe || '1J').toUpperCase();
+    const timeframe = Object.prototype.hasOwnProperty.call(CANDLE_DAYS_BY_TIMEFRAME, demande) ? demande : '1J';
     // Même encodage que /coin/:cgId (voir commentaire là-bas).
     const candles = await fetchCoinOhlc(encodeURIComponent(req.params.cgId), timeframe);
     res.json({ success: true, candles });
