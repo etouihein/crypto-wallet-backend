@@ -129,38 +129,31 @@ function deleteEmailProfile(address) {
   return existed;
 }
 
-// M12 (audit 2026-10-26), voie NON CASSANTE — message exact que le client
-// devra signer un jour pour prouver la possession de l'adresse :
-// `NexiaWallet: lier cet email au wallet <adresse en minuscules>`.
-// Aujourd'hui la signature est OPTIONNELLE : si `signature` est fournie et
-// invalide (ou ne correspond pas à l'adresse) => rejet 400 ; si elle est
-// absente => comportement actuel conservé, pour ne pas casser le flux
-// existant qui ne signe rien. Rendre la signature OBLIGATOIRE serait une
-// évolution cassante (tout client actuel serait rejeté) : c'est une
-// décision utilisateur, pas un changement silencieux — voir le commentaire
-// sur la route POST /profile/email. La vérification n'est possible que
-// pour une adresse EVM (ethers verifyMessage) ; une signature fournie avec
-// une adresse non-EVM est donc rejetée plutôt que silencieusement ignorée.
-// L'email reste stocké EN CLAIR dans email-profiles.json : AUCUN
-// chiffrement ajouté ici, car chiffrer avec une clé inventée sans gestion
-// de clé (rotation, sauvegarde, séparation) serait du faux sentiment de
-// sécurité — le chiffrement au repos est une décision d'architecture à
-// part, avec une vraie gestion de clé.
-function emailLinkMessage(address) {
-  return `NexiaWallet: lier cet email au wallet ${String(address).toLowerCase()}`;
+// M12 (audit 2026-10-26) puis audit de securite total (24/11/2026) : preuve
+// de possession OBLIGATOIRE. Avant, la signature etait facultative et
+// n'importe qui pouvait lier son e-mail a l'adresse d'un autre, ou effacer
+// celui d'un autre. Le message signe contient l'action, l'e-mail, l'adresse
+// et un horodatage (10 min de validite, contre la reutilisation) ; c'est le
+// meme texte que wallet-final/lib/profilEmail.js. Adresse EVM uniquement
+// (c'est l'adresse que l'app lie). L'email reste stocke en clair : aucun
+// chiffrement avec une cle inventee sans vraie gestion de cle.
+const EMAIL_SIGNATURE_VALIDITE_S = 600;
+function messageProfilEmail(action, adresse, email, horodatage) {
+  const a = String(adresse || '').toLowerCase();
+  if (action === 'supprimer') return `NexiaWallet: supprimer l'email du wallet ${a} (horodatage ${horodatage})`;
+  return `NexiaWallet: lier l'email ${String(email || '').trim().toLowerCase()} au wallet ${a} (horodatage ${horodatage})`;
 }
 
-function verifyOptionalEmailSignature(address, signature) {
-  if (signature === undefined || signature === null || signature === '') return { ok: true };
-  if (typeof signature !== 'string') return { ok: false, error: 'Signature invalide.' };
-  if (!ethers.utils.isAddress(address || '')) {
-    return { ok: false, error: 'La signature ne peut être vérifiée que pour une adresse EVM.' };
+function verifierSignatureEmail({ action, address, email, signature, horodatage, maintenantMs = Date.now() }) {
+  if (!ethers.utils.isAddress(address || '')) return { ok: false, error: 'Adresse de wallet EVM requise.' };
+  if (typeof signature !== 'string' || !signature) return { ok: false, error: "Signature du wallet requise (mets l'app à jour)." };
+  const t = typeof horodatage === 'number' ? horodatage : (typeof horodatage === 'string' && /^\d{9,11}$/.test(horodatage) ? Number(horodatage) : NaN);
+  if (!Number.isInteger(t) || Math.abs(maintenantMs / 1000 - t) > EMAIL_SIGNATURE_VALIDITE_S) {
+    return { ok: false, error: 'Signature expirée : réessaie.' };
   }
   try {
-    const recovered = ethers.utils.verifyMessage(emailLinkMessage(address), signature);
-    if (recovered.toLowerCase() !== String(address).toLowerCase()) {
-      return { ok: false, error: 'Signature invalide pour cette adresse.' };
-    }
+    const recovered = ethers.utils.verifyMessage(messageProfilEmail(action, address, email, t), signature);
+    if (recovered.toLowerCase() !== String(address).toLowerCase()) return { ok: false, error: 'Signature invalide pour cette adresse.' };
   } catch {
     return { ok: false, error: 'Signature invalide pour cette adresse.' };
   }
@@ -1769,31 +1762,18 @@ router.post('/tx/broadcast-bitcoin', diffusionLimiter, async (req, res) => {
   }
 });
 
-// Profil léger optionnel : associe un email à une adresse de wallet, pour
-// notifications futures / acquisition. Pas d'authentification au-delà de la
-// clé API app (même modèle que les autres routes) — l'adresse n'est pas un
-// secret, et on accepte qu'un tiers puisse en théorie soumettre un email
-// pour une adresse qui n'est pas la sienne (impact nul : ni fonds ni accès
-// au wallet ne dépendent de ce profil).
-// M12 (audit 2026-10-26) — correctif NON CASSANT, en deux parties :
-// (1) signature de possession OPTIONNELLE : le client peut joindre
-// `signature` (signature EIP-191 du message emailLinkMessage, voir
-// verifyOptionalEmailSignature) ; invalide => 400, absente => flux actuel
-// inchangé. La signature OBLIGATOIRE est une évolution cassante à décider
-// par l'utilisateur (elle rejetterait tous les clients actuels qui ne
-// signent pas) — elle n'est PAS activée ici. (2) suppression RGPD :
-// DELETE /profile/email ci-dessous, idempotente (succès même si aucun
-// profil n'existait). L'email reste stocké en clair : aucun chiffrement
-// avec une clé inventée (voir le commentaire sur verifyOptionalEmailSignature).
+// Profil leger optionnel : associe un email a une adresse de wallet, pour
+// notifications futures / acquisition. Seul le proprietaire de l'adresse
+// peut le faire (signature obligatoire, voir verifierSignatureEmail).
 router.post('/profile/email', sensitiveLimiter, (req, res) => {
-  const { address, email, signature } = req.body || {};
+  const { address, email, signature, horodatage } = req.body || {};
   if (!address || typeof address !== 'string' || address.length > 100 || RESERVED_PROFILE_KEYS.has(address.toLowerCase())) {
     return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
   }
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254) {
     return res.status(400).json({ success: false, error: 'Adresse email invalide.' });
   }
-  const ownership = verifyOptionalEmailSignature(address, signature);
+  const ownership = verifierSignatureEmail({ action: 'lier', address, email, signature, horodatage });
   if (!ownership.ok) {
     return res.status(400).json({ success: false, error: ownership.error });
   }
@@ -1810,16 +1790,17 @@ router.post('/profile/email', sensitiveLimiter, (req, res) => {
 // dans le corps JSON ou, à défaut, dans la query (?address=...) car
 // certains clients HTTP envoient mal un corps avec DELETE. Idempotente :
 // { success: true, deleted: false } si aucun profil n'existait, sans
-// erreur. Même preuve de possession optionnelle que pour POST : signature
-// fournie et invalide => rejet, absente => suppression effectuée.
+// erreur. Meme preuve de possession OBLIGATOIRE que pour POST (message
+// "supprimer l'email du wallet ...").
 router.delete('/profile/email', sensitiveLimiter, (req, res) => {
   const body = req.body || {};
   const address = body.address || req.query.address;
   const signature = body.signature !== undefined ? body.signature : req.query.signature;
+  const horodatage = body.horodatage !== undefined ? body.horodatage : req.query.horodatage;
   if (!address || typeof address !== 'string' || address.length > 100 || RESERVED_PROFILE_KEYS.has(address.toLowerCase())) {
     return res.status(400).json({ success: false, error: 'Adresse de wallet requise.' });
   }
-  const ownership = verifyOptionalEmailSignature(address, signature);
+  const ownership = verifierSignatureEmail({ action: 'supprimer', address, signature, horodatage });
   if (!ownership.ok) {
     return res.status(400).json({ success: false, error: ownership.error });
   }
