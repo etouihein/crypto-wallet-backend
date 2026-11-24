@@ -1203,8 +1203,15 @@ function jetonValide(v) {
 router.get('/swap/cross-quote', devisLimiter, async (req, res) => {
   try {
     const { fromNetwork, toNetwork, fromToken, toToken, fromAmount, fromAddress, toAddress } = req.query;
-    const depart = CROSS_NETWORKS[String(fromNetwork || '').toLowerCase()];
-    const arrivee = CROSS_NETWORKS[String(toNetwork || '').toLowerCase()];
+    // Entree PROPRE seulement (24/11/2026) : « constructor », « __proto__ »
+    // ou « toString » trouvaient avant une valeur heritee d'Object et la
+    // demande partait chez LI.FI avec un reseau « undefined ».
+    const reseauCross = (v) => {
+      const cle = String(v || '').toLowerCase();
+      return Object.prototype.hasOwnProperty.call(CROSS_NETWORKS, cle) ? CROSS_NETWORKS[cle] : undefined;
+    };
+    const depart = reseauCross(fromNetwork);
+    const arrivee = reseauCross(toNetwork);
     if (!depart || !arrivee) {
       return res.status(400).json({ success: false, error: 'Réseaux d\'échange invalides.' });
     }
