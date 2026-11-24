@@ -66,6 +66,7 @@ import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
+import { montantActivite } from './lib/montantActivite';
 import { prixUtilisables } from './lib/prixMarche';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
@@ -7762,7 +7763,7 @@ function AppContent({ themeMode, changeTheme }) {
                     </View>
                   </View>
                   <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.down : T.up) }]}>
-                    {isOut ? '-' : '+'}{parseFloat(item.amount).toFixed(5)} {item.symbol}
+                    {isOut ? '-' : '+'}{montantActivite(item.amount)} {item.symbol}
                   </Text>
                 </AnimPressable>
               </FadeInView>
