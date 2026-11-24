@@ -70,6 +70,7 @@ import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
 import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
+import { montantCourt, libelleFraisPont } from './lib/affichagePont';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
 import { messageProfilEmail } from './lib/profilEmail';
@@ -8584,10 +8585,10 @@ function AppContent({ themeMode, changeTheme }) {
             ) : (
               <>
                 <View style={st.send_info_box}>
-                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? ethers.utils.formatEther(toAmount) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
+                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? montantCourt(ethers.utils.formatEther(toAmount)) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
                   <Text style={st.send_info_line}>Route : {bridgeQuote.tool}</Text>
                   {feeCosts.map((f, i) => (
-                    <Text key={i} style={st.send_info_line}>{f.name} : {ethers.utils.formatUnits(f.amount, f.token?.decimals || 18)} {f.token?.symbol}</Text>
+                    <Text key={i} style={st.send_info_line}>{libelleFraisPont(f.name)} : {montantCourt(ethers.utils.formatUnits(f.amount, f.token?.decimals ?? 18), 8)} {f.token?.symbol}</Text>
                   ))}
                 </View>
                 <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeExecuting ? 0.7 : 1 }]} onPress={handleExecuteBridge} disabled={bridgeExecuting}>
