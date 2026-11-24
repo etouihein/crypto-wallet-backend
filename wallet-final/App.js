@@ -44,6 +44,7 @@ Font.loadAsync({ Ionicons: require('./assets/fonts/Ionicons.ttf') });
 import * as localWallet from './lib/wallet';
 import * as walletConnect from './lib/walletconnect';
 import { buildInjectedProvider, trustedDappOrigin } from './lib/dappBrowserProvider';
+import { siteDemandeur, montantNatifLisible } from './lib/affichageDemande';
 import { simulateTransaction, decodeKnownCall, analyzeTypedData } from './lib/txSimulation';
 import * as approvals from './lib/approvals';
 import { looksLikePoisonedAddress } from './lib/addressSafety';
@@ -3415,6 +3416,10 @@ function AppContent({ themeMode, changeTheme }) {
     refreshWcSessions();
     return () => { cancelled = true; if (cleanup) cleanup(); };
   }, [isUnlocked, unlockedPrivateKey, walletAddr, refreshWcSessions]);
+
+  // Nouvelle demande WalletConnect : relit les sessions pour afficher le site
+  // demandeur a jour dans la fenetre de signature (lib/affichageDemande.js).
+  useEffect(() => { if (wcRequest) refreshWcSessions(); }, [wcRequest, refreshWcSessions]);
 
   const handleWcConnect = useCallback(async (uriOverride) => {
     const uri = (uriOverride || wcUri).trim();
@@ -8072,7 +8077,7 @@ function AppContent({ themeMode, changeTheme }) {
             <>
               <Text style={st.settings_row_sub}>Montant</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>
-                {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+                {montantNatifLisible(tx.value)} {localWallet.getNetworkConfig(network).nativeSymbol}
               </Text>
             </>
           )}
@@ -8095,6 +8100,11 @@ function AppContent({ themeMode, changeTheme }) {
             <View style={{ width: 40 }} />
           </View>
           <ScrollView style={{ flex: 1, padding: 16 }}>
+            {(() => {
+              // Quel site demande cette signature (avant le 24/11/2026 : non affiche).
+              const site = siteDemandeur(wcSessions, wcRequest?.topic);
+              return <Text style={[st.settings_row_sub, { marginBottom: 4, color: site.connu ? T.text : T.red, fontWeight: '700' }]} numberOfLines={2}>Demandé par : {site.texte}</Text>;
+            })()}
             <Text style={[st.settings_row_sub, { marginBottom: 10 }]}>Réseau : {network}</Text>
             <View style={st.alert_form}>{detail}</View>
             {method === 'eth_sendTransaction' && !wcSimResult && !wcSimExpired && (
@@ -8275,7 +8285,7 @@ function AppContent({ themeMode, changeTheme }) {
             <>
               <Text style={st.settings_row_sub}>Montant</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>
-                {tx.value ? ethers.utils.formatEther(tx.value) : '0'} {localWallet.getNetworkConfig(network).nativeSymbol}
+                {montantNatifLisible(tx.value)} {localWallet.getNetworkConfig(network).nativeSymbol}
               </Text>
             </>
           )}
