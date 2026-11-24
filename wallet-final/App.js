@@ -51,6 +51,7 @@ import * as swapSecurity from './lib/swapSecurity';
 import * as phase7 from './lib/phase7';
 import * as top20Logos from './lib/top20Logos';
 import * as recurringBuy from './lib/recurringBuy';
+import { messageRetourAchat } from './lib/retourAchat';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
 import { refsAGarder } from './lib/stakeRefs';
@@ -4494,23 +4495,15 @@ function AppContent({ themeMode, changeTheme }) {
   // plusieurs fois (la crypto arrive on-chain, pas instantanément).
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const status = params.get('transactionStatus');
-    const isDemo = params.get('payment') === 'demo';
-    if (!status && !isDemo) return;
-
-    if (status) {
-      const label = { completed: '✅ Achat confirmé', pending: '⏳ Achat en cours', failed: '❌ Achat échoué' }[status] || `Statut Coinbase : ${status}`;
-      showAlert(label, status === 'failed'
-        ? "La transaction Coinbase n'a pas abouti."
-        : 'Ton solde se met à jour dès que la transaction est confirmée sur la blockchain — vérification automatique en cours.');
-    } else {
-      showAlert('✅ Achat (mode démo)', 'Aucun vrai paiement effectué — configure un fournisseur de paiement pour un achat réel.');
-    }
+    // Statuts connus seulement : un lien piege ne fait jamais afficher son
+    // propre texte dans une alerte du wallet (voir lib/retourAchat.js).
+    const retour = messageRetourAchat(window.location.search);
+    if (!retour) return;
+    if (retour.titre) showAlert(retour.titre, retour.message);
 
     window.history.replaceState({}, '', window.location.pathname);
 
-    if (status === 'completed' || status === 'pending') {
+    if (retour.verifierSolde) {
       let attempts = 0;
       const poll = setInterval(() => {
         attempts += 1;
