@@ -1,0 +1,45 @@
+# Fusion automatique des Pull Requests des agents Claude a risque faible
+# (voir .github/scripts/fusion-auto.js pour les regles exactes).
+# Les PR "ELEVE - securite", celles qui touchent les fichiers sensibles
+# (cles, signature, frais, dependances, automatisations) et celles marquees
+# "attente-pablo" attendent toujours le clic de Pablo.
+# Pour tout couper : Settings > Secrets and variables > Actions > Variables,
+# creer FUSION_AUTO = non.
+name: Fusion automatique
+
+on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: write
+
+concurrency:
+  group: fusion-automatique
+  cancel-in-progress: false
+
+jobs:
+  fusion:
+    name: Fusion automatique
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fusionner la prochaine PR a risque faible
+        run: node .github/scripts/fusion-auto.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FUSION_AUTO: ${{ vars.FUSION_AUTO }}
