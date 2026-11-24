@@ -62,6 +62,7 @@ import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
+import { prixUtilisables } from './lib/prixMarche';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -2429,12 +2430,18 @@ function AppContent({ themeMode, changeTheme }) {
       }
 
       const tokensData = res.data.tokens;
+      // Prix de secours figes du serveur (stale:true, CoinGecko en panne) :
+      // jamais utilises pour les soldes ni les conversions euros -> crypto
+      // (lib/prixMarche.js). S'il n'y a QUE ceux-la, on passe par le secours
+      // direct CoinGecko ci-dessous, comme pour une panne du serveur.
+      const prixReels = prixUtilisables(tokensData);
+      if (!prixReels.length) throw new Error('Prix de secours figes uniquement');
       setMarketStale(!!res.data.stale || tokensData.some((tok) => tok?.stale));
       setMarketCoins(tokensData);
       setTokens(prev => {
         const next = { ...prev };
         Object.entries(WALLET_TOKENS).forEach(([sym, t]) => {
-          const token = tokensData.find(item => item.id === t.cgId);
+          const token = prixReels.find(item => item.id === t.cgId);
           if (!token) return;
           next[sym] = {
             ...next[sym],
@@ -2450,7 +2457,7 @@ function AppContent({ themeMode, changeTheme }) {
 
       const snapshot = { time: Date.now() };
       Object.entries(WALLET_TOKENS).forEach(([sym, t]) => {
-        const token = tokensData.find(item => item.id === t.cgId);
+        const token = prixReels.find(item => item.id === t.cgId);
         if (token?.current_price) snapshot[sym] = token.current_price;
       });
       setCandleHistory(prev => {
