@@ -60,6 +60,7 @@ import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectD
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
+import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
 import { prixUtilisables } from './lib/prixMarche';
@@ -6925,14 +6926,15 @@ function AppContent({ themeMode, changeTheme }) {
                 value={alertTargetInput}
                 onChangeText={(v) => setAlertTargetInput(normalizeDecimalInput(v))}
                 keyboardType="decimal-pad"
-                placeholder={currentPrice ? currentPrice.toString() : '0.00'}
+                placeholder={currentPrice ? String(Number((currentPrice * fxRate).toPrecision(6))) : '0.00'}
                 placeholderTextColor={T.text3}
               />
               <TouchableOpacity
                 style={[st.max_btn, { marginBottom: 0 }]}
                 onPress={() => {
-                  const v = parseFloat(alertTargetInput);
-                  if (!v || v <= 0) { showToast('Prix cible invalide', 'error'); return; }
+                  // Saisi dans la devise affichee, compare en dollars : lib/prixCible.js.
+                  const v = prixCibleEnUsd(alertTargetInput, fxRate);
+                  if (!v) { showToast('Prix cible invalide', 'error'); return; }
                   // Retour immédiat si la condition est déjà vraie, plutôt que
                   // de créer une alerte qui n'attendrait que le prochain
                   // rafraîchissement (jusqu'à 30s) pour se déclencher.
