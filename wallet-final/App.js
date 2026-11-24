@@ -66,8 +66,11 @@ import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
+import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
+import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
+import { montantCourt, libelleFraisPont } from './lib/affichagePont';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
 import { messageProfilEmail } from './lib/profilEmail';
@@ -8582,10 +8585,10 @@ function AppContent({ themeMode, changeTheme }) {
             ) : (
               <>
                 <View style={st.send_info_box}>
-                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? ethers.utils.formatEther(toAmount) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
+                  <Text style={st.send_info_line}>Tu recevras ≈ {toAmount ? montantCourt(ethers.utils.formatEther(toAmount)) : '?'} ETH sur {NETWORK_INFO[bridgeToNetwork].label}</Text>
                   <Text style={st.send_info_line}>Route : {bridgeQuote.tool}</Text>
                   {feeCosts.map((f, i) => (
-                    <Text key={i} style={st.send_info_line}>{f.name} : {ethers.utils.formatUnits(f.amount, f.token?.decimals || 18)} {f.token?.symbol}</Text>
+                    <Text key={i} style={st.send_info_line}>{libelleFraisPont(f.name)} : {montantCourt(ethers.utils.formatUnits(f.amount, f.token?.decimals ?? 18), 8)} {f.token?.symbol}</Text>
                   ))}
                 </View>
                 <AnimPressable style={[st.green_btn, { marginTop: 16, opacity: bridgeExecuting ? 0.7 : 1 }]} onPress={handleExecuteBridge} disabled={bridgeExecuting}>
@@ -10335,14 +10338,14 @@ function AppContent({ themeMode, changeTheme }) {
         </>
       )}
 
-      {!!newsItems.length && (
+      {!!actusCrypto(newsItems).length && (
         <View style={{ marginTop: 20 }}>
           <View style={st.section_hdr}>
             <SectionTitle>{t('home_news_title')}</SectionTitle>
             <Text style={st.section_sub}>{t('home_news_updated')}</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-            {newsItems.slice(0, 10).map((item, i) => (
+            {actusCrypto(newsItems).map((item, i) => (
               <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                 {item.image ? (
                   <Image source={{ uri: item.image }} style={st.news_img} />
@@ -10488,14 +10491,14 @@ function AppContent({ themeMode, changeTheme }) {
           }
           ListHeaderComponent={
             <>
-              {!!newsItems.length && (
+              {!!actusCrypto(newsItems).length && (
                 <View style={{ marginBottom: 20 }}>
                   <View style={st.section_hdr}>
                     <SectionTitle>Actu crypto en direct</SectionTitle>
                     <Text style={st.section_sub}>MAJ / 5 min</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-                    {newsItems.slice(0, 10).map((item, i) => (
+                    {actusCrypto(newsItems).map((item, i) => (
                       <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                         {item.image ? (
                           <Image source={{ uri: item.image }} style={st.news_img} />
@@ -10919,12 +10922,7 @@ function AppContent({ themeMode, changeTheme }) {
             ))}
           </View>
           <Text style={st.buy_amount_convert}>
-            ≈ {(() => {
-              const price = tokens[buyToken]?.price || 0;
-              if (!price) return '0';
-              const qty = (parseFloat(buyAmount) || 0) / price;
-              return qty.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
-            })()} {buyToken}
+            ≈ {estimationAchat(buyAmount, tokens[buyToken]?.price, p7FxRates?.EUR || CURRENCIES.EUR.rate)} {buyToken}
           </Text>
 
           <View style={st.buy_info_box}>
