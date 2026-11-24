@@ -5254,6 +5254,27 @@ function AppContent({ themeMode, changeTheme }) {
     attemptUnlock(n);
   };
 
+  // Clavier physique sur le PIN (version web, 24/11/2026) : sur ordinateur,
+  // taper les chiffres au clavier ne faisait rien, il fallait cliquer chaque
+  // touche du pave. Chiffres = touche du pave, Retour arriere = effacer.
+  // Actif seulement quand un ecran de PIN est affiche.
+  const handlePinRef = useRef(handlePin);
+  handlePinRef.current = handlePin;
+  const pinClavierActif = Platform.OS === 'web'
+    && (pinStage === 'choose' || pinStage === 'confirm' || (walletCreated && !isUnlocked));
+  useEffect(() => {
+    if (!pinClavierActif || typeof window === 'undefined') return undefined;
+    const surTouche = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const cible = e.target && e.target.tagName;
+      if (cible === 'INPUT' || cible === 'TEXTAREA') return;
+      if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handlePinRef.current(e.key); }
+      else if (e.key === 'Backspace') { e.preventDefault(); setPinCode((p) => p.slice(0, -1)); }
+    };
+    window.addEventListener('keydown', surTouche);
+    return () => window.removeEventListener('keydown', surTouche);
+  }, [pinClavierActif]);
+
   // ── ACHAT / PAIEMENT STRIPE ──
   const handleBuyNow = async () => {
     if (!buyAmount || isNaN(Number(buyAmount)) || Number(buyAmount) <= 0) {
@@ -7825,7 +7846,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         {!!memberSince && (
           <View style={st.stats_card}>
-            <Text style={st.stats_card_lbl}>Wallet créé le</Text>
+            <Text style={st.stats_card_lbl}>Sur cet appareil depuis le</Text>
             <Text style={st.stats_card_val}>{memberSince}</Text>
           </View>
         )}
@@ -9588,7 +9609,7 @@ function AppContent({ themeMode, changeTheme }) {
                 );
               })()}
               <View style={[st.stats_card, { marginBottom: 14 }]}>
-                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité — Phase 7</Text>
+                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité</Text>
                 {(() => {
                   let unlimitedCount = 0;
                   try {
@@ -9596,7 +9617,7 @@ function AppContent({ themeMode, changeTheme }) {
                   } catch { unlimitedCount = 0; }
                   const rows = [
                     { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
-                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création (Phase 6) — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
+                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
                     { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
                     { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
                   ];
