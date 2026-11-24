@@ -129,6 +129,12 @@ const ouvrirLienExterne = (url) => {
 // n'affecte que ces boutons de raccourci, jamais le solde réel affiché.
 const NATIVE_GAS_RESERVE = { ethereum: 0.004, bsc: 0.002, polygon: 0.05, arbitrum: 0.001, optimism: 0.001, base: 0.001 };
 const getNativeGasReserve = (net) => NATIVE_GAS_RESERVE[net] ?? 0.003;
+// Demande dApp/WalletConnect : la transaction envoie-t-elle de la monnaie du
+// reseau (ETH, BNB...) ? Valeur illisible = oui (on prefere l'afficher).
+const valeurNativeNonNulle = (value) => {
+  if (value === undefined || value === null || value === '') return false;
+  try { return !ethers.BigNumber.from(value).isZero(); } catch { return true; }
+};
 // Frais d'un envoi SOL : 5 000 lamports par signature ; on garde le double.
 const SOLANA_SEND_FEE_RESERVE = 0.00001;
 
@@ -8011,7 +8017,11 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Transfert de token décodé</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>Tu envoies {decodedTransfer.amount} unités brutes à {decodedTransfer.to} (contrat : {tx.to})</Text>
             </>
-          ) : (
+          ) : null}
+          {/* Toujours afficher la monnaie du réseau envoyée quand elle n'est pas nulle,
+              même si un transfert de token est décodé : sinon un site pouvait cacher
+              l'envoi de ses ETH derrière un "petit transfert de token". */}
+          {(!decodedTransfer || valeurNativeNonNulle(tx.value)) && (
             <>
               <Text style={st.settings_row_sub}>Montant</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>
@@ -8210,7 +8220,11 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.settings_row_sub}>Transfert de token décodé</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>Tu envoies {decodedTransferDapp.amount} unités brutes à {decodedTransferDapp.to} (contrat : {tx.to})</Text>
             </>
-          ) : (
+          ) : null}
+          {/* Toujours afficher la monnaie du réseau envoyée quand elle n'est pas nulle,
+              même si un transfert de token est décodé : sinon un site pouvait cacher
+              l'envoi de ses ETH derrière un "petit transfert de token". */}
+          {(!decodedTransferDapp || valeurNativeNonNulle(tx.value)) && (
             <>
               <Text style={st.settings_row_sub}>Montant</Text>
               <Text style={{ color: T.text, marginBottom: 10 }}>
