@@ -63,6 +63,7 @@ import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
 import { prixUtilisables } from './lib/prixMarche';
+import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -595,8 +596,8 @@ const PRICE_ALERTS_KEY = 'wallet-pro-price-alerts-v1';
 const loadPriceAlerts = async () => {
   try {
     const raw = await AsyncStorage.getItem(PRICE_ALERTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    // Entrees abimees ecartees : voir lib/alertesPrix.js (page blanche sinon).
+    return nettoyerAlertes(raw ? JSON.parse(raw) : []);
   } catch { return []; }
 };
 
@@ -2926,7 +2927,7 @@ function AppContent({ themeMode, changeTheme }) {
     if (!parsed || typeof parsed !== 'object') { showToast('JSON invalide', 'error'); return false; }
     if (Array.isArray(parsed.favorites)) { setFavorites(parsed.favorites); saveFavorites(parsed.favorites); }
     if (Array.isArray(parsed.recentAddresses)) { setRecentAddresses(parsed.recentAddresses); saveRecentAddresses(parsed.recentAddresses); }
-    if (Array.isArray(parsed.priceAlerts)) { setPriceAlerts(parsed.priceAlerts); savePriceAlerts(parsed.priceAlerts); }
+    if (Array.isArray(parsed.priceAlerts)) { const alertes = nettoyerAlertes(parsed.priceAlerts); setPriceAlerts(alertes); savePriceAlerts(alertes); }
     if (parsed.txTags && typeof parsed.txTags === 'object') { setTxTags(parsed.txTags); saveTxTags(parsed.txTags); }
     showToast('✓ Données importées', 'success');
     return true;
