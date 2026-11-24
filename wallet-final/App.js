@@ -82,6 +82,8 @@ import { messageProfilEmail } from './lib/profilEmail';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
 import { exporterKeystoreAvecPin } from './lib/sauvegarde';
+// Frein anti-essais du PIN, commun a toutes les saisies : lib/essaisPin.js
+import { delaiApresEchecs, messageAttentePin } from './lib/essaisPin';
 // Documents legaux et FAQ de l'accueil (textes longs) : lib/contenus.js
 import { LEGAL_DOCS, LANDING_FAQ } from './lib/contenus';
 import { ethers } from 'ethers';
@@ -2909,6 +2911,25 @@ function AppContent({ themeMode, changeTheme }) {
   // alphanumérique) rend ce même brute-force pratiquement infaisable, sans
   // rien changer au format (toujours ethers/geth V3 standard, déchiffrable
   // par ce wallet OU par MetaMask/n'importe quel outil compatible).
+  // Erreur de PIN, ou qu'elle ait lieu (deverrouillage, "Afficher la
+  // phrase", export) : meme compteur persiste, meme delai croissant
+  // (lib/essaisPin.js). Sans ca, "Afficher la phrase" permettait d'essayer
+  // des PIN sans fin sur un telephone laisse deverrouille.
+  const noterEchecPin = useCallback(() => {
+    setPinFailCount(prev => {
+      const next = prev + 1;
+      const lockedUntil = next >= 3 ? Date.now() + delaiApresEchecs(next) : 0;
+      if (next >= 3) setPinLockedUntil(lockedUntil);
+      savePinFailRecord({ count: next, lockedUntil });
+      return next;
+    });
+  }, []);
+  const effacerEchecsPin = useCallback(async () => {
+    setPinFailCount(0);
+    setPinLockedUntil(0);
+    await clearPinFailRecord();
+  }, []);
+
   const [showExportKeystore, setShowExportKeystore] = useState(false);
   const [exportPassphraseInput, setExportPassphraseInput] = useState('');
   const [exportPassphraseConfirm, setExportPassphraseConfirm] = useState('');
@@ -2932,6 +2953,8 @@ function AppContent({ themeMode, changeTheme }) {
       setExportPassphraseError('Les deux saisies ne correspondent pas.');
       return;
     }
+    const attenteExport = messageAttentePin(pinLockedUntil);
+    if (attenteExport) { setExportPinInput(''); setExportPassphraseError(attenteExport); return; }
     setExportPassphraseLoading(true);
     setExportPassphraseError(null);
     try {
@@ -2948,13 +2971,16 @@ function AppContent({ themeMode, changeTheme }) {
       setExportPassphraseConfirm('');
       setKeystoreExported(true);
       saveFlag(KEYSTORE_EXPORTED_KEY);
+      await effacerEchecsPin();
     } catch (err) {
       setExportPinInput('');
-      setExportPassphraseError(/PIN incorrect/.test(err?.message || '') ? 'PIN incorrect.' : (humanizeTxError(err) || "Échec de l'export."));
+      const pinFaux = /PIN incorrect/.test(err?.message || '');
+      if (pinFaux) noterEchecPin();
+      setExportPassphraseError(pinFaux ? 'PIN incorrect.' : (humanizeTxError(err) || "Échec de l'export."));
     } finally {
       setExportPassphraseLoading(false);
     }
-  }, [unlockedPrivateKey, walletSession, isDuressMode, exportPinInput, exportPassphraseInput, exportPassphraseConfirm, copyToClipboard]);
+  }, [unlockedPrivateKey, walletSession, isDuressMode, exportPinInput, exportPassphraseInput, exportPassphraseConfirm, copyToClipboard, pinLockedUntil, noterEchecPin, effacerEchecsPin]);
 
   // Revérifie le PIN (déchiffre réellement le keystore, ne compare aucun code
   // en clair — même principe que attemptUnlock) avant de révéler la phrase de
@@ -2963,23 +2989,30 @@ function AppContent({ themeMode, changeTheme }) {
   // jamais la vraie phrase tant que ce mode est actif.
   const handleMnemonicReauthConfirm = useCallback(async () => {
     if (!walletSession?.encryptedKeystore || isDuressMode) return;
+    const attente = messageAttentePin(pinLockedUntil);
+    if (attente) { setMnemonicReauthPin(''); setMnemonicReauthError(attente); return; }
     setMnemonicReauthLoading(true);
     setMnemonicReauthError(null);
+    let pinFaux = false;
     try {
       const result = await localWallet.decryptWalletKeystore(walletSession.encryptedKeystore, mnemonicReauthPin);
       if (result.address.toLowerCase() !== walletSession.address.toLowerCase() || !result.mnemonic) {
         throw new Error('PIN incorrect.');
       }
+      await effacerEchecsPin();
       setShowMnemonicReauth(false);
       setMnemonicReauthPin('');
       setIsFirstTimeMnemonicBackup(false);
       setPendingMnemonic(result.mnemonic);
     } catch {
+      pinFaux = true;
+      setMnemonicReauthPin('');
       setMnemonicReauthError('PIN incorrect.');
     } finally {
       setMnemonicReauthLoading(false);
     }
-  }, [walletSession, isDuressMode, mnemonicReauthPin]);
+    if (pinFaux) noterEchecPin();
+  }, [walletSession, isDuressMode, mnemonicReauthPin, pinLockedUntil, noterEchecPin, effacerEchecsPin]);
 
   const exportUserData = useCallback(async () => {
     const payload = { version: 1, favorites, recentAddresses, priceAlerts, txTags };
@@ -3219,21 +3252,15 @@ function AppContent({ themeMode, changeTheme }) {
       // plafonné à 60s) — voir le commentaire sur pinFailCount/pinLockedUntil
       // plus haut. Les 2 premiers échecs restent instantanés (faute de frappe
       // normale), le frein n'arrive qu'ensuite.
-      setPinFailCount(prev => {
-        const next = prev + 1;
-        const lockedUntil = next >= 3 ? Date.now() + Math.min(5000 * (2 ** (next - 3)), 60000) : 0;
-        if (next >= 3) setPinLockedUntil(lockedUntil);
-        // Phase 6 (audit M9) : persister le compteur, sinon recharger
-        // l'app remettait le délai anti-brute-force à zéro.
-        savePinFailRecord({ count: next, lockedUntil });
-        return next;
-      });
+      // Phase 6 (audit M9) : compteur persiste (noterEchecPin), sinon
+      // recharger l'app remettait le délai anti-brute-force à zéro.
+      noterEchecPin();
       setPinError('Code incorrect');
       setPinCode('');
     } finally {
       setIsVerifyingPin(false);
     }
-  }, [walletSession, network, refreshPortfolio, pinLockedUntil]);
+  }, [walletSession, network, refreshPortfolio, pinLockedUntil, noterEchecPin]);
 
   const initWallet = useCallback(async () => {
     try {
