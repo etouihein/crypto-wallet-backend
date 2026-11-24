@@ -50,8 +50,9 @@ test('Bitcoin : "1,5" n envoie plus 1 BTC ; montant nul ou sous le minimum du re
 });
 
 test('Solana : montant au lamport pres ; "1,5", nul ou illisible refuse', async () => {
-  const { getBalance, getLatestBlockhash } = Connection.prototype;
+  const { getBalance, getLatestBlockhash, getMinimumBalanceForRentExemption } = Connection.prototype;
   Connection.prototype.getBalance = async () => 5_000_000_000;
+  Connection.prototype.getMinimumBalanceForRentExemption = async () => 890880;
   Connection.prototype.getLatestBlockhash = async () => ({ blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 1 });
   try {
     for (const mauvais of ['1,5', 'abc', '0', '-2']) {
@@ -67,5 +68,30 @@ test('Solana : montant au lamport pres ; "1,5", nul ou illisible refuse', async 
   } finally {
     Connection.prototype.getBalance = getBalance;
     Connection.prototype.getLatestBlockhash = getLatestBlockhash;
+    Connection.prototype.getMinimumBalanceForRentExemption = getMinimumBalanceForRentExemption;
+  }
+});
+
+test('Solana : envoi qui laisserait le compte sous son minimum, ou trop petit vers une adresse vide -> refuse AVANT de signer', async () => {
+  const { getBalance, getLatestBlockhash, getMinimumBalanceForRentExemption } = Connection.prototype;
+  const MOI = localWallet.getSolanaAddress(MNEMONIC);
+  let soldeDest = 0;
+  Connection.prototype.getBalance = async (cle) => (cle.toBase58() === MOI ? 1_000_000_000 : soldeDest);
+  Connection.prototype.getLatestBlockhash = async () => ({ blockhash: 'GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi', lastValidBlockHeight: 1 });
+  Connection.prototype.getMinimumBalanceForRentExemption = async () => 890880;
+  try {
+    // ancien MAX : 1 SOL - 0,00001 -> il resterait 5 000 lamports
+    soldeDest = 5_000_000_000;
+    await assert.rejects(localWallet.signSolanaTransferTx({ mnemonic: MNEMONIC, to: DEST_SOL, amountSol: '0.99999' }), /refuse de laisser un compte/);
+    // nouveau MAX : tout moins les frais exacts -> accepte
+    await localWallet.signSolanaTransferTx({ mnemonic: MNEMONIC, to: DEST_SOL, amountSol: '0.999995' });
+    // adresse vide, 0,0005 SOL : refuse ; 0,001 SOL : accepte
+    soldeDest = 0;
+    await assert.rejects(localWallet.signSolanaTransferTx({ mnemonic: MNEMONIC, to: DEST_SOL, amountSol: '0.0005' }), /adresse Solana est vide/);
+    await localWallet.signSolanaTransferTx({ mnemonic: MNEMONIC, to: DEST_SOL, amountSol: '0.001' });
+  } finally {
+    Connection.prototype.getBalance = getBalance;
+    Connection.prototype.getLatestBlockhash = getLatestBlockhash;
+    Connection.prototype.getMinimumBalanceForRentExemption = getMinimumBalanceForRentExemption;
   }
 });

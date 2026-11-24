@@ -15,6 +15,7 @@
 'use strict';
 
 const { montantVersTexte, decimalesEnvoi } = require('./saisie');
+const { maxSolEnvoyableTexte } = require('./loyerSolana');
 
 // pct : 0.25, 0.5 ou 1. solde : solde du jeton vendu. reserveNative :
 // reserve de gas du reseau EVM actif (getNativeGasReserve). reserveSol :
@@ -25,7 +26,10 @@ function montantRapideVente({ pct, symbole, nativeSymbol, solde, reserveNative =
   if (!Number.isFinite(s) || s <= 0 || !Number.isFinite(p) || p <= 0) return '0';
   let montant = s * Math.min(p, 1);
   if (p >= 1) {
-    if (symbole === 'SOL') montant = s - (Number(reserveSol) || 0);
+    // SOL : tout moins les frais exacts, le compte finit a 0 (24/11/2026 :
+    // garder 0,00001 laissait 5 000 lamports, refuses par le reseau, voir
+    // lib/loyerSolana.js). reserveSol n'est plus utilise.
+    if (symbole === 'SOL') return maxSolEnvoyableTexte(s);
     else if (symbole === nativeSymbol) montant = s - (Number(reserveNative) || 0);
   }
   return montantVersTexte(Math.max(0, montant), decimalesEnvoi(symbole));
