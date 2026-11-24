@@ -32,7 +32,14 @@
 #   (qui peut contenir une adresse de wallet) ; l'en-tete Origin reste envoye ;
 # - Permissions-Policy : camera seulement pour notre propre page (scan de QR code),
 #   micro et position GPS jamais.
+# - Content-Security-Policy (24/11/2026, audit complet) : le navigateur n'execute QUE
+#   le code du site lui-meme (et le compteur de visites Umami) ; aucun script injecte,
+#   aucun script integre a la page, aucun plugin. C'est le principal rempart si un
+#   jour un texte venu d'ailleurs (nom de token, actualite, dApp) reussissait a
+#   s'inserer dans la page : il ne pourrait pas lire le wallet deverrouille.
+#   Les connexions (API, noeuds, WalletConnect) et images restent ouvertes en https.
 /*
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cloud.umami.is; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src https:; worker-src 'self' blob:; media-src 'self' data: blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   Strict-Transport-Security: max-age=31536000
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
