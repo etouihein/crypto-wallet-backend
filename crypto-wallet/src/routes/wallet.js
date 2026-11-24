@@ -965,7 +965,14 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
       failed: tx.isError === '1',
       feeWei: feeWei(tx),
     }));
-    const tokenItems = tokens.map(tx => ({
+    // Audit de securite total (24/11/2026) : un transfert de jeton de
+    // MONTANT ZERO est la technique de l'« adresse piegee » : n'importe qui
+    // peut faire apparaitre dans TON historique un faux "Envoye 0 USDT" vers
+    // une adresse qui ressemble a celle d'un de tes contacts, en esperant que
+    // tu la recopies depuis l'Activite au prochain envoi. Ces lignes ne
+    // representent aucun mouvement d'argent : elles ne sont plus affichees.
+    const montantNul = (v) => { try { return ethers.BigNumber.from(v || '0').isZero(); } catch { return false; } };
+    const tokenItems = tokens.filter((tx) => !montantNul(tx.value)).map(tx => ({
       hash: tx.hash,
       type: 'erc20',
       symbol: tx.tokenSymbol,
