@@ -54,7 +54,7 @@ import * as recurringBuy from './lib/recurringBuy';
 import { messageRetourAchat } from './lib/retourAchat';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
-import { refsAGarder } from './lib/stakeRefs';
+import { refsAGarder, refsModifiees } from './lib/stakeRefs';
 import { alertesAtteintes } from './lib/alertesDeclenchement';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
@@ -3762,7 +3762,7 @@ function AppContent({ themeMode, changeTheme }) {
       // Une référence récente est gardée même si le compte n'est pas encore
       // visible (transaction pas encore confirmée) : voir lib/stakeRefs.js.
       const prunedRefs = refsAGarder(refs, accounts.map(a => a.stakePubkey));
-      if (prunedRefs.length !== refs.length) await saveStakeRefs(walletAddr, prunedRefs);
+      if (refsModifiees(refs, prunedRefs)) await saveStakeRefs(walletAddr, prunedRefs);
     } catch (err) {
       console.warn('getSolanaStakeAccountsInfo error', err.message);
     } finally {
@@ -3812,7 +3812,7 @@ function AppContent({ themeMode, changeTheme }) {
       // Référence enregistrée AVANT la diffusion : si le serveur ne répond
       // pas mais que le stake part quand même, l'app le retrouvera (son
       // adresse ne peut pas être recalculée). Une référence dont le compte
-      // n'existe pas est effacée au bout d'une heure (lib/stakeRefs.js).
+      // reste introuvable 7 jours d'affilée est effacée (lib/stakeRefs.js).
       const refs = await loadStakeRefs(walletAddr);
       await saveStakeRefs(walletAddr, [...refs, { stakePubkey, createdAt: Date.now() }]);
       let response;
