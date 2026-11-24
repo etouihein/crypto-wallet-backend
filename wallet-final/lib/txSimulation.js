@@ -98,6 +98,32 @@ function analyzeTypedData(rawTypedData) {
         warnings: [`Signature Permit2 : autorise ${spender} à dépenser tes tokens sans transaction visible sur la blockchain. N'accepte que si tu as toi-même initié cette action sur un site de confiance.`],
       };
     }
+    // Ordres de place de marche (24/11/2026, audit de securite total). Une
+    // fois signe, un ordre peut etre execute par N'IMPORTE QUI, sans autre
+    // confirmation : c'est le vecteur des arnaques NFT les plus courantes
+    // (faux "login" OpenSea qui fait signer la mise en vente de tes NFT pour
+    // presque rien). Avant, ces signatures etaient affichees sans aucune alerte.
+    const seaport = Array.isArray(message.offer) && Array.isArray(message.consideration);
+    const placeNft = seaport || primaryType === 'OrderComponents' || primaryType === 'BulkOrder' || /seaport|blur|looksrare|x2y2|opensea|magic ?eden/i.test(domain.name || '');
+    if (placeNft) {
+      const offerer = String(message.offerer || message.trader || message.signer || '').toLowerCase();
+      const offre = Array.isArray(message.offer) ? message.offer.length : null;
+      const pourToi = Array.isArray(message.consideration)
+        ? message.consideration.filter((c) => offerer && String(c?.recipient || '').toLowerCase() === offerer).length
+        : null;
+      const quoi = offre === null ? 'des objets' : `${offre} objet(s)`;
+      const recu = pourToi === null ? '' : (pourToi === 0 ? ' SANS RIEN recevoir en échange' : ` contre ${pourToi} paiement(s) pour toi`);
+      return {
+        risk: 'high',
+        warnings: [`Signature d'un ORDRE de place de marché NFT (${domain.name || primaryType || 'inconnu'}) : tu proposes ${quoi}${recu}. Une fois signé, n'importe qui peut exécuter cet ordre, sans autre confirmation de ta part. C'est la signature utilisée par les arnaques NFT les plus courantes : refuse si tu n'as pas toi-même mis un objet en vente ou fait une offre sur ce site.`],
+      };
+    }
+    if (/^(Order|MakerOrder|Maker|LimitOrder|RFQOrder)$/.test(primaryType)) {
+      return {
+        risk: 'medium',
+        warnings: [`Signature d'un ordre ("${primaryType}") : une fois signé, il peut être exécuté sans autre confirmation de ta part. Vérifie que tu es bien sur le site que tu voulais utiliser et que le montant te convient.`],
+      };
+    }
     if (/permit/i.test(primaryType)) {
       return {
         risk: 'medium',
