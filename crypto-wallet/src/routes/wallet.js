@@ -15,7 +15,7 @@ const { generateJwt } = require('@coinbase/cdp-sdk/auth');
 const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 // Suivi des revenus : appelé après chaque réponse, sans effet sur elle (voir src/revenue/hooks.js).
 const revenueHooks = require('../revenue/hooks');
-const { createHistorySources } = require('../history');
+const { createHistorySources, PRIMARY_SOURCE: HISTORY_PRIMARY_SOURCE } = require('../history');
 // Journal sans cle API ni donnee personnelle (voir src/journal.js).
 const { erreurPourJournal, masquerSecrets } = require('../journal');
 
@@ -1033,10 +1033,20 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
 router.get('/tx/history', async (req, res) => {
   try {
     const { address, network = 'ethereum' } = req.query;
-    if (!address || !ethers.utils.isAddress(address)) {
+    if (typeof address !== 'string' || !ethers.utils.isAddress(address)) {
       return res.status(400).json({ success: false, error: 'Adresse invalide.' });
     }
-    const items = await fetchTxHistory(address, network, 25);
+    // Seuls les 6 reseaux de l'app ont un historique. Avant le 24/11/2026,
+    // un autre nom (sepolia, solana, faute de frappe...) recevait en silence
+    // l'historique d'ETHEREUM (repli d'Etherscan sur la chaine 1), et chaque
+    // nom invente creait un nouvel appel Etherscan et une nouvelle entree en
+    // memoire (cle de cache = nom brut). Le nom est maintenant normalise
+    // ('ETH', 'eth' et 'ethereum' partagent le meme cache) et verifie.
+    const reseau = typeof network === 'string' ? normalizeNetwork(network) : '';
+    if (!Object.prototype.hasOwnProperty.call(HISTORY_PRIMARY_SOURCE, reseau)) {
+      return res.status(400).json({ success: false, error: 'Historique indisponible pour ce réseau.' });
+    }
+    const items = await fetchTxHistory(address, reseau, 25);
     res.json({ success: true, items });
   } catch (error) {
     console.error('Wallet route error:', erreurPourJournal(error));
