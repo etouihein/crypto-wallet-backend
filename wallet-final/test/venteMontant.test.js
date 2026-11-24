@@ -10,7 +10,8 @@ const { montantRapideVente } = require('../lib/venteMontant');
 const base = { nativeSymbol: 'ETH', reserveNative: 0.004, reserveSol: 0.00001 };
 
 test('"Tout" sur SOL garde de quoi payer les frais Solana', () => {
-  assert.equal(montantRapideVente({ ...base, pct: 1, symbole: 'SOL', solde: 2.5 }), '2.49999');
+  // tout moins les frais exacts (5 000 lamports) : le compte finit a 0
+  assert.equal(montantRapideVente({ ...base, pct: 1, symbole: 'SOL', solde: 2.5 }), '2.499995');
   assert.equal(montantRapideVente({ ...base, pct: 1, symbole: 'SOL', solde: 0.000005 }), '0');
 });
 
