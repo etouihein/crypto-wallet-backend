@@ -8240,10 +8240,32 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.modal_title}>Navigateur Web3</Text>
               <View style={{ width: 40 }} />
             </View>
+            {/* Version web (24/11/2026) : le navigateur integre n'existe que
+                dans l'app mobile. Avant, toucher une dApp de Decouvrir menait a
+                un ecran vide, sans issue. On propose maintenant d'ouvrir le site
+                dans un onglet et de connecter le wallet par WalletConnect. */}
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center' }}>
-                Le navigateur dApp n'est disponible que dans l'app mobile NexiaWallet (pas sur le web).
+              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center', lineHeight: 21 }}>
+                Le navigateur dApp intégré n'existe que dans l'app mobile. Sur le web, ouvre le site dans un nouvel onglet, choisis « WalletConnect » sur le site, copie le lien proposé et colle-le dans NexiaWallet.
               </Text>
+              {!!lienExterneSur(dappCurrentUrl) && (
+                <TouchableOpacity
+                  onPress={() => ouvrirLienExterne(dappCurrentUrl)}
+                  style={{ marginTop: 20, backgroundColor: T.gold, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 18 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: '#062219', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                    Ouvrir {(() => { try { return new URL(dappCurrentUrl).host; } catch { return 'le site'; } })()} dans un nouvel onglet
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => { setShowDappBrowser(false); setDappBrowserFromSettings(false); setShowWalletConnect(true); refreshWcSessions(); }}
+                style={{ marginTop: 12, borderWidth: 1, borderColor: T.gold, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 18 }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: T.gold, fontWeight: '700', fontSize: 14 }}>Coller un lien WalletConnect</Text>
+              </TouchableOpacity>
             </View>
           </>
         ) : (
@@ -10697,7 +10719,9 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
 
         <Text style={{ color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 14 }}>
-          Les dApps s'ouvrent dans le navigateur intégré. Tes clés restent sur ton appareil.
+          {Platform.OS === 'web'
+            ? 'Sur le web, les dApps s\'ouvrent dans un nouvel onglet et se connectent par WalletConnect. Tes clés restent sur ton appareil.'
+            : 'Les dApps s\'ouvrent dans le navigateur intégré. Tes clés restent sur ton appareil.'}
         </Text>
 
         <View style={{ height: 90 }} />
