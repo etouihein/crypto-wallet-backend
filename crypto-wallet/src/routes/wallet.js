@@ -578,6 +578,14 @@ function mapCoinGeckoMarketItem(item) {
   };
 }
 
+// Derniers prix REELS recus de CoinGecko (par taille de liste). Si CoinGecko
+// tombe quelques minutes, on renvoie ces prix (marques stale:true) plutot que
+// les prix codes en dur ci-dessus, qui peuvent dater de plusieurs mois :
+// avant le 24/11/2026, une simple panne de CoinGecko faisait afficher un
+// solde faux (prix figes) au lieu d'un solde a peine differe.
+const dernierMarcheReel = new Map();
+const AGE_MAX_DERNIER_MARCHE_MS = 6 * 60 * 60 * 1000;
+
 async function fetchCoinGeckoMarket(limit = 50) {
   return cachedFetch(`market:${limit}`, 30_000, async () => {
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false&price_change_percentage=24h,7d,30d`;
@@ -605,8 +613,14 @@ async function fetchCoinGeckoMarket(limit = 50) {
           console.warn('CoinGecko: appel complémentaire pour ids manquants échoué:', extraError.message);
         }
       }
+      dernierMarcheReel.set(limit, { data: mapped, recuLe: Date.now() });
       return mapped;
     } catch (error) {
+      const dernier = dernierMarcheReel.get(limit);
+      if (dernier && Date.now() - dernier.recuLe < AGE_MAX_DERNIER_MARCHE_MS) {
+        console.warn('CoinGecko unavailable, using last real market data:', error.message);
+        return dernier.data.map((item) => ({ ...item, stale: true }));
+      }
       console.warn('CoinGecko unavailable, using fallback market data:', error.message);
       // M11 (audit 2026-10-26) — ces prix sont codés en dur et FIGÉS, pas
       // des prix live : chaque entrée porte stale:true (copies, jamais
