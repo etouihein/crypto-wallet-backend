@@ -94,6 +94,12 @@ function buildInjectedProvider({ chainId }) {
     if (event === 'accountsChanged') {
       provider.selectedAddress = (data && data[0]) || null;
     }
+    // Changement de reseau dans l'app : la page doit le savoir, sinon elle
+    // prepare ses transactions pour l'ancien reseau (voir App.js).
+    if (event === 'chainChanged' && typeof data === 'string' && /^0x[0-9a-fA-F]{1,16}$/.test(data)) {
+      provider.chainId = data;
+      provider.networkVersion = String(parseInt(data, 16));
+    }
     (listeners[event] || []).forEach(function (cb) { try { cb(data); } catch (e) {} });
   };
 
