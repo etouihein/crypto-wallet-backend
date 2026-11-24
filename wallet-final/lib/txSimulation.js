@@ -38,8 +38,15 @@ const UNLIMITED_THRESHOLD = ethers.BigNumber.from(2).pow(200);
 // et affichage des transferts dans les modales WC/dApp) sans redupliquer
 // la table de sélecteurs.
 function decodeKnownCall(data) {
-  const selector = (data || '0x').slice(0, 10);
-  const known = data && data.length >= 10 ? KNOWN_SELECTORS[selector] : null;
+  // L'hexadecimal ne tient pas compte de la casse : "0x095EA7B3..." est
+  // signe exactement comme "0x095ea7b3..." (approve). Sans cette mise en
+  // minuscules, une dApp pouvait ecrire son calldata en MAJUSCULES pour
+  // echapper a l'alerte "approbation illimitee" (et au suivi des
+  // autorisations), alors que la transaction signee restait la meme.
+  if (typeof data !== 'string') return null;
+  data = data.toLowerCase();
+  const selector = data.slice(0, 10);
+  const known = data.length >= 10 ? KNOWN_SELECTORS[selector] : null;
   if (!known) return null;
   try {
     return { name: known.name, args: new ethers.utils.Interface([known.abi]).decodeFunctionData(known.name, data) };
