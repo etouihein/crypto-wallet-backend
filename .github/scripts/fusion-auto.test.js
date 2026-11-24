@@ -49,6 +49,8 @@ test('attend : tests en echec, en cours ou manquants ; main pas au vert ; confli
   assert.equal(decider(base({ checks: [vert('Serveur (crypto-wallet)'), { name: 'App et site (wallet-final)', status: 'completed', conclusion: 'failure' }] })).fusionner, false);
   assert.equal(decider(base({ checks: [vert('Serveur (crypto-wallet)'), { name: 'App et site (wallet-final)', status: 'in_progress', conclusion: null }] })).fusionner, false);
   assert.equal(decider(base({ checks: [vert('Serveur (crypto-wallet)')] })).fusionner, false);
+  // controle fini mais reste affiche "in_progress" (vu sur la PR #80) : accepte
+  assert.equal(decider(base({ checks: [...CHECKS, { name: 'Regles de la fusion automatique', status: 'in_progress', conclusion: 'success' }] })).fusionner, true);
   assert.equal(decider(base({ checks: [...CHECKS, { name: 'Cloudflare Pages', status: 'completed', conclusion: 'failure' }] })).fusionner, false);
   assert.equal(decider(base({ mainVert: false })).fusionner, false);
   assert.equal(decider(base({ pr: pr({ mergeable: false }) })).fusionner, false);

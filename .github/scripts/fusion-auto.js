@@ -72,7 +72,9 @@ function decider({ pr, depot, fichiers, checks, mainVert }) {
     if (!c) return { fusionner: false, raison: `test manquant : ${nom}` };
   }
   for (const c of utiles) {
-    if (c.status !== 'completed') return { fusionner: false, raison: `test en cours : ${c.name}` };
+    // GitHub laisse parfois un controle termine en "in_progress" avec sa
+    // conclusion deja posee : c'est la conclusion qui compte.
+    if (c.status !== 'completed' && !c.conclusion) return { fusionner: false, raison: `test en cours : ${c.name}` };
     if (!['success', 'neutral', 'skipped'].includes(c.conclusion)) return { fusionner: false, raison: `test en echec : ${c.name}` };
   }
   return { fusionner: true, raison: 'risque faible, tests au vert' };
