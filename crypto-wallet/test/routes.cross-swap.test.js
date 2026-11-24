@@ -179,3 +179,18 @@ test('la clé de l\'app reste exigée', async () => {
 });
 
 test.after(() => { global.fetch = realFetch; });
+
+test('reseaux pieges (constructor, __proto__, toString...) : 400 clair, sans appel a LI.FI', async () => {
+  installerLifi();
+  appels.length = 0;
+  await avecServeur(async (base) => {
+    for (const piege of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      for (const champ of ['fromNetwork', 'toNetwork']) {
+        // adresses BTC partout : avant, un reseau piege tombait sur le test Bitcoin
+        const r = await demander(base, { ...BTC_VERS_ETH, toAddress: ADR_BTC, fromAddress: ADR_BTC, [champ]: piege });
+        assert.equal(r.status, 400, `${champ}=${piege}`);
+      }
+    }
+  });
+  assert.equal(appels.length, 0, 'aucune demande ne part chez LI.FI');
+});
