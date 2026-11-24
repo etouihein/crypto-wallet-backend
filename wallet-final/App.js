@@ -3783,7 +3783,9 @@ function AppContent({ themeMode, changeTheme }) {
   }, [loadStakeAccounts, selectedValidator]);
 
   const handleCreateStake = useCallback(async () => {
-    if (!stakeAmount || isNaN(Number(stakeAmount)) || Number(stakeAmount) <= 0) {
+    // "1,5" (clavier francais) -> "1.5" ; la lecture stricte se fait dans lib/wallet.js.
+    const montantStake = normalizeDecimalInput(stakeAmount);
+    if (!montantStake || isNaN(Number(montantStake)) || Number(montantStake) <= 0) {
       setStakeError('Entre un montant de SOL valide.');
       return;
     }
@@ -3795,7 +3797,7 @@ function AppContent({ themeMode, changeTheme }) {
     setStakeError(null);
     try {
       const { rawTx, stakePubkey } = await localWallet.createAndDelegateStake({
-        mnemonic: unlockedMnemonic, votePubkey: selectedValidator, amountSol: stakeAmount,
+        mnemonic: unlockedMnemonic, votePubkey: selectedValidator, amountSol: montantStake,
       });
       // Référence enregistrée AVANT la diffusion : si le serveur ne répond
       // pas mais que le stake part quand même, l'app le retrouvera (son
