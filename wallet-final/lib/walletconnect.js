@@ -95,7 +95,7 @@ async function getWalletKit() {
         name: 'NexiaWallet',
         description: 'Portefeuille crypto non-custodial',
         // Vraie adresse du site (24/11/2026). Avant : l'ancienne adresse
-        // nexiawallet.pages.dev. Les sites connectes affichaient ce nom-la,
+        // Cloudflare du projet. Les sites connectes affichaient ce nom-la,
         // et WalletConnect previent en console que l'adresse declaree ne
         // correspond pas a la page (« can lead to issues »).
         url: 'https://www.nexiawallet.com',
