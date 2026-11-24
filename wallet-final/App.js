@@ -2973,7 +2973,7 @@ function AppContent({ themeMode, changeTheme }) {
         }
         imported = localWallet.importLocalWallet(importValue, importType);
       }
-      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, isImport: true, isMigration: false });
+      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, mnemonicPath: imported.mnemonicPath || null, isImport: true, isMigration: false });
       setPinCode(''); setPendingPinDigits(''); setPinError(null);
       setImportKeystorePassword('');
       setPinStage('choose');
@@ -3354,7 +3354,7 @@ function AppContent({ themeMode, changeTheme }) {
         setAddAccountError('Ce wallet est déjà un compte sur cet appareil.');
         return;
       }
-      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, isImport: true, isMigration: false, isNewAccount: true });
+      setPendingWalletForPin({ address: imported.address, privateKey: imported.privateKey, mnemonic: imported.mnemonic, mnemonicPath: imported.mnemonicPath || null, isImport: true, isMigration: false, isNewAccount: true });
       setPinCode(''); setPendingPinDigits(''); setPinError(null);
       setPinStage('choose');
       setShowAddAccount(false);

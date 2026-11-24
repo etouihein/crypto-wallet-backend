@@ -202,8 +202,19 @@ function walletFromPrivateKey(privateKey, network) {
 // bas de gamme — c'est le prix d'un PIN à 6 chiffres qui tient.
 const KEYSTORE_SCRYPT_OPTS = { scrypt: { N: 1 << 17 } };
 
-async function encryptWalletKeystore({ privateKey, mnemonic }, pin) {
-  const wallet = mnemonic ? ethers.Wallet.fromMnemonic(mnemonic) : new ethers.Wallet(privateKey);
+// `mnemonicPath` : chemin de derivation EVM du compte quand il n'est pas le
+// compte n°1 de la phrase (ex. keystore importe du compte n°2,
+// m/44'/60'/0'/0/1). Avant le 24/11/2026 il etait ignore : le keystore
+// enregistre contenait le compte n°1 (une AUTRE adresse) et le wallet ne se
+// deverrouillait plus jamais ("Code incorrect"). On verifie maintenant que
+// la cle chiffree est bien celle du compte importe, sinon on refuse.
+async function encryptWalletKeystore({ privateKey, mnemonic, mnemonicPath }, pin) {
+  const wallet = mnemonic
+    ? ethers.Wallet.fromMnemonic(mnemonic, mnemonicPath || undefined)
+    : new ethers.Wallet(privateKey);
+  if (privateKey && wallet.privateKey.toLowerCase() !== String(privateKey).toLowerCase()) {
+    throw new Error('La phrase de récupération ne correspond pas à cette clé : wallet non enregistré.');
+  }
   return wallet.encrypt(pin, KEYSTORE_SCRYPT_OPTS);
 }
 
@@ -213,6 +224,7 @@ async function decryptWalletKeystore(encryptedJson, pin) {
     address: wallet.address,
     privateKey: wallet.privateKey,
     mnemonic: wallet.mnemonic ? wallet.mnemonic.phrase : null,
+    mnemonicPath: wallet.mnemonic ? wallet.mnemonic.path : null,
   };
 }
 
