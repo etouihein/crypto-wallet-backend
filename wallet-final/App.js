@@ -68,6 +68,7 @@ import { montantRapideVente } from './lib/venteMontant';
 import { prixUtilisables } from './lib/prixMarche';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
+import { messageProfilEmail } from './lib/profilEmail';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
 import { exporterKeystoreAvecPin } from './lib/sauvegarde';
@@ -2374,9 +2375,18 @@ function AppContent({ themeMode, changeTheme }) {
       showToast('Adresse email invalide', 'error');
       return;
     }
+    if (!unlockedPrivateKey) {
+      showToast('Déverrouille ton wallet pour enregistrer ton email', 'error');
+      return;
+    }
     setProfileEmailSaving(true);
     try {
-      const res = await axios.post(`${API_BASE}/profile/email`, { address: walletAddr, email }, { headers: API_HEADERS, timeout: 10000 });
+      // Preuve que l'adresse est bien la tienne (exigee par le serveur depuis
+      // le 24/11/2026) : simple signature de texte, aucune transaction, aucun
+      // frais. Meme message que crypto-wallet/src/routes/wallet.js.
+      const horodatage = Math.floor(Date.now() / 1000);
+      const signature = await new ethers.Wallet(unlockedPrivateKey).signMessage(messageProfilEmail('lier', walletAddr, email, horodatage));
+      const res = await axios.post(`${API_BASE}/profile/email`, { address: walletAddr, email, signature, horodatage }, { headers: API_HEADERS, timeout: 10000 });
       if (!res.data?.success) throw new Error(res.data?.error || 'Échec');
       await saveProfileEmailLocal(email);
       setProfileEmailSaved(email);
@@ -2386,7 +2396,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setProfileEmailSaving(false);
     }
-  }, [profileEmailInput, walletAddr, showToast]);
+  }, [profileEmailInput, walletAddr, unlockedPrivateKey, showToast]);
 
   // Reçu de transaction partageable — même repli clipboard que shareApp/
   // shareReferralLink si Share.share échoue (desktop web sans navigator.share).
