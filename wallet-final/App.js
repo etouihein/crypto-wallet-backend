@@ -75,6 +75,8 @@ import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
 import { montantCourt, libelleFraisPont } from './lib/affichagePont';
 import { nettoyerAlertes } from './lib/alertesPrix';
+// Face ID / empreinte : un PIN memorise par compte (lib/biometrie.js)
+import { pinBiometriquePour, ajouterPinBiometrique, retirerPinBiometrique } from './lib/biometrie';
 import WebQrScanner from './components/WebQrScanner';
 import { messageProfilEmail } from './lib/profilEmail';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
@@ -451,14 +453,29 @@ const saveFavorites = async (list) => {
 // matérielle, l'activer donnerait un faux sentiment de sécurité.
 const BIOMETRIC_PIN_KEY = 'wallet-pro-biometric-pin-v1';
 
-const saveBiometricPin = async (pin) => {
-  if (Platform.OS === 'web') return;
-  try { await SecureStore.setItemAsync(BIOMETRIC_PIN_KEY, pin); } catch (error) { console.warn('saveBiometricPin failed', error); }
-};
-
-const loadBiometricPin = async () => {
+// Un PIN par compte (adresse) : voir lib/biometrie.js.
+const loadBiometricValue = async () => {
   if (Platform.OS === 'web') return null;
   try { return await SecureStore.getItemAsync(BIOMETRIC_PIN_KEY); } catch { return null; }
+};
+
+const saveBiometricPin = async (pin, address) => {
+  if (Platform.OS === 'web') return;
+  try {
+    const next = ajouterPinBiometrique(await loadBiometricValue(), address, pin);
+    if (next) await SecureStore.setItemAsync(BIOMETRIC_PIN_KEY, next);
+  } catch (error) { console.warn('saveBiometricPin failed', error); }
+};
+
+const loadBiometricPin = async (address) => pinBiometriquePour(await loadBiometricValue(), address);
+
+const forgetBiometricPin = async (address) => {
+  if (Platform.OS === 'web') return;
+  try {
+    const next = retirerPinBiometrique(await loadBiometricValue(), address);
+    if (next) await SecureStore.setItemAsync(BIOMETRIC_PIN_KEY, next);
+    else await SecureStore.deleteItemAsync(BIOMETRIC_PIN_KEY);
+  } catch { /* rien a faire */ }
 };
 
 const clearBiometricPin = async () => {
@@ -3128,7 +3145,7 @@ function AppContent({ themeMode, changeTheme }) {
       setPinError(null);
       // eslint-disable-next-line no-use-before-define -- défini plus bas dans
       // ce composant, mais l'appel n'a lieu qu'à l'exécution (post-render).
-      offerBiometricEnroll(pin);
+      offerBiometricEnroll(pin, pendingWalletForPin.address);
     } catch (err) {
       console.error('Sécurisation du wallet échouée:', err.message);
       setPinError('Impossible de sécuriser le wallet — réessaie.');
@@ -3374,6 +3391,7 @@ function AppContent({ themeMode, changeTheme }) {
             const next = accounts.filter(a => a.id !== id);
             setAccounts(next);
             await saveAccountsList(next);
+            if (target?.address) await forgetBiometricPin(target.address);
             if (id === activeAccountId) {
               const fallback = next[0];
               const session = { address: fallback.address, encryptedKeystore: fallback.encryptedKeystore, network: fallback.network || network, createdAt: fallback.createdAt };
@@ -4463,11 +4481,10 @@ function AppContent({ themeMode, changeTheme }) {
       if (rec.lockedUntil > Date.now()) setPinLockedUntil(rec.lockedUntil);
     }).catch(() => {});
   }, []);
-  // Vérifie une seule fois au montage si un PIN biométrique est déjà
-  // enregistré sur cet appareil (natif uniquement).
+  // Réglages locaux lus une seule fois au montage (natif uniquement). Face ID
+  // est lu plus bas, pour le compte affiché.
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    loadBiometricPin().then(pin => setBiometricEnabled(!!pin));
     loadFlag(SEED_BACKED_UP_KEY).then(setSeedBackedUp);
     loadFlag(KEYSTORE_EXPORTED_KEY).then(setKeystoreExported);
     loadHideBalance().then(setBalanceHidden);
@@ -4477,10 +4494,18 @@ function AppContent({ themeMode, changeTheme }) {
     loadProfileEmail().then((email) => { setProfileEmailSaved(email); setProfileEmailInput(email); });
   }, []);
 
+  // Face ID active pour le compte AFFICHE seulement (un PIN par compte).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let annule = false;
+    loadBiometricPin(walletSession?.address).then(pin => { if (!annule) setBiometricEnabled(!!pin); });
+    return () => { annule = true; };
+  }, [walletSession?.address]);
+
   // Propose l'activation juste après avoir choisi/confirmé un PIN — c'est le
   // seul moment où on a le PIN en clair sous la main (jamais gardé en
   // mémoire au-delà de cet instant précis).
-  const offerBiometricEnroll = useCallback(async (pin) => {
+  const offerBiometricEnroll = useCallback(async (pin, address) => {
     if (Platform.OS === 'web') return;
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
@@ -4491,7 +4516,7 @@ function AppContent({ themeMode, changeTheme }) {
         'Activer Face ID / empreinte pour déverrouiller NexiaWallet sans retaper ton code ?',
         [
           { text: 'Non merci', style: 'cancel' },
-          { text: 'Activer', onPress: async () => { await saveBiometricPin(pin); setBiometricEnabled(true); } },
+          { text: 'Activer', onPress: async () => { await saveBiometricPin(pin, address); setBiometricEnabled(true); } },
         ]
       );
     } catch (err) {
@@ -4506,13 +4531,15 @@ function AppContent({ themeMode, changeTheme }) {
         cancelLabel: 'Annuler',
       });
       if (!result.success) return;
-      const pin = await loadBiometricPin();
-      if (!pin) return;
+      // PIN de CE compte seulement : jamais celui d'un autre compte (qui
+      // afficherait « Code incorrect » et compterait une erreur).
+      const pin = await loadBiometricPin(walletSession?.address);
+      if (!pin) { setBiometricEnabled(false); setPinError('Face ID / empreinte n\'est pas activé pour ce compte : tape ton code.'); return; }
       await attemptUnlock(pin);
     } catch (err) {
       console.warn('Déverrouillage biométrique échoué:', err.message);
     }
-  }, [attemptUnlock]);
+  }, [attemptUnlock, walletSession]);
 
   const disableBiometric = useCallback(async () => {
     await clearBiometricPin();
