@@ -74,7 +74,11 @@ function analyzeTypedData(rawTypedData) {
     const verifyingContract = (domain.verifyingContract || '').toLowerCase();
     const contractLabel = domain.name ? `"${domain.name}"` : (verifyingContract || 'ce contrat');
 
-    if (primaryType === 'Permit' && message.spender && message.value !== undefined) {
+    // Deux formes de "Permit" : EIP-2612 (champ "value" = montant) et celle
+    // du DAI et de ses copies (champ "allowed": true = autorisation
+    // ILLIMITEE, sans montant). Les deux donnent les tokens au "spender".
+    const permitDaiStyle = message.allowed === true || message.allowed === 'true';
+    if (primaryType === 'Permit' && message.spender && (message.value !== undefined || permitDaiStyle)) {
       return {
         risk: 'high',
         warnings: [`Autorise ${message.spender} à dépenser tes tokens de ${contractLabel} — AUCUNE transaction on-chain ne confirmera ceci, c'est une simple signature. N'accepte que si tu as toi-même initié cette action sur un site de confiance.`],
