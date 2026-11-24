@@ -963,7 +963,16 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
     };
 
     const addrLower = address.toLowerCase();
-    const nativeItems = native.map(tx => ({
+    // Transactions natives RECUES a 0 (24/11/2026) : n'importe qui peut
+    // appeler ton adresse avec 0 ETH, depuis une adresse sosie, pour la faire
+    // apparaitre dans ton Activite (« Recu +0.00000 ETH »). Aucun argent ne
+    // bouge : elles ne sont plus affichees. Tes propres transactions a 0
+    // (approbations, appels de contrat) restent, elles t'ont coute des frais.
+    const recueANul = (tx) => {
+      if (tx.from?.toLowerCase() === addrLower) return false;
+      try { return ethers.BigNumber.from(tx.value || '0').isZero(); } catch { return false; }
+    };
+    const nativeItems = native.filter((tx) => !recueANul(tx)).map(tx => ({
       hash: tx.hash,
       type: 'native',
       // Même bug que la table des réseaux ci-dessus : un ternaire bsc/ETH
