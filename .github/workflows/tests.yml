@@ -7,6 +7,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # relance par la fusion automatique apres chaque fusion (une fusion faite
+  # par GitHub Actions ne declenche pas "push")
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -58,6 +61,17 @@ jobs:
       - name: Poids du site (resume visible dans l'onglet Checks)
         continue-on-error: true
         run: node scripts/poids-site.js /tmp/site
+
+  outils:
+    name: Regles de la fusion automatique
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/fusion-auto.test.js
 
   securite:
     name: Audit des bibliotheques (information)
