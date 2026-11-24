@@ -5931,6 +5931,7 @@ function AppContent({ themeMode, changeTheme }) {
     const validation = swapSecurity.validateZeroXQuote({
       quote, sellAddress, buyAddress, taker: walletAddr,
       chainId: activeNetwork.chainId, slippageBps: swapSlippageBps,
+      sellAmount: sellAmountUnits,
     });
     if (!validation.ok) {
       throw new Error(`Devis rejeté pour ta sécurité : ${validation.errors.join(' ')}`);
@@ -5978,6 +5979,7 @@ function AppContent({ themeMode, changeTheme }) {
     const revalidation = swapSecurity.validateZeroXQuote({
       quote, sellAddress: confirm.sellAddress, buyAddress: confirm.buyAddress, taker: walletAddr,
       chainId: activeNetwork.chainId, slippageBps: confirm.slippageBps,
+      sellAmount: confirm.sellAmountUnits,
     });
     if (!revalidation.ok) throw new Error(`Devis rejeté pour ta sécurité : ${revalidation.errors.join(' ')}`);
     const { rawTx: swapRawTx } = await localWallet.signRawTx({
