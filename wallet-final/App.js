@@ -60,6 +60,7 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
+import { messageProfilEmail } from './lib/profilEmail';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
@@ -2369,9 +2370,18 @@ function AppContent({ themeMode, changeTheme }) {
       showToast('Adresse email invalide', 'error');
       return;
     }
+    if (!unlockedPrivateKey) {
+      showToast('Déverrouille ton wallet pour enregistrer ton email', 'error');
+      return;
+    }
     setProfileEmailSaving(true);
     try {
-      const res = await axios.post(`${API_BASE}/profile/email`, { address: walletAddr, email }, { headers: API_HEADERS, timeout: 10000 });
+      // Preuve que l'adresse est bien la tienne (exigee par le serveur depuis
+      // le 24/11/2026) : simple signature de texte, aucune transaction, aucun
+      // frais. Meme message que crypto-wallet/src/routes/wallet.js.
+      const horodatage = Math.floor(Date.now() / 1000);
+      const signature = await new ethers.Wallet(unlockedPrivateKey).signMessage(messageProfilEmail('lier', walletAddr, email, horodatage));
+      const res = await axios.post(`${API_BASE}/profile/email`, { address: walletAddr, email, signature, horodatage }, { headers: API_HEADERS, timeout: 10000 });
       if (!res.data?.success) throw new Error(res.data?.error || 'Échec');
       await saveProfileEmailLocal(email);
       setProfileEmailSaved(email);
@@ -2381,7 +2391,7 @@ function AppContent({ themeMode, changeTheme }) {
     } finally {
       setProfileEmailSaving(false);
     }
-  }, [profileEmailInput, walletAddr, showToast]);
+  }, [profileEmailInput, walletAddr, unlockedPrivateKey, showToast]);
 
   // Reçu de transaction partageable — même repli clipboard que shareApp/
   // shareReferralLink si Share.share échoue (desktop web sans navigator.share).
