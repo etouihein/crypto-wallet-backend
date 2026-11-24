@@ -234,6 +234,19 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
     // Une transaction demandee pour un autre compte n'est jamais envoyee
     // depuis le compte actif a sa place.
     if (tx && tx.from !== undefined && tx.from !== null) verifierCompte(tx.from, wallet);
+    // Une transaction qui annonce son reseau (tx.chainId) n'est jamais signee
+    // sur un AUTRE reseau. Avant le 24/11/2026, ce champ etait ignore : une
+    // dApp restee sur Ethereum (l'utilisateur ayant change de reseau dans
+    // l'app) faisait signer sur Polygon une transaction preparee pour
+    // Ethereum -- montant et adresse sans rapport avec ce reseau. Refuse,
+    // comme MetaMask. Sans chainId : signee sur le reseau affiche.
+    if (tx && tx.chainId !== undefined && tx.chainId !== null) {
+      let chainDeLaTx;
+      try { chainDeLaTx = ethers.BigNumber.from(tx.chainId).toNumber(); } catch { chainDeLaTx = NaN; }
+      if (chainDeLaTx !== chainIdNumerique) {
+        throw new Error(`Cette transaction est prévue pour un autre réseau (chainId ${tx.chainId}) que celui affiché : envoi refusé.`);
+      }
+    }
     const populated = await wallet.populateTransaction({
       to: tx.to,
       value: tx.value ? ethers.BigNumber.from(tx.value) : undefined,

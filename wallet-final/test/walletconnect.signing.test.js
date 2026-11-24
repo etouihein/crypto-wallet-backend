@@ -120,3 +120,20 @@ test('eth_sign et methodes inconnues refusees ; reseau non supporte refuse', asy
   }
   assert.deepEqual(Object.keys(SUPPORTED_EVM_CHAINS).sort(), ['eip155:1', 'eip155:10', 'eip155:137', 'eip155:42161', 'eip155:56', 'eip155:8453']);
 });
+
+test('eth_sendTransaction : refuse une transaction prevue pour un AUTRE reseau que celui affiche', async () => {
+  envoyees.length = 0;
+  // dApp restee sur Ethereum (0x1) alors que l'app est sur Polygon
+  for (const chainId of ['0x1', 1, '0x38', 'n importe quoi']) {
+    await assert.rejects(
+      executeSessionRequest({ chainId: POLYGON, method: 'eth_sendTransaction', params: [{ from: MOI, to: AUTRE, value: '0x1', chainId }] }, CLE),
+      /autre réseau/,
+      String(chainId),
+    );
+  }
+  assert.equal(envoyees.length, 0, 'rien n est signe ni envoye');
+  // meme reseau (hex ou nombre) : envoye normalement
+  await executeSessionRequest({ chainId: POLYGON, method: 'eth_sendTransaction', params: [{ from: MOI, to: AUTRE, value: '0x1', chainId: '0x89' }] }, CLE);
+  await executeSessionRequest({ chainId: POLYGON, method: 'eth_sendTransaction', params: [{ from: MOI, to: AUTRE, value: '0x1', chainId: 137 }] }, CLE);
+  assert.equal(envoyees.length, 2);
+});
