@@ -60,6 +60,7 @@ import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
+import { MESSAGE_DEMANDE_OCCUPEE, nouvelleDemandeAcceptee } from './lib/demandeUnique';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
@@ -1910,6 +1911,9 @@ function AppContent({ themeMode, changeTheme }) {
   const [wcSessions, setWcSessions]             = useState([]);
   const [wcProposal, setWcProposal]             = useState(null); // proposition de connexion en attente
   const [wcRequest, setWcRequest]               = useState(null); // demande de signature/tx en attente
+  // Copie immediate de la demande ouverte (l'etat React arrive un rendu plus
+  // tard) : une 2e demande ne doit jamais remplacer celle affichee (lib/demandeUnique.js).
+  const wcRequestRef = useRef(null);
   const [wcRequestLoading, setWcRequestLoading] = useState(false);
   const [wcRequestError, setWcRequestError]     = useState(null);
   const [wcSimResult, setWcSimResult]           = useState(null); // voir lib/txSimulation.js
@@ -1925,6 +1929,7 @@ function AppContent({ themeMode, changeTheme }) {
   const [dappDisplayUrl, setDappDisplayUrl]       = useState(null); // URL réellement affichée à l'instant, pour l'en-tête — voir onNavigationStateChange
   const [dappConnectedOrigins, setDappConnectedOrigins] = useState([]); // origines autorisées à voir l'adresse (session app en cours)
   const [dappBridgeRequest, setDappBridgeRequest] = useState(null); // { id, method, params, origin } en attente de confirmation
+  const dappBridgeRequestRef = useRef(null); // meme role que wcRequestRef
   const [dappBridgeLoading, setDappBridgeLoading] = useState(false);
   const [dappBridgeError, setDappBridgeError]     = useState(null);
   const [dappSimResult, setDappSimResult]         = useState(null); // voir lib/txSimulation.js
@@ -3408,7 +3413,17 @@ function AppContent({ themeMode, changeTheme }) {
     let cancelled = false;
     walletConnect.subscribeToWalletKitEvents({
       onSessionProposal: (proposal) => { if (!cancelled) { setWcProposal(proposal); setShowWalletConnect(false); } },
-      onSessionRequest: (request) => { if (!cancelled) setWcRequest(request); },
+      onSessionRequest: (request) => {
+        if (cancelled) return;
+        // Une demande est deja affichee : la nouvelle est refusee, jamais
+        // substituee a celle que l'utilisateur est en train de lire.
+        if (!nouvelleDemandeAcceptee(wcRequestRef.current)) {
+          walletConnect.rejectSessionRequest(request.topic, request.id, MESSAGE_DEMANDE_OCCUPEE).catch(() => {});
+          return;
+        }
+        wcRequestRef.current = request;
+        setWcRequest(request);
+      },
       onSessionDelete: () => { if (!cancelled) refreshWcSessions(); },
     }).then((fn) => { if (cancelled) fn(); else cleanup = fn; })
       .catch((err) => console.warn('WalletConnect subscribe error', err.message));
@@ -3562,6 +3577,7 @@ function AppContent({ themeMode, changeTheme }) {
         maybeRecordApproval({ to: tx.to, data: tx.data, network: net, txHash: result }).catch(() => {});
       }
       showToast('✓ Signé', 'success');
+      wcRequestRef.current = null;
       setWcRequest(null);
     } catch (err) {
       setWcRequestError(humanizeTxError(err) || 'Impossible de traiter cette demande.');
@@ -3574,6 +3590,7 @@ function AppContent({ themeMode, changeTheme }) {
   const handleWcRejectRequest = useCallback(async () => {
     if (!wcRequest) return;
     try { await walletConnect.rejectSessionRequest(wcRequest.topic, wcRequest.id); } catch { /* rien à faire */ }
+    wcRequestRef.current = null;
     setWcRequest(null);
     setWcRequestError(null);
   }, [wcRequest]);
@@ -3656,8 +3673,15 @@ function AppContent({ themeMode, changeTheme }) {
     // / eth_sendTransaction / wallet_switchEthereumChain : confirmation requise.
     // eth_sign est retiré en Phase 6 : la modale l'affiche comme refusée
     // (bouton Signer désactivé) et executeSessionRequest le rejette.
+    // Une demande est deja affichee : la nouvelle est refusee, jamais
+    // substituee a celle que l'utilisateur est en train de lire.
+    if (!nouvelleDemandeAcceptee(dappBridgeRequestRef.current)) {
+      return dappBridgeRespond(id, MESSAGE_DEMANDE_OCCUPEE, null);
+    }
+    const demande = { id, method, params, origin };
+    dappBridgeRequestRef.current = demande;
     setDappBridgeError(null);
-    setDappBridgeRequest({ id, method, params, origin });
+    setDappBridgeRequest(demande);
   }, [dappConnectedOrigins, walletAddr, network, dappBridgeRespond, dappTrustedOrigin]);
 
   const handleDappBridgeApprove = useCallback(async () => {
@@ -3694,6 +3718,7 @@ function AppContent({ themeMode, changeTheme }) {
           maybeRecordApproval({ to: tx.to, data: tx.data, network, txHash: result }).catch(() => {});
         }
       }
+      dappBridgeRequestRef.current = null;
       setDappBridgeRequest(null);
     } catch (err) {
       const message = humanizeTxError(err) || 'Requête refusée.';
@@ -3707,6 +3732,7 @@ function AppContent({ themeMode, changeTheme }) {
   const handleDappBridgeReject = useCallback(() => {
     if (!dappBridgeRequest) return;
     dappBridgeRespond(dappBridgeRequest.id, "Refusé par l'utilisateur.", null);
+    dappBridgeRequestRef.current = null;
     setDappBridgeRequest(null);
     setDappBridgeError(null);
   }, [dappBridgeRequest, dappBridgeRespond]);
