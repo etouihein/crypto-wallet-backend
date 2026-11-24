@@ -53,7 +53,7 @@ test('historique : decimales 0 respectees et frais comptes une seule fois par tr
     assert.equal(r.status, 200);
     const { items } = await r.json();
     const par = (sym) => items.find((i) => i.symbol === sym);
-    assert.equal(par('ENTIER').amount, '5.0', 'un jeton a 0 decimale garde son vrai montant');
+    assert.equal(par('ENTIER').amount, '5', 'un jeton a 0 decimale garde son vrai montant');
     assert.equal(par('USDC').amount, '2.5');
     assert.equal(par('XYZ').amount, '1.0', 'decimales absentes : repli sur 18');
 
