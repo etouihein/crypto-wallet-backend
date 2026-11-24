@@ -972,17 +972,33 @@ async function fetchTxHistory(address, network = 'ethereum', limit = 25) {
     // tu la recopies depuis l'Activite au prochain envoi. Ces lignes ne
     // representent aucun mouvement d'argent : elles ne sont plus affichees.
     const montantNul = (v) => { try { return ethers.BigNumber.from(v || '0').isZero(); } catch { return false; } };
+    // Decimales du jeton : « 0 » est une vraie valeur (jetons indivisibles) ;
+    // avant le 24/11/2026, `Number('0') || 18` affichait 1 jeton comme
+    // 0,000000000000000001. Seule une valeur absente ou illisible retombe sur 18.
+    const decimalesJeton = (d) => (/^\d{1,2}$/.test(String(d ?? '').trim()) ? Number(String(d).trim()) : 18);
+    // Frais : une transaction n'est payee qu'une fois. Un envoi de jeton
+    // apparait aussi dans la liste native (meme hash), et un swap donne
+    // plusieurs lignes de jeton pour un seul hash : avant, « Mes stats »
+    // additionnait les frais 2 ou 3 fois. On ne les garde que sur la
+    // premiere ligne de chaque hash (la ligne native d'abord).
+    const hashesFrais = new Set(native.map((tx) => String(tx.hash || '').toLowerCase()));
+    const fraisUneFois = (tx) => {
+      const h = String(tx.hash || '').toLowerCase();
+      if (!h || hashesFrais.has(h)) return '0';
+      hashesFrais.add(h);
+      return feeWei(tx);
+    };
     const tokenItems = tokens.filter((tx) => !montantNul(tx.value)).map(tx => ({
       hash: tx.hash,
       type: 'erc20',
       symbol: tx.tokenSymbol,
       direction: tx.from?.toLowerCase() === addrLower ? 'out' : 'in',
-      amount: ethers.utils.formatUnits(tx.value || '0', Number(tx.tokenDecimal) || 18),
+      amount: ethers.utils.formatUnits(tx.value || '0', decimalesJeton(tx.tokenDecimal)),
       timestamp: Number(tx.timeStamp) * 1000,
       from: tx.from,
       to: tx.to,
       failed: false,
-      feeWei: feeWei(tx),
+      feeWei: fraisUneFois(tx),
     }));
 
     return [...nativeItems, ...tokenItems]
