@@ -604,7 +604,12 @@ async function createAndDelegateStake({ mnemonic, votePubkey, amountSol }) {
   const seed = `${STAKE_ACCOUNT_SEED_PREFIX}${Date.now()}`;
   const stakePubkey = await PublicKey.createWithSeed(keypair.publicKey, seed, StakeProgram.programId);
 
-  const lamportsToStake = Math.round(parseFloat(amountSol) * 1_000_000_000);
+  // Lecture stricte, comme pour les envois : avant, parseFloat("1,5") donnait
+  // 1 SOL et parseFloat("0x10") donnait 0 (stake vide, seul le loyer partait).
+  const lamportsExacts = parseAmountUnits(amountSol, 9);
+  if (lamportsExacts <= 0n) throw new Error('Montant invalide : il doit etre superieur a 0.');
+  if (lamportsExacts > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Montant invalide.');
+  const lamportsToStake = Number(lamportsExacts);
   const rentExempt = await connection.getMinimumBalanceForRentExemption(StakeProgram.space);
   const totalLamports = lamportsToStake + rentExempt;
 
