@@ -2297,6 +2297,12 @@ function AppContent({ themeMode, changeTheme }) {
   // la création d'un wallet — sans ça, il n'a AUCUN moyen de récupérer ses
   // fonds s'il perd son appareil ou vide son navigateur.
   const [pendingMnemonic, setPendingMnemonic] = useState(null);
+  // Audit de securite total (24/11/2026) : apres un verrouillage (auto apres
+  // 2 min sur le web, ou passage en arriere-plan), la phrase de recuperation en
+  // cours de sauvegarde restait AFFICHEE par-dessus l'ecran du code PIN :
+  // n'importe qui devant l'ecran pouvait la lire. Elle est maintenant masquee
+  // des le verrouillage, et revient apres le code PIN (rien n'est perdu).
+  const [phraseMasqueeParVerrou, setPhraseMasqueeParVerrou] = useState(false);
   // Re-authentification (re-saisie du PIN) avant d'afficher la phrase de
   // récupération, même app déjà déverrouillée — sans ça, quiconque récupère
   // le téléphone pendant la fenêtre de déverrouillage (jusqu'à 2 min
@@ -4429,6 +4435,7 @@ function AppContent({ themeMode, changeTheme }) {
   const lastActivityRef = useRef(Date.now());
 
   const lockWallet = useCallback(() => {
+    setPhraseMasqueeParVerrou(true);
     setIsUnlocked(false);
     setIsDuressMode(false);
     setUnlockedPrivateKey(null);
@@ -4436,6 +4443,9 @@ function AppContent({ themeMode, changeTheme }) {
     setPinCode('');
     setPinError(null);
   }, []);
+
+  // Code PIN retape : la phrase en cours de sauvegarde peut reapparaitre.
+  useEffect(() => { if (isUnlocked) setPhraseMasqueeParVerrou(false); }, [isUnlocked]);
 
   useEffect(() => {
     const markActivity = () => { lastActivityRef.current = Date.now(); };
@@ -6196,7 +6206,7 @@ function AppContent({ themeMode, changeTheme }) {
   // hasard (la phrase est masquée pendant le quiz) ; seuls 3/3 corrects
   // valident la sauvegarde.
   const renderMnemonicBackup = () => {
-    if (!pendingMnemonic) return null;
+    if (!pendingMnemonic || phraseMasqueeParVerrou) return null;
     const words = pendingMnemonic.trim().split(/\s+/);
     const finishBackup = () => {
       setSeedQuiz(null);
