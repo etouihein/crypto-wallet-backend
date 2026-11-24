@@ -55,6 +55,7 @@ import { messageRetourAchat } from './lib/retourAchat';
 import * as bridge from './lib/bridge';
 import * as defiPositions from './lib/defiPositions';
 import { refsAGarder } from './lib/stakeRefs';
+import { alertesAtteintes } from './lib/alertesDeclenchement';
 import * as Notifications from 'expo-notifications';
 import { translate as i18nTranslate, SUPPORTED_LOCALES, INTL_LOCALE_TAG, detectDeviceLocale } from './lib/i18n';
 import { DESIGN_TOKENS } from './lib/designTokens';
@@ -4250,18 +4251,8 @@ function AppContent({ themeMode, changeTheme }) {
   // seule (sinon on serait spammé à chaque rafraîchissement de 30s).
   useEffect(() => {
     if (!priceAlertsLoaded || !priceAlerts.length) return;
-    const priceBySymbol = {};
-    Object.entries(tokens).forEach(([sym, t]) => { if (t.price) priceBySymbol[sym] = t.price; });
-    marketCoins.forEach(c => {
-      const sym = c.symbol?.toUpperCase();
-      if (sym && c.current_price) priceBySymbol[sym] = c.current_price;
-    });
-
-    const triggered = priceAlerts.filter(a => {
-      const price = priceBySymbol[a.symbol];
-      if (!price) return false;
-      return a.direction === 'above' ? price >= a.targetPrice : price <= a.targetPrice;
-    });
+    // Jamais sur un prix de secours fige du serveur : lib/alertesDeclenchement.js.
+    const triggered = alertesAtteintes(priceAlerts, tokens, marketCoins);
     if (!triggered.length) return;
 
     if (vibrationEnabled) Vibration.vibrate(200);
