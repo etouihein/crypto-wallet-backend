@@ -1461,12 +1461,30 @@ router.get('/nft/image-proxy', imagesLimiter, async (req, res) => {
   }
 });
 
+// Validation stricte des paiements (audit de securite total, 24/11/2026) :
+// avant, un symbole non textuel ({}, 12) ou un reseau non textuel faisait
+// planter la route (500), « 0.05abc » etait lu comme 0,05 (parseFloat) et un
+// achat de 0,01 passait malgre le message « entre 1 et 5000 ».
+const SYMBOLE_PAIEMENT_RE = /^[A-Za-z0-9]{1,12}$/;
+function montantPaiement(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  if (typeof v === 'string' && /^\d{1,12}(\.\d{1,18})?$/.test(v.trim())) return Number(v.trim());
+  return NaN;
+}
+function parametresPaiementInvalides({ tokenSymbol, network }) {
+  if (typeof tokenSymbol !== 'string' || !SYMBOLE_PAIEMENT_RE.test(tokenSymbol)) return 'Token invalide.';
+  if (network !== undefined && (typeof network !== 'string' || network.length > 20)) return 'Réseau invalide.';
+  return null;
+}
+
 router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, res) => {
   try {
-    const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
+    const { amountUsd, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body || {};
     if (!amountUsd || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
     }
+    const invalide = parametresPaiementInvalides({ tokenSymbol, network });
+    if (invalide) return res.status(400).json({ success: false, error: invalide });
     const normalizedBuyNetwork = normalizeNetwork(network);
     const walletAddressValid = normalizedBuyNetwork === 'solana'
       ? isValidSolanaAddress(walletAddress || '')
@@ -1477,8 +1495,8 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
     }
 
-    const intAmount = Math.round(parseFloat(amountUsd) * 100);
-    if (!Number.isFinite(intAmount) || intAmount <= 0 || intAmount > 5_000_00) {
+    const intAmount = Math.round(montantPaiement(amountUsd) * 100);
+    if (!Number.isFinite(intAmount) || intAmount < 1_00 || intAmount > 5_000_00) {
       return res.status(400).json({ success: false, error: 'Montant invalide (entre 1 et 5000).' });
     }
 
@@ -1588,10 +1606,12 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
 // que la vérification business MoonPay n'est pas validée).
 router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) => {
   try {
-    const { amountCrypto, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body;
+    const { amountCrypto, tokenSymbol, network = 'ethereum', returnUrl, walletAddress } = req.body || {};
     if (!amountCrypto || !tokenSymbol) {
       return res.status(400).json({ success: false, error: 'Montant et token requis.' });
     }
+    const invalide = parametresPaiementInvalides({ tokenSymbol, network });
+    if (invalide) return res.status(400).json({ success: false, error: invalide });
     const normalizedSellNetwork = normalizeNetwork(network);
     const walletAddressValid = normalizedSellNetwork === 'solana'
       ? isValidSolanaAddress(walletAddress || '')
@@ -1601,7 +1621,7 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
     if (!walletAddressValid) {
       return res.status(400).json({ success: false, error: 'Adresse de wallet (walletAddress) invalide ou manquante.' });
     }
-    const amount = parseFloat(amountCrypto);
+    const amount = montantPaiement(amountCrypto);
     if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Montant invalide.' });
     }
