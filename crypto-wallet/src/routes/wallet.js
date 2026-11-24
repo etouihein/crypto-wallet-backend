@@ -16,6 +16,7 @@ const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 // Suivi des revenus : appelé après chaque réponse, sans effet sur elle (voir src/revenue/hooks.js).
 const revenueHooks = require('../revenue/hooks');
 const { createHistorySources, PRIMARY_SOURCE: HISTORY_PRIMARY_SOURCE } = require('../history');
+const { creerCache } = require('../cacheMemoire');
 // Journal sans cle API ni donnee personnelle (voir src/journal.js).
 const { erreurPourJournal, masquerSecrets } = require('../journal');
 
@@ -550,14 +551,12 @@ function coingeckoHeaders() {
 // propre appel CoinGecko, ce qui épuise très vite le quota gratuit (429 Too
 // Many Requests, déjà observé en test). Un cache de quelques dizaines de
 // secondes suffit largement pour des prix crypto affichés côté wallet.
-const geckoCache = new Map(); // key -> { data, expiresAt }
+// Taille bornee (voir src/cacheMemoire.js) : avant le 24/11/2026, les
+// entrees expirees n'etaient jamais retirees et la memoire montait sans fin.
+const geckoCache = creerCache({ max: 2000 });
 
 async function cachedFetch(key, ttlMs, loader) {
-  const hit = geckoCache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.data;
-  const data = await loader();
-  geckoCache.set(key, { data, expiresAt: Date.now() + ttlMs });
-  return data;
+  return geckoCache.obtenir(key, ttlMs, loader);
 }
 
 // Top N cryptos par capitalisation — alimente l'onglet Marché avec un vrai
