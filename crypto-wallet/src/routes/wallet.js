@@ -16,6 +16,8 @@ const { FRONTEND_URL, isTrustedOrigin } = require('../config/allowedOrigins');
 // Suivi des revenus : appelé après chaque réponse, sans effet sur elle (voir src/revenue/hooks.js).
 const revenueHooks = require('../revenue/hooks');
 const { createHistorySources } = require('../history');
+// Journal sans cle API ni donnee personnelle (voir src/journal.js).
+const { erreurPourJournal, masquerSecrets } = require('../journal');
 
 // Délai maximum de chaque appel à un service externe (0x, LI.FI, CoinGecko,
 // Alternative.me, Alchemy, Coinbase, Blockstream). Sans lui, un service qui
@@ -699,7 +701,9 @@ router.post('/webhooks/moonpay', (req, res) => {
     return res.json({ received: true, verified: false });
   }
   const { type, data } = req.body || {};
-  console.log(`💳 MoonPay [${type}] statut=${data?.status} adresse=${data?.walletAddress} montant=${data?.baseCurrencyAmount}${data?.baseCurrencyCode} -> ${data?.quoteCurrencyAmount} ${data?.currency?.code}`);
+  // Ni adresse de wallet ni montant dans le journal (donnees personnelles) :
+  // seulement le type d'evenement et le statut.
+  console.log(`💳 MoonPay [${masquerSecrets(type)}] statut=${masquerSecrets(data?.status)}`);
   res.json({ received: true, verified: true });
 });
 
@@ -709,7 +713,7 @@ router.get('/market', async (req, res) => {
     // M11 : stale:true si au moins un prix vient du fallback codé en dur.
     res.json({ success: true, tokens, stale: tokens.some((t) => t.stale === true) });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -777,7 +781,7 @@ router.get('/market/overview', async (req, res) => {
       stale: !fearGreed || !globalData,
     });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -791,7 +795,7 @@ router.get('/coin/:cgId', async (req, res) => {
     const coin = await fetchCoinDetail(encodeURIComponent(req.params.cgId));
     res.json({ success: true, coin });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -809,7 +813,7 @@ router.get('/coin/:cgId/candles', async (req, res) => {
     const candles = await fetchCoinOhlc(encodeURIComponent(req.params.cgId), timeframe);
     res.json({ success: true, candles });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -912,7 +916,7 @@ router.get('/news', async (req, res) => {
     const items = await fetchCryptoNews();
     res.json({ success: true, items });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -996,7 +1000,7 @@ router.get('/tx/history', async (req, res) => {
     const items = await fetchTxHistory(address, network, 25);
     res.json({ success: true, items });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -1062,7 +1066,7 @@ router.get('/swap/quote', devisLimiter, async (req, res) => {
     res.json({ success: true, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
     revenueHooks.onSwapQuote({ chainId, sellToken, buyToken, sellAmount, taker, quote: data, feeBps: (FEE_RECIPIENT_ADDRESS && SWAP_FEE_BPS > 0) ? SWAP_FEE_BPS : 0 });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     if (isUpstreamTimeout(error)) {
       return res.status(504).json({ success: false, error: 'Le service de devis ne répond pas, réessaie dans un instant.' });
     }
@@ -1120,7 +1124,7 @@ router.get('/bridge/quote', devisLimiter, async (req, res) => {
     res.json({ success: true, quote: data, feePct: LIFI_FEE * 100 });
     revenueHooks.onBridgeQuote({ fromChain: fc, toChain: tc, fromAddress, fromAmount, quote: data, fee: LIFI_FEE });
   } catch (error) {
-    console.error('Bridge quote error:', error);
+    console.error('Bridge quote error:', erreurPourJournal(error));
     if (isUpstreamTimeout(error)) {
       return res.status(504).json({ success: false, error: 'Le service de pont ne répond pas, réessaie dans un instant.' });
     }
@@ -1241,7 +1245,7 @@ router.get('/swap/cross-quote', devisLimiter, async (req, res) => {
       quote: data, fee: commissionAppliquee ? LIFI_FEE : 0,
     });
   } catch (error) {
-    console.error('Cross swap quote error:', error);
+    console.error('Cross swap quote error:', erreurPourJournal(error));
     if (isUpstreamTimeout(error)) {
       return res.status(504).json({ success: false, error: 'Le service d\'échange ne répond pas, réessaie dans un instant.' });
     }
@@ -1313,7 +1317,7 @@ router.get('/nft/owned/:address', sensitiveLimiter, async (req, res) => {
       }));
     res.json({ success: true, nfts });
   } catch (error) {
-    console.error('Wallet route error:', error);
+    console.error('Wallet route error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur serveur, réessaie dans un instant.' });
   }
 });
@@ -1512,7 +1516,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
       try {
         url = await buildCoinbaseOnrampUrl({ walletAddress, network, clientIp: req.ip, amountEur: intAmount / 100, tokenSymbol });
       } catch (err) {
-        console.error('Coinbase Onramp error:', err);
+        console.error('Coinbase Onramp error:', erreurPourJournal(err));
         return res.status(502).json({ success: false, error: 'Impossible de générer la session Coinbase Onramp.' });
       }
       if (!url) {
@@ -1571,7 +1575,7 @@ router.post('/payments/create-checkout-session', sensitiveLimiter, async (req, r
 
     res.json({ success: true, provider: 'stripe', url: session.url });
   } catch (error) {
-    console.error('Checkout error:', error);
+    console.error('Checkout error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur de paiement.' });
   }
 });
@@ -1632,7 +1636,7 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
           redirectURL: frontendBase,
         });
       } catch (err) {
-        console.error('Coinbase Offramp error:', err);
+        console.error('Coinbase Offramp error:', erreurPourJournal(err));
         return res.status(502).json({ success: false, error: 'Impossible de générer la session Coinbase Offramp.' });
       }
       if (!url) {
@@ -1657,7 +1661,7 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
     });
     res.json({ success: true, provider: 'moonpay', url });
   } catch (error) {
-    console.error('Sell session error:', error);
+    console.error('Sell session error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Erreur lors de la création de la session de vente.' });
   }
 });
@@ -1705,7 +1709,7 @@ router.post('/tx/broadcast', diffusionLimiter, async (req, res) => {
   } catch (error) {
     // Message générique côté client : le message brut du provider (RPC)
     // ne remonte plus dans la réponse (il reste dans les logs serveur).
-    console.error('Broadcast error:', error);
+    console.error('Broadcast error:', erreurPourJournal(error));
     res.status(400).json({ success: false, error: 'Diffusion de la transaction impossible.' });
   }
 });
@@ -1726,7 +1730,7 @@ router.post('/tx/broadcast-solana', diffusionLimiter, async (req, res) => {
   } catch (error) {
     // Phase 6 : message générique au client, détail dans les logs serveur
     // uniquement (comme /tx/broadcast) — pas de fuite d'infra.
-    console.error('Solana broadcast error:', error);
+    console.error('Solana broadcast error:', erreurPourJournal(error));
     res.status(400).json({ success: false, error: 'Diffusion de la transaction Solana impossible.' });
   }
 });
@@ -1748,12 +1752,12 @@ router.post('/tx/broadcast-bitcoin', diffusionLimiter, async (req, res) => {
     if (!response.ok) {
       // Phase 6 : message générique au client, détail dans les logs serveur
       // uniquement (comme /tx/broadcast) — pas de fuite d'infra.
-      console.error('Bitcoin broadcast error (Blockstream):', text);
+      console.error('Bitcoin broadcast error (Blockstream):', masquerSecrets(text));
       return res.status(400).json({ success: false, error: 'Diffusion de la transaction Bitcoin impossible.' });
     }
     res.json({ success: true, txHash: text.trim(), network: 'bitcoin' });
   } catch (error) {
-    console.error('Bitcoin broadcast error:', error);
+    console.error('Bitcoin broadcast error:', erreurPourJournal(error));
     res.status(400).json({ success: false, error: 'Diffusion de la transaction Bitcoin impossible.' });
   }
 });
@@ -1790,7 +1794,7 @@ router.post('/profile/email', sensitiveLimiter, (req, res) => {
     saveEmailProfile(address, email.trim().toLowerCase());
     res.json({ success: true });
   } catch (error) {
-    console.error('Email profile save error:', error);
+    console.error('Email profile save error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Impossible d\'enregistrer l\'email pour le moment.' });
   }
 });
@@ -1816,7 +1820,7 @@ router.delete('/profile/email', sensitiveLimiter, (req, res) => {
     const deleted = deleteEmailProfile(address);
     res.json({ success: true, deleted });
   } catch (error) {
-    console.error('Email profile delete error:', error);
+    console.error('Email profile delete error:', erreurPourJournal(error));
     res.status(500).json({ success: false, error: 'Impossible de supprimer l\'email pour le moment.' });
   }
 });
