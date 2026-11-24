@@ -131,6 +131,19 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
     warnings.push('Déplace des fonds/NFT depuis une adresse déjà autorisée (normal pour un swap/marketplace connu, à vérifier sinon).');
     if (risk === 'none') risk = 'medium';
   }
+  // Un appel de token (transfer, approve...) n'a JAMAIS besoin de recevoir
+  // de la monnaie du réseau (ETH, BNB, POL...). Si la demande en joint
+  // quand même, c'est le piège classique : l'écran parle d'un petit
+  // transfert de token pendant que la transaction vide le solde ETH vers le
+  // contrat du site. Toujours signalé en risque ÉLEVÉ, montant en clair.
+  if (known) {
+    let nativeValue = null;
+    try { nativeValue = value ? ethers.BigNumber.from(value) : null; } catch { nativeValue = null; }
+    if (nativeValue && !nativeValue.isZero()) {
+      risk = 'high';
+      warnings.push(`En plus de l'appel "${known.name}", cette transaction ENVOIE ${ethers.utils.formatEther(nativeValue)} en monnaie du réseau (ETH, BNB, POL…) au contrat ${to}. Un appel de token n'en a jamais besoin : refuse si tu ne l'as pas voulu.`);
+    }
+  }
 
   let willLikelyRevert = false;
   let revertReason = null;
