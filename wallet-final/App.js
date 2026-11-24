@@ -67,6 +67,7 @@ import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
 import { actusCrypto } from './lib/actusCrypto';
+import { montantActivite } from './lib/montantActivite';
 import { prixUtilisables } from './lib/prixMarche';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
@@ -5255,6 +5256,27 @@ function AppContent({ themeMode, changeTheme }) {
     attemptUnlock(n);
   };
 
+  // Clavier physique sur le PIN (version web, 24/11/2026) : sur ordinateur,
+  // taper les chiffres au clavier ne faisait rien, il fallait cliquer chaque
+  // touche du pave. Chiffres = touche du pave, Retour arriere = effacer.
+  // Actif seulement quand un ecran de PIN est affiche.
+  const handlePinRef = useRef(handlePin);
+  handlePinRef.current = handlePin;
+  const pinClavierActif = Platform.OS === 'web'
+    && (pinStage === 'choose' || pinStage === 'confirm' || (walletCreated && !isUnlocked));
+  useEffect(() => {
+    if (!pinClavierActif || typeof window === 'undefined') return undefined;
+    const surTouche = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const cible = e.target && e.target.tagName;
+      if (cible === 'INPUT' || cible === 'TEXTAREA') return;
+      if (/^[0-9]$/.test(e.key)) { e.preventDefault(); handlePinRef.current(e.key); }
+      else if (e.key === 'Backspace') { e.preventDefault(); setPinCode((p) => p.slice(0, -1)); }
+    };
+    window.addEventListener('keydown', surTouche);
+    return () => window.removeEventListener('keydown', surTouche);
+  }, [pinClavierActif]);
+
   // ── ACHAT / PAIEMENT STRIPE ──
   const handleBuyNow = async () => {
     if (!buyAmount || isNaN(Number(buyAmount)) || Number(buyAmount) <= 0) {
@@ -7763,7 +7785,7 @@ function AppContent({ themeMode, changeTheme }) {
                     </View>
                   </View>
                   <Text style={[st.history_amount, { color: item.failed ? T.text3 : (isOut ? T.down : T.up) }]}>
-                    {isOut ? '-' : '+'}{parseFloat(item.amount).toFixed(5)} {item.symbol}
+                    {isOut ? '-' : '+'}{montantActivite(item.amount)} {item.symbol}
                   </Text>
                 </AnimPressable>
               </FadeInView>
@@ -7826,7 +7848,7 @@ function AppContent({ themeMode, changeTheme }) {
 
         {!!memberSince && (
           <View style={st.stats_card}>
-            <Text style={st.stats_card_lbl}>Wallet créé le</Text>
+            <Text style={st.stats_card_lbl}>Sur cet appareil depuis le</Text>
             <Text style={st.stats_card_val}>{memberSince}</Text>
           </View>
         )}
@@ -8219,10 +8241,32 @@ function AppContent({ themeMode, changeTheme }) {
               <Text style={st.modal_title}>Navigateur Web3</Text>
               <View style={{ width: 40 }} />
             </View>
+            {/* Version web (24/11/2026) : le navigateur integre n'existe que
+                dans l'app mobile. Avant, toucher une dApp de Decouvrir menait a
+                un ecran vide, sans issue. On propose maintenant d'ouvrir le site
+                dans un onglet et de connecter le wallet par WalletConnect. */}
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center' }}>
-                Le navigateur dApp n'est disponible que dans l'app mobile NexiaWallet (pas sur le web).
+              <Text style={{ color: T.text2, fontSize: 14, textAlign: 'center', lineHeight: 21 }}>
+                Le navigateur dApp intégré n'existe que dans l'app mobile. Sur le web, ouvre le site dans un nouvel onglet, choisis « WalletConnect » sur le site, copie le lien proposé et colle-le dans NexiaWallet.
               </Text>
+              {!!lienExterneSur(dappCurrentUrl) && (
+                <TouchableOpacity
+                  onPress={() => ouvrirLienExterne(dappCurrentUrl)}
+                  style={{ marginTop: 20, backgroundColor: T.gold, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 18 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: '#062219', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                    Ouvrir {(() => { try { return new URL(dappCurrentUrl).host; } catch { return 'le site'; } })()} dans un nouvel onglet
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => { setShowDappBrowser(false); setDappBrowserFromSettings(false); setShowWalletConnect(true); refreshWcSessions(); }}
+                style={{ marginTop: 12, borderWidth: 1, borderColor: T.gold, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 18 }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: T.gold, fontWeight: '700', fontSize: 14 }}>Coller un lien WalletConnect</Text>
+              </TouchableOpacity>
             </View>
           </>
         ) : (
@@ -9589,7 +9633,7 @@ function AppContent({ themeMode, changeTheme }) {
                 );
               })()}
               <View style={[st.stats_card, { marginBottom: 14 }]}>
-                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité — Phase 7</Text>
+                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité</Text>
                 {(() => {
                   let unlimitedCount = 0;
                   try {
@@ -9597,7 +9641,7 @@ function AppContent({ themeMode, changeTheme }) {
                   } catch { unlimitedCount = 0; }
                   const rows = [
                     { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
-                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création (Phase 6) — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
+                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
                     { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
                     { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
                   ];
@@ -10676,7 +10720,9 @@ function AppContent({ themeMode, changeTheme }) {
         </View>
 
         <Text style={{ color: T.text3, fontSize: 11, textAlign: 'center', marginTop: 14 }}>
-          Les dApps s'ouvrent dans le navigateur intégré. Tes clés restent sur ton appareil.
+          {Platform.OS === 'web'
+            ? 'Sur le web, les dApps s\'ouvrent dans un nouvel onglet et se connectent par WalletConnect. Tes clés restent sur ton appareil.'
+            : 'Les dApps s\'ouvrent dans le navigateur intégré. Tes clés restent sur ton appareil.'}
         </Text>
 
         <View style={{ height: 90 }} />
