@@ -66,6 +66,7 @@ import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
+import { maxSolEnvoyableTexte } from './lib/loyerSolana';
 import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
 import { adresseLeurre } from './lib/leurreDetresse';
@@ -7407,8 +7408,12 @@ function AppContent({ themeMode, changeTheme }) {
                     try { max = await localWallet.getBitcoinMaxSendable(unlockedMnemonic); } catch { max = 0; }
                     if (!max) { showToast('Solde BTC trop faible pour couvrir les frais du réseau', 'error'); }
                   } else if (sendToken === 'SOL') {
-                    max = Math.max(0, parseFloat(solanaBalance || '0') - SOLANA_SEND_FEE_RESERVE);
-                    decimales = 9;
+                    // Tout moins les frais exacts : le compte finit a 0, seul
+                    // solde que le reseau accepte sous son minimum (24/11/2026,
+                    // voir lib/loyerSolana.js). Avant : 5 000 lamports restaient
+                    // et l'envoi etait toujours refuse.
+                    setSendCryptoAmount(maxSolEnvoyableTexte(solanaBalance || '0'));
+                    return;
                   } else {
                     max = sendToken === nativeSymbol ? Math.max(0, bal - getNativeGasReserve(network)) : bal;
                     if (sendToken === 'USDT' || sendToken === 'USDC') decimales = 6;

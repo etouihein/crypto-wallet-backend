@@ -22,6 +22,7 @@ const {
 const { BIP32Factory } = require('bip32');
 const bitcoinEcc = require('@bitcoinerlab/secp256k1');
 const bitcoin = require('bitcoinjs-lib');
+const { verifierLoyerSolana } = require('./loyerSolana');
 
 const bip32 = BIP32Factory(bitcoinEcc);
 
@@ -514,6 +515,15 @@ async function signSolanaTransferTx({ mnemonic, to, amountSol }) {
   const lamports = Number(lamportsExacts);
   const currentBalance = await connection.getBalance(keypair.publicKey);
   if (currentBalance < lamports) throw new Error('Fonds SOL insuffisants sur le wallet.');
+  // Loyer Solana (24/11/2026, voir lib/loyerSolana.js) : un envoi qui
+  // laisserait le compte entre 0 et son minimum, ou un premier envoi trop
+  // petit vers une adresse vide, est refuse par le reseau. On le dit AVANT.
+  let loyerMin = null;
+  try { loyerMin = await connection.getMinimumBalanceForRentExemption(0); } catch { loyerMin = null; }
+  let soldeDest = null;
+  try { soldeDest = await connection.getBalance(new PublicKey(to)); } catch { soldeDest = null; }
+  const refusLoyer = verifierLoyerSolana({ soldeLamports: currentBalance, montantLamports: lamports, loyerMinLamports: loyerMin, soldeDestLamports: soldeDest });
+  if (refusLoyer) throw new Error(refusLoyer);
 
   const { blockhash } = await connection.getLatestBlockhash();
   const tx = new Transaction({ recentBlockhash: blockhash, feePayer: keypair.publicKey }).add(
