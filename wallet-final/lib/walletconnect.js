@@ -94,8 +94,12 @@ async function getWalletKit() {
       metadata: {
         name: 'NexiaWallet',
         description: 'Portefeuille crypto non-custodial',
-        url: 'https://nexiawallet.pages.dev',
-        icons: ['https://nexiawallet.pages.dev/favicon.ico'],
+        // Vraie adresse du site (24/11/2026). Avant : l'ancienne adresse
+        // Cloudflare du projet. Les sites connectes affichaient ce nom-la,
+        // et WalletConnect previent en console que l'adresse declaree ne
+        // correspond pas a la page (« can lead to issues »).
+        url: 'https://www.nexiawallet.com',
+        icons: ['https://www.nexiawallet.com/favicon.ico'],
       },
     }).then((kit) => { walletKitInstance = kit; return kit; });
   }
