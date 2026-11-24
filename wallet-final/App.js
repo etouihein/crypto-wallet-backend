@@ -4886,19 +4886,18 @@ function AppContent({ themeMode, changeTheme }) {
     try { parsed = JSON.parse(abImportText); } catch { showToast('JSON invalide', 'error'); return; }
     const entries = parsed?.entries || parsed;
     if (!Array.isArray(entries)) { showToast('JSON invalide : aucune liste d’entrées', 'error'); return; }
-    let next = [...addressBook]; let added = 0;
-    entries.forEach((e) => {
-      if (!e || typeof e.label !== 'string' || !e.label.trim() || typeof e.network !== 'string') return;
-      const before = next.length;
-      next = phase7.addAddressBookEntry(next, { label: e.label.trim(), address: String(e.address || '').trim(), network: e.network });
-      if (next.length > before || phase7.findAddressBookEntry(next, String(e.address || '').trim(), e.network)) {
-        if (e.favorite) next = next.map((x) => (x.network === e.network && String(x.address).toLowerCase() === String(e.address || '').toLowerCase() ? { ...x, favorite: true } : x));
-        added += 1;
-      }
-    });
+    // Import protege (24/11/2026, voir importerContacts dans lib/phase7.js) :
+    // un nom deja pris pour une autre adresse ou un contact existant a renommer
+    // sont ignores et signales.
+    const { liste: next, ajoutes, ignores } = phase7.importerContacts(addressBook, entries);
     setAddressBook(next); phase7.saveAddressBook(next);
     setShowAbImport(false); setAbImportText('');
-    showToast(`${added} contact(s) importé(s)`, 'success');
+    showToast(
+      ignores
+        ? `${ajoutes} contact(s) importé(s), ${ignores} ignoré(s) : nom déjà utilisé pour une autre adresse, contact existant ou adresse invalide`
+        : `${ajoutes} contact(s) importé(s)`,
+      ignores ? 'error' : 'success',
+    );
   }, [abImportText, addressBook, showToast]);
 
   // ── Phase 7 : étiquettes libres d'historique (idée 5) ─────────────────

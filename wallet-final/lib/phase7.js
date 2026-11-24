@@ -350,6 +350,40 @@ function findAddressBookEntry(list, address, network) {
       : String(e.address).toLowerCase() === String(address).toLowerCase())) || null;
 }
 
+// Import d'un carnet (fichier JSON colle par l'utilisateur), 24/11/2026.
+// Avant, l'import pouvait :
+//  - ajouter un 2e contact « Maman » avec une AUTRE adresse (fichier partage
+//    par un escroc : on choisit « Maman » dans la liste et on envoie a
+//    l'escroc) ;
+//  - renommer en silence un contact existant (l'adresse de « Maman »
+//    devenait « Binance »).
+// Desormais : un nom deja utilise pour une autre adresse, ou une adresse
+// deja enregistree sous un autre nom, est IGNORE et compte dans « ignores ».
+function importerContacts(list, entries) {
+  let liste = Array.isArray(list) ? list.filter(entreeLisible) : [];
+  let ajoutes = 0;
+  let ignores = 0;
+  const memeAdresse = (a, b, n) => (n === 'solana' || n === 'bitcoin' ? a === b : String(a).toLowerCase() === String(b).toLowerCase());
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || typeof e.label !== 'string' || !e.label.trim() || typeof e.network !== 'string') { ignores += 1; continue; }
+    const label = e.label.trim();
+    const address = String(e.address || '').trim();
+    const network = e.network;
+    if (!isValidAddressForNetwork(address, network)) { ignores += 1; continue; }
+    const existant = findAddressBookEntry(liste, address, network);
+    if (existant) {
+      if (existant.label.trim().toLowerCase() !== label.toLowerCase()) ignores += 1;
+      continue; // deja la, meme nom : rien a faire
+    }
+    const homonyme = liste.find((c) => c.label.trim().toLowerCase() === label.toLowerCase() && !memeAdresse(c.address, address, c.network));
+    if (homonyme) { ignores += 1; continue; }
+    liste = addAddressBookEntry(liste, { label, address, network });
+    if (e.favorite === true) liste = liste.map((x) => (x.network === network && memeAdresse(x.address, address, network) ? { ...x, favorite: true } : x));
+    ajoutes += 1;
+  }
+  return { liste, ajoutes, ignores };
+}
+
 // ── Persistance (même pattern que approvals.js : try/catch silencieux) ─
 async function loadAddressBook() {
   try {
@@ -417,6 +451,7 @@ module.exports = {
   addAddressBookEntry,
   removeAddressBookEntry,
   findAddressBookEntry,
+  importerContacts,
   loadAddressBook,
   saveAddressBook,
   loadCurrencyPref,
