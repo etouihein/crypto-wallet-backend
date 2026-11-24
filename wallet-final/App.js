@@ -66,6 +66,7 @@ import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { prixCibleEnUsd } from './lib/prixCible';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
 import { montantRapideVente } from './lib/venteMontant';
+import { actusCrypto } from './lib/actusCrypto';
 import { prixUtilisables } from './lib/prixMarche';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
@@ -10291,14 +10292,14 @@ function AppContent({ themeMode, changeTheme }) {
         </>
       )}
 
-      {!!newsItems.length && (
+      {!!actusCrypto(newsItems).length && (
         <View style={{ marginTop: 20 }}>
           <View style={st.section_hdr}>
             <SectionTitle>{t('home_news_title')}</SectionTitle>
             <Text style={st.section_sub}>{t('home_news_updated')}</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-            {newsItems.slice(0, 10).map((item, i) => (
+            {actusCrypto(newsItems).map((item, i) => (
               <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                 {item.image ? (
                   <Image source={{ uri: item.image }} style={st.news_img} />
@@ -10444,14 +10445,14 @@ function AppContent({ themeMode, changeTheme }) {
           }
           ListHeaderComponent={
             <>
-              {!!newsItems.length && (
+              {!!actusCrypto(newsItems).length && (
                 <View style={{ marginBottom: 20 }}>
                   <View style={st.section_hdr}>
                     <SectionTitle>Actu crypto en direct</SectionTitle>
                     <Text style={st.section_sub}>MAJ / 5 min</Text>
                   </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingLeft: 14, paddingRight: 4 }}>
-                    {newsItems.slice(0, 10).map((item, i) => (
+                    {actusCrypto(newsItems).map((item, i) => (
                       <AnimPressable key={i} style={st.news_card} scaleTo={0.97} onPress={() => ouvrirLienExterne(item.link)}>
                         {item.image ? (
                           <Image source={{ uri: item.image }} style={st.news_img} />
