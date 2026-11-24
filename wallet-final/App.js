@@ -68,6 +68,7 @@ import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnite
 import { montantRapideVente } from './lib/venteMontant';
 import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
+import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
 import { nettoyerAlertes } from './lib/alertesPrix';
 import WebQrScanner from './components/WebQrScanner';
@@ -10920,12 +10921,7 @@ function AppContent({ themeMode, changeTheme }) {
             ))}
           </View>
           <Text style={st.buy_amount_convert}>
-            ≈ {(() => {
-              const price = tokens[buyToken]?.price || 0;
-              if (!price) return '0';
-              const qty = (parseFloat(buyAmount) || 0) / price;
-              return qty.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
-            })()} {buyToken}
+            ≈ {estimationAchat(buyAmount, tokens[buyToken]?.price, p7FxRates?.EUR || CURRENCIES.EUR.rate)} {buyToken}
           </Text>
 
           <View style={st.buy_info_box}>
