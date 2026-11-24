@@ -62,6 +62,7 @@ import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnite
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
+import { exporterKeystoreAvecPin } from './lib/sauvegarde';
 // Documents legaux et FAQ de l'accueil (textes longs) : lib/contenus.js
 import { LEGAL_DOCS, LANDING_FAQ } from './lib/contenus';
 import { ethers } from 'ethers';
@@ -2829,11 +2830,18 @@ function AppContent({ themeMode, changeTheme }) {
   const [showExportKeystore, setShowExportKeystore] = useState(false);
   const [exportPassphraseInput, setExportPassphraseInput] = useState('');
   const [exportPassphraseConfirm, setExportPassphraseConfirm] = useState('');
+  // PIN redemande avant l'export (le fichier contient la cle ET la phrase),
+  // comme avant "Afficher la phrase" : voir lib/sauvegarde.js.
+  const [exportPinInput, setExportPinInput] = useState('');
   const [exportPassphraseError, setExportPassphraseError] = useState(null);
   const [exportPassphraseLoading, setExportPassphraseLoading] = useState(false);
 
   const confirmExportKeystore = useCallback(async () => {
-    if (!unlockedPrivateKey) { setExportPassphraseError('Wallet verrouillé.'); return; }
+    if (!unlockedPrivateKey || !walletSession?.encryptedKeystore || isDuressMode) { setExportPassphraseError('Wallet verrouillé.'); return; }
+    if (!/^\d{6}$/.test(exportPinInput)) {
+      setExportPassphraseError('Retape ton code PIN (6 chiffres) pour confirmer que c\'est bien toi.');
+      return;
+    }
     if (exportPassphraseInput.length < 8) {
       setExportPassphraseError('Au moins 8 caractères — c\'est ce qui protège le fichier exporté, pas ton PIN.');
       return;
@@ -2845,22 +2853,26 @@ function AppContent({ themeMode, changeTheme }) {
     setExportPassphraseLoading(true);
     setExportPassphraseError(null);
     try {
-      const freshlyEncrypted = await localWallet.encryptWalletKeystore(
-        { privateKey: unlockedPrivateKey, mnemonic: unlockedMnemonic },
-        exportPassphraseInput
-      );
+      const freshlyEncrypted = await exporterKeystoreAvecPin({
+        encryptedKeystore: walletSession.encryptedKeystore,
+        address: walletSession.address,
+        pin: exportPinInput,
+        passphrase: exportPassphraseInput,
+      });
       await copyToClipboard(freshlyEncrypted, 'Keystore copié — colle-le dans un fichier .json en lieu sûr');
       setShowExportKeystore(false);
+      setExportPinInput('');
       setExportPassphraseInput('');
       setExportPassphraseConfirm('');
       setKeystoreExported(true);
       saveFlag(KEYSTORE_EXPORTED_KEY);
     } catch (err) {
-      setExportPassphraseError(humanizeTxError(err) || "Échec de l'export.");
+      setExportPinInput('');
+      setExportPassphraseError(/PIN incorrect/.test(err?.message || '') ? 'PIN incorrect.' : (humanizeTxError(err) || "Échec de l'export."));
     } finally {
       setExportPassphraseLoading(false);
     }
-  }, [unlockedPrivateKey, unlockedMnemonic, exportPassphraseInput, exportPassphraseConfirm, copyToClipboard]);
+  }, [unlockedPrivateKey, walletSession, isDuressMode, exportPinInput, exportPassphraseInput, exportPassphraseConfirm, copyToClipboard]);
 
   // Revérifie le PIN (déchiffre réellement le keystore, ne compare aucun code
   // en clair — même principe que attemptUnlock) avant de révéler la phrase de
@@ -9442,7 +9454,7 @@ function AppContent({ themeMode, changeTheme }) {
                     { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
                     { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création (Phase 6) — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
                     { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
-                    { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
+                    { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
                   ];
                   return rows.map((r) => (
                     <View key={r.title} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
@@ -9475,7 +9487,7 @@ function AppContent({ themeMode, changeTheme }) {
                 <>
                   <AnimPressable
                     style={st.settings_row}
-                    onPress={() => { setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); }}
+                    onPress={() => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); }}
                   >
                     <Text style={{ fontSize: 22 }}>🗄️</Text>
                     <View style={{ flex: 1, marginLeft: 14 }}>
@@ -9490,6 +9502,16 @@ function AppContent({ themeMode, changeTheme }) {
                         devine en quelques heures une fois le fichier sorti de l'appareil ; une vraie phrase de
                         passe, non.
                       </Text>
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPinInput}
+                        onChangeText={(v) => { setExportPinInput(v.replace(/\D/g, '').slice(0, 6)); setExportPassphraseError(null); }}
+                        placeholder="Ton code PIN actuel"
+                        placeholderTextColor={T.text3}
+                        keyboardType="numeric"
+                        secureTextEntry
+                        maxLength={6}
+                      />
                       <TextInput
                         style={[st.form_input, { marginBottom: 10 }]}
                         value={exportPassphraseInput}
@@ -9512,7 +9534,7 @@ function AppContent({ themeMode, changeTheme }) {
                       <AnimPressable style={[st.green_btn, { opacity: exportPassphraseLoading ? 0.7 : 1 }]} onPress={confirmExportKeystore} disabled={exportPassphraseLoading}>
                         {exportPassphraseLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Chiffrer et copier</Text>}
                       </AnimPressable>
-                      <TouchableOpacity onPress={() => { setShowExportKeystore(false); setExportPassphraseInput(''); setExportPassphraseConfirm(''); }} style={{ marginTop: 10 }}>
+                      <TouchableOpacity onPress={() => { setShowExportKeystore(false); setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); }} style={{ marginTop: 10 }}>
                         <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
                       </TouchableOpacity>
                     </View>
