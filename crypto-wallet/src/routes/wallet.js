@@ -45,16 +45,34 @@ const APP_API_KEYS = new Set(
     .filter(Boolean)
 );
 
-// Limite plus stricte sur les routes sensibles (diffusion de transaction,
-// paiement, swap, NFT) — le rate-limit global de server.js (100/15min) est
-// trop permissif pour ces actions-là une fois le serveur exposé publiquement.
-const sensitiveLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.SENSITIVE_RATE_LIMIT_MAX, 10) || 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Trop de requêtes sensibles depuis cette IP — réessaie dans quelques minutes.' },
-});
+// Limites plus strictes que le rate-limit global de server.js, PAR FAMILLE de
+// routes. Avant le 24/11/2026, une seule limite (20 / 15 min / IP) etait
+// partagee par toutes les routes sensibles : ouvrir une galerie de 15 NFT
+// (1 requete par image) ou demander quelques devis de swap suffisait a
+// bloquer la DIFFUSION de la transaction suivante (429), par exemple le swap
+// juste apres son approbation. Chaque famille a maintenant son propre
+// compteur. SENSITIVE_RATE_LIMIT_MAX (reglage existant) releve toutes les
+// limites s'il est plus grand ; chaque famille a aussi son propre reglage.
+const LIMITE_FENETRE_MS = 15 * 60 * 1000;
+const LIMITE_SENSIBLE_ENV = parseInt(process.env.SENSITIVE_RATE_LIMIT_MAX, 10) || 0;
+function limiteur(nomEnv, parDefaut) {
+  const max = parseInt(process.env[nomEnv], 10) || Math.max(parDefaut, LIMITE_SENSIBLE_ENV);
+  return rateLimit({
+    windowMs: LIMITE_FENETRE_MS,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Trop de requêtes sensibles depuis cette IP — réessaie dans quelques minutes.' },
+  });
+}
+// paiements, e-mail, liste des NFT : 20 / 15 min (comme avant)
+const sensitiveLimiter = limiteur('SENSITIVE_RATE_LIMIT_MAX', 20);
+// devis de swap, d'echange et de pont (l'ecran de swap en demande souvent)
+const devisLimiter = limiteur('QUOTE_RATE_LIMIT_MAX', 60);
+// diffusion des transactions signees : jamais bloquee par la navigation
+const diffusionLimiter = limiteur('BROADCAST_RATE_LIMIT_MAX', 30);
+// images NFT (une requete par image affichee ; le navigateur les garde 1 jour)
+const imagesLimiter = limiteur('IMAGE_RATE_LIMIT_MAX', 300);
 
 // Profil léger optionnel (email lié à une adresse de wallet) — pour
 // notifications futures et acquisition, PAS un compte : aucune clé, aucun
@@ -987,7 +1005,7 @@ router.get('/tx/history', async (req, res) => {
 // fait QUE demander un devis chiffré (prix + transaction à exécuter) ; la
 // construction, la signature et la diffusion restent 100% côté client, comme
 // n'importe quel envoi (aucune clé privée ne transite jamais par ici).
-router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
+router.get('/swap/quote', devisLimiter, async (req, res) => {
   try {
     const apiKey = process.env.ZEROX_API_KEY;
     if (!apiKey) {
@@ -1063,7 +1081,7 @@ router.get('/swap/quote', sensitiveLimiter, async (req, res) => {
 const BRIDGE_CHAIN_IDS = [1, 42161, 10, 8453];
 const NATIVE_TOKEN_PLACEHOLDER = '0x0000000000000000000000000000000000000000';
 
-router.get('/bridge/quote', sensitiveLimiter, async (req, res) => {
+router.get('/bridge/quote', devisLimiter, async (req, res) => {
   try {
     const { fromChain, toChain, fromAddress, fromAmount } = req.query;
     const fc = parseInt(fromChain, 10);
@@ -1148,7 +1166,7 @@ function jetonValide(v) {
   return /^[A-Za-z0-9]{2,12}$/.test(s) || ethers.utils.isAddress(s) || EST_ADRESSE_SOLANA(s);
 }
 
-router.get('/swap/cross-quote', sensitiveLimiter, async (req, res) => {
+router.get('/swap/cross-quote', devisLimiter, async (req, res) => {
   try {
     const { fromNetwork, toNetwork, fromToken, toToken, fromAmount, fromAddress, toAddress } = req.query;
     const depart = CROSS_NETWORKS[String(fromNetwork || '').toLowerCase()];
@@ -1361,7 +1379,7 @@ function fetchImagePinned(parsed, pinnedIp, timeoutMs) {
   });
 }
 
-router.get('/nft/image-proxy', sensitiveLimiter, async (req, res) => {
+router.get('/nft/image-proxy', imagesLimiter, async (req, res) => {
   try {
     const rawUrl = req.query.url;
     if (!rawUrl || typeof rawUrl !== 'string') {
@@ -1648,7 +1666,7 @@ router.post('/payments/create-sell-session', sensitiveLimiter, async (req, res) 
 // signée côté client (jamais de clé privée ici) et la relaie telle quelle au
 // réseau. Cette route ne construit ni ne signe rien ; une transaction signée
 // est de toute façon une donnée publique dès l'instant où elle est diffusée.
-router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
+router.post('/tx/broadcast', diffusionLimiter, async (req, res) => {
   try {
     const { rawTx, network = 'ethereum' } = req.body;
     if (!rawTx || typeof rawTx !== 'string') {
@@ -1697,7 +1715,7 @@ router.post('/tx/broadcast', sensitiveLimiter, async (req, res) => {
 // dans wallet-final/lib/wallet.js) ; ce backend ne fait que la relayer au
 // RPC Solana. Route distincte car le format de transaction (et le client
 // RPC) n'a rien à voir avec une rawTx EVM.
-router.post('/tx/broadcast-solana', sensitiveLimiter, async (req, res) => {
+router.post('/tx/broadcast-solana', diffusionLimiter, async (req, res) => {
   try {
     const { rawTx } = req.body;
     if (!rawTx || typeof rawTx !== 'string') {
@@ -1719,7 +1737,7 @@ router.post('/tx/broadcast-solana', sensitiveLimiter, async (req, res) => {
 // juste le hex à l'API publique Blockstream, aucune librairie Bitcoin
 // nécessaire ici (évite de répéter l'incident uuid/@solana/web3.js sur une
 // dépendance backend supplémentaire).
-router.post('/tx/broadcast-bitcoin', sensitiveLimiter, async (req, res) => {
+router.post('/tx/broadcast-bitcoin', diffusionLimiter, async (req, res) => {
   try {
     const { rawTx } = req.body;
     if (!rawTx || typeof rawTx !== 'string') {

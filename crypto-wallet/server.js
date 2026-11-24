@@ -122,6 +122,9 @@ app.use(rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 100,
   standardHeaders: true,
   legacyHeaders: false,
+  // Les images NFT ont leur propre limite (routes/wallet.js) : une galerie
+  // bien remplie ne doit pas epuiser le quota de l'app (prix, envois...).
+  skip: (req) => req.path === '/wallet/nft/image-proxy',
 }));
 
 // Sécurité HTTP minimale pour le développement
