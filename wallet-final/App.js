@@ -61,6 +61,7 @@ import { DESIGN_TOKENS } from './lib/designTokens';
 import { humanizeTxError, diffusionIncertaine } from './lib/txErrors';
 import { DARK_THEME, LIGHT_THEME, ThemeContext, useTheme } from './lib/theme';
 import { normalizeDecimalInput, lienExterneSur, montantVersTexte, montantEnUnites, decimalesEnvoi } from './lib/saisie';
+import { montantRapideVente } from './lib/venteMontant';
 import WebQrScanner from './components/WebQrScanner';
 // Parcours anonyme (web) : nom de l'etape seulement, voir lib/parcours.js
 import { etape } from './lib/parcours';
@@ -10881,10 +10882,16 @@ function AppContent({ themeMode, changeTheme }) {
                       // "Tout" quand le token vendu est le natif du réseau —
                       // sinon plus rien pour payer la transaction on-chain
                       // vers l'adresse de dépôt Coinbase.
-                      const amt = pct === 1 && sellToken === nativeSymbol
-                        ? Math.max(0, sellableBalance - getNativeGasReserve(network))
-                        : sellableBalance * pct;
-                      setSellAmount(String(amt));
+                      // SOL garde aussi de quoi payer ses frais, et le
+                      // montant est ecrit proprement (lib/venteMontant.js).
+                      setSellAmount(montantRapideVente({
+                        pct,
+                        symbole: sellToken,
+                        nativeSymbol,
+                        solde: sellableBalance,
+                        reserveNative: getNativeGasReserve(network),
+                        reserveSol: SOLANA_SEND_FEE_RESERVE,
+                      }));
                     }}
                   >
                     <Text style={st.quick_pct_txt}>{pct === 1 ? 'Tout' : `${pct * 100}%`}</Text>
