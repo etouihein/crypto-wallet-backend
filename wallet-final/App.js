@@ -69,6 +69,7 @@ import { montantRapideVente } from './lib/venteMontant';
 import { maxSolEnvoyableTexte } from './lib/loyerSolana';
 import { actusCrypto } from './lib/actusCrypto';
 import { montantActivite } from './lib/montantActivite';
+import { nettoyerImport } from './lib/donneesImport';
 import { adresseLeurre } from './lib/leurreDetresse';
 import { estimationAchat } from './lib/estimationAchat';
 import { prixUtilisables } from './lib/prixMarche';
@@ -826,6 +827,19 @@ const loadCurrency = async () => {
 
 const saveCurrency = async (code) => {
   try { await AsyncStorage.setItem(CURRENCY_KEY, code); } catch { /* rien à faire */ }
+};
+
+// Reseau choisi (24/11/2026) : avant, l'app repartait TOUJOURS sur Ethereum
+// a chaque ouverture, meme pour quelqu'un qui utilise BNB Chain ou Base.
+const RESEAU_KEY = 'wallet-pro-network-v1';
+const loadReseau = async (reseauxValides) => {
+  try {
+    const raw = await AsyncStorage.getItem(RESEAU_KEY);
+    return raw && Object.prototype.hasOwnProperty.call(reseauxValides, raw) ? raw : null;
+  } catch { return null; }
+};
+const saveReseau = async (id) => {
+  try { await AsyncStorage.setItem(RESEAU_KEY, id); } catch { /* rien à faire */ }
 };
 
 // Checklist sécurité gamifiée (Réglages) — deux étapes qui n'ont pas déjà
@@ -1791,6 +1805,8 @@ function AppContent({ themeMode, changeTheme }) {
   // Grille 2 colonnes -> multiple de 2 pour ne jamais couper une rangée à moitié.
   const NFT_PAGE_SIZE = 20;
   const [showSettings, setShowSettings]   = useState(false);
+  // Parametres regroupes en rubriques repliables (24/11/2026) : ouvertes ici.
+  const [reglagesOuverts, setReglagesOuverts] = useState([]);
   const [legalDoc, setLegalDoc]           = useState(null); // 'cgu' | 'privacy' | 'mentions' | null
   // true seulement quand renderLegal() a été ouvert depuis Paramètres (et pas
   // depuis le pied de page de la landing publique, qui n'a pas de Settings à
@@ -1897,6 +1913,8 @@ function AppContent({ themeMode, changeTheme }) {
   const [referralInputMode, setReferralInputMode] = useState(false);
   const [referralInputValue, setReferralInputValue] = useState('');
   const [network, setNetwork]             = useState('ethereum');
+  const [reseauCharge, setReseauCharge]   = useState(false);
+  useEffect(() => { if (reseauCharge) saveReseau(network); }, [network, reseauCharge]);
   const [walletSession, setWalletSession] = useState(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   // Comptes multiples : `accounts` = tous les wallets connus de cet appareil
@@ -2955,10 +2973,16 @@ function AppContent({ themeMode, changeTheme }) {
     let parsed;
     try { parsed = JSON.parse(text); } catch { showToast('JSON invalide', 'error'); return false; }
     if (!parsed || typeof parsed !== 'object') { showToast('JSON invalide', 'error'); return false; }
-    if (Array.isArray(parsed.favorites)) { setFavorites(parsed.favorites); saveFavorites(parsed.favorites); }
-    if (Array.isArray(parsed.recentAddresses)) { setRecentAddresses(parsed.recentAddresses); saveRecentAddresses(parsed.recentAddresses); }
+    // Verification avant enregistrement (lib/donneesImport.js) : adresses
+    // valides seulement, etiquettes courtes, listes limitees.
+    const propre = nettoyerImport(parsed, {
+      estAdresse: (a) => ethers.utils.isAddress(a) || localWallet.isValidSolanaAddress(a) || localWallet.isValidBitcoinAddress(a),
+      maxRecentes: MAX_RECENT_ADDRESSES,
+    });
+    if (propre.favorites) { setFavorites(propre.favorites); saveFavorites(propre.favorites); }
+    if (propre.recentAddresses) { setRecentAddresses(propre.recentAddresses); saveRecentAddresses(propre.recentAddresses); }
     if (Array.isArray(parsed.priceAlerts)) { const alertes = nettoyerAlertes(parsed.priceAlerts); setPriceAlerts(alertes); savePriceAlerts(alertes); }
-    if (parsed.txTags && typeof parsed.txTags === 'object') { setTxTags(parsed.txTags); saveTxTags(parsed.txTags); }
+    if (propre.txTags) { setTxTags(propre.txTags); saveTxTags(propre.txTags); }
     showToast('✓ Données importées', 'success');
     return true;
   }, [showToast]);
@@ -4175,6 +4199,7 @@ function AppContent({ themeMode, changeTheme }) {
     loadHideZeroBalances().then(setHideZeroBalances);
     loadLocale().then(setLocale);
     loadCurrency().then(setCurrency);
+    loadReseau(NETWORK_INFO).then((id) => { if (id) setNetwork(id); setReseauCharge(true); });
     loadBalancePeriod().then(setBalancePeriod);
     loadLastSend().then(setLastSend);
     loadTokenUsage().then(setTokenUsage);
@@ -9205,6 +9230,31 @@ function AppContent({ themeMode, changeTheme }) {
     </Modal>
   );
 
+  // Parametres simplifies (24/11/2026) : avant, une seule longue page de 17
+  // sections. Maintenant 5 rubriques repliables (Securite, Comptes et
+  // adresses, Affichage, Reseau et dApps, Notifications et e-mail) ; l'aide
+  // et les infos restent visibles en bas. Aucun reglage supprime.
+  const groupeReglages = (id, titre, sous, contenu) => {
+    const ouvert = reglagesOuverts.includes(id);
+    return (
+      <View style={{ marginBottom: 10 }}>
+        <AnimPressable
+          style={[st.settings_row, ouvert && st.settings_row_on]}
+          onPress={() => setReglagesOuverts((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: ouvert }}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={st.settings_row_title}>{titre}</Text>
+            <Text style={st.settings_row_sub}>{sous}</Text>
+          </View>
+          <Text style={{ color: T.text2, fontSize: 16, marginLeft: 8 }}>{ouvert ? '▾' : '▸'}</Text>
+        </AnimPressable>
+        {ouvert && <View style={{ paddingHorizontal: 4, paddingBottom: 8 }}>{contenu}</View>}
+      </View>
+    );
+  };
+
   const renderSettings = () => (
     <Modal visible={showSettings} animationType="slide" transparent>
       <SafeAreaView style={[st.modal_bg, isWideWeb && st.modal_bg_wide]}>
@@ -9216,127 +9266,196 @@ function AppContent({ themeMode, changeTheme }) {
           <View style={{ width: 40 }} />
         </View>
         <ScrollView style={{ flex: 1, padding: 16 }}>
-          <Text style={st.settings_section}>🧭 Mode d'affichage</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 4 }}>
-            {[['beginner', '🌱', 'Débutant'], ['advanced', '⚡', 'Avancé']].map(([mode, icon, label]) => (
-              <TouchableOpacity
-                key={mode}
-                style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, experienceMode === mode && st.chip_pill_on]}
-                onPress={() => { setExperienceMode(mode); saveExperienceMode(mode); }}
-              >
-                <Text style={{ fontSize: 15 }}>{icon}</Text>
-                <Text style={[st.chip_pill_txt, experienceMode === mode && st.chip_pill_txt_on]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={{ color: T.text3, fontSize: 11, marginBottom: 4 }}>
-            Le mode Débutant masque WalletConnect, le navigateur Web3, les autorisations, le pont cross-chain et les positions DeFi. Rien n'est supprimé, tu peux repasser en Avancé à tout moment.
+          <Text style={{ color: T.text3, fontSize: 12, marginBottom: 12, lineHeight: 18 }}>
+            Touche une rubrique pour l'ouvrir.
           </Text>
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>💱 {t('settings_currency')}</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {Object.entries(CURRENCIES).map(([code, cur]) => (
-              <TouchableOpacity
-                key={code}
-                style={[st.chip_pill, currency === code && st.chip_pill_on]}
-                onPress={() => { setCurrency(code); saveCurrency(code); }}
-              >
-                <Text style={{ fontSize: 15 }}>{cur.flag}</Text>
-                <Text style={[st.chip_pill_txt, currency === code && st.chip_pill_txt_on]}>{code}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {p7FxStatus === 'ok' && p7FxRates ? (
-            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux CoinGecko (dérivés des prix BTC) : 1 USD = {p7FxRates.EUR.toFixed(4)} EUR · {p7FxRates.CHF.toFixed(4)} CHF.</Text>
-          ) : (
-            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux EUR/CHF CoinGecko indisponibles — la devise choisie reste affichée (EUR par défaut), aucun taux inventé.</Text>
-          )}
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {Object.entries(NETWORK_INFO).map(([id, n]) => (
-              <TouchableOpacity
-                key={id}
-                style={[st.chip_pill, network === id && st.chip_pill_on]}
-                onPress={() => setNetwork(id)}
-              >
-                <Text style={{ fontSize: 15 }}>{n.emoji}</Text>
-                <Text style={[st.chip_pill_txt, network === id && st.chip_pill_txt_on]}>{n.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>{activeNetwork.desc}</Text>
-
-          {!!favorites.length && (
+          {groupeReglages('securite', '🔐 Sécurité', 'Phrase de récupération, PIN, PIN de détresse, sauvegarde', (
+ <>
+          {!!walletSession && !isDuressMode && (
             <>
-              <Text style={[st.settings_section, { marginTop: 24 }]}>⭐ Favoris</Text>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
+              {!isDuressMode && (() => {
+                const checks = [
+                  { key: 'pin', label: 'Code PIN configuré', done: true },
+                  { key: 'seed', label: 'Phrase de récupération notée', done: seedBackedUp },
+                  ...(Platform.OS !== 'web' ? [{ key: 'bio', label: 'Déverrouillage biométrique activé', done: biometricEnabled }] : []),
+                  { key: 'export', label: 'Sauvegarde chiffrée exportée', done: keystoreExported },
+                  { key: 'accounts', label: 'Compte de secours créé', done: accounts.length > 1 },
+                  { key: 'watch', label: 'Une adresse surveillée ajoutée', done: watchAddresses.length > 0 },
+                ];
+                const doneCount = checks.filter(c => c.done).length;
+                const pct = Math.round((doneCount / checks.length) * 100);
+                return (
+                  <View style={[st.stats_card, { marginBottom: 14 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={st.stats_card_lbl}>Niveau de sécurité</Text>
+                      <Text style={{ color: pct === 100 ? T.up : T.gold, fontSize: 13, fontWeight: '700' }}>{doneCount}/{checks.length}</Text>
+                    </View>
+                    <View style={{ height: 8, borderRadius: 4, backgroundColor: T.card2, overflow: 'hidden', marginTop: 10, marginBottom: 14 }}>
+                      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: pct === 100 ? T.up : T.gold }} />
+                    </View>
+                    {checks.map(c => (
+                      <View key={c.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <Ionicons
+                          name={c.done ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={18}
+                          color={c.done ? T.up : T.text3}
+                        />
+                        <Text style={{ color: c.done ? T.text : T.text2, fontSize: 13, marginLeft: 10, textDecorationLine: c.done ? 'line-through' : 'none' }}>
+                          {c.label}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+              <View style={[st.stats_card, { marginBottom: 14 }]}>
+                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité</Text>
+                {(() => {
+                  let unlimitedCount = 0;
+                  try {
+                    unlimitedCount = tokenApprovals.filter((a) => !a.revoked && a.amount && ethers.BigNumber.from(a.amount).gte(ethers.BigNumber.from(2).pow(200))).length;
+                  } catch { unlimitedCount = 0; }
+                  const rows = [
+                    { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
+                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
+                    { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
+                    { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
+                  ];
+                  return rows.map((r) => (
+                    <View key={r.title} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+                      <Text style={{ fontSize: 20 }}>{r.icon}</Text>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={st.settings_row_title}>{r.title}</Text>
+                        <Text style={st.settings_row_sub}>{r.sub}</Text>
+                        <Text style={{ color: r.done ? T.up : T.gold, fontSize: 12, fontWeight: '700', marginTop: 2 }}>{r.done ? '✓ Fait' : '○ À faire'}</Text>
+                      </View>
+                      <TouchableOpacity onPress={r.onAction} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: T.border }}>
+                        <Text style={{ color: T.gold, fontSize: 11, fontWeight: '700' }}>{r.actionLabel}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ));
+                })()}
+              </View>
+              {!!unlockedMnemonic && !isDuressMode && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); }}
+                >
+                  <Text style={{ fontSize: 22 }}>🔑</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>{t('settings_show_mnemonic')}</Text>
+                    <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
+                  </View>
+                </AnimPressable>
+              )}
+              {isUnlocked && !isDuressMode && (
+                <>
+                  <AnimPressable
+                    style={st.settings_row}
+                    onPress={() => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); }}
+                  >
+                    <Text style={{ fontSize: 22 }}>🗄️</Text>
+                    <View style={{ flex: 1, marginLeft: 14 }}>
+                      <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
+                      <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par une phrase de passe dédiée</Text>
+                    </View>
+                  </AnimPressable>
+                  {showExportKeystore && (
+                    <View style={st.alert_form}>
+                      <Text style={{ color: T.text, fontSize: 13, marginBottom: 10 }}>
+                        Choisis une phrase de passe pour ce fichier — pas ton code PIN. Un PIN à 6 chiffres se
+                        devine en quelques heures une fois le fichier sorti de l'appareil ; une vraie phrase de
+                        passe, non.
+                      </Text>
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPinInput}
+                        onChangeText={(v) => { setExportPinInput(v.replace(/\D/g, '').slice(0, 6)); setExportPassphraseError(null); }}
+                        placeholder="Ton code PIN actuel"
+                        placeholderTextColor={T.text3}
+                        keyboardType="numeric"
+                        secureTextEntry
+                        maxLength={6}
+                      />
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPassphraseInput}
+                        onChangeText={setExportPassphraseInput}
+                        placeholder="Phrase de passe (8+ caractères)"
+                        placeholderTextColor={T.text3}
+                        secureTextEntry
+                        autoCapitalize="none"
+                      />
+                      <TextInput
+                        style={[st.form_input, { marginBottom: 10 }]}
+                        value={exportPassphraseConfirm}
+                        onChangeText={setExportPassphraseConfirm}
+                        placeholder="Confirme la phrase de passe"
+                        placeholderTextColor={T.text3}
+                        secureTextEntry
+                        autoCapitalize="none"
+                      />
+                      {!!exportPassphraseError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{exportPassphraseError}</Text>}
+                      <AnimPressable style={[st.green_btn, { opacity: exportPassphraseLoading ? 0.7 : 1 }]} onPress={confirmExportKeystore} disabled={exportPassphraseLoading}>
+                        {exportPassphraseLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Chiffrer et copier</Text>}
+                      </AnimPressable>
+                      <TouchableOpacity onPress={() => { setShowExportKeystore(false); setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); }} style={{ marginTop: 10 }}>
+                        <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </>
+              )}
+              {Platform.OS !== 'web' && biometricEnabled && (
+                <AnimPressable
+                  style={st.settings_row}
+                  onPress={() => showAlert(
+                    'Désactiver Face ID / empreinte ?',
+                    'Tu devras retaper ton code PIN pour déverrouiller.',
+                    [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Désactiver', style: 'destructive', onPress: disableBiometric },
+                    ]
+                  )}
+                >
+                  <Text style={{ fontSize: 22 }}>👆</Text>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={st.settings_row_title}>Face ID / Empreinte</Text>
+                    <Text style={st.settings_row_sub}>Activé — appuie pour désactiver</Text>
+                  </View>
+                </AnimPressable>
+              )}
               <AnimPressable
                 style={st.settings_row}
-                onPress={() => showAlert(
-                  'Vider les favoris ?',
-                  `Retire ${favorites.length} crypto${favorites.length > 1 ? 's' : ''} de tes favoris.`,
-                  [
-                    { text: 'Annuler', style: 'cancel' },
-                    { text: 'Vider', style: 'destructive', onPress: clearAllFavorites },
-                  ]
-                )}
+                onPress={() => {
+                  if (duressPinConfigured) {
+                    showAlert('Désactiver le code de détresse ?', 'Le code de détresse actuel ne fonctionnera plus.', [
+                      { text: 'Annuler', style: 'cancel' },
+                      { text: 'Désactiver', style: 'destructive', onPress: handleRemoveDuressPin },
+                    ]);
+                  } else {
+                    setShowSettings(false);
+                    setDuressSetupInput('');
+                    setDuressSetupError(null);
+                    setShowDuressSetup(true);
+                  }
+                }}
               >
-                <Text style={{ fontSize: 22 }}>🗑️</Text>
+                <Text style={{ fontSize: 22 }}>🚨</Text>
                 <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={st.settings_row_title}>Vider mes favoris</Text>
-                  <Text style={st.settings_row_sub}>{favorites.length} crypto{favorites.length > 1 ? 's' : ''} épinglée{favorites.length > 1 ? 's' : ''}</Text>
+                  <Text style={st.settings_row_title}>Code PIN de détresse</Text>
+                  <Text style={st.settings_row_sub}>
+                    {duressPinConfigured ? 'Activé — appuie pour désactiver' : "Affiche un wallet vide si on te force à l'ouvrir"}
+                  </Text>
                 </View>
               </AnimPressable>
             </>
           )}
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 {t('settings_tokens')}</Text>
-          {customTokens.filter(t => t.network === network).map(t => (
-            <View key={t.address} style={[st.settings_row, { justifyContent: 'space-between' }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={st.settings_row_title}>{t.symbol} — {t.name}</Text>
-                <Text style={st.settings_row_sub}>{parseFloat(t.balance || 0).toFixed(4)} • {t.address.slice(0, 6)}…{t.address.slice(-4)}</Text>
-              </View>
-              <TouchableOpacity onPress={() => removeCustomToken(t.address)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
-              </TouchableOpacity>
-            </View>
+ </>
           ))}
-          {showAddCustomToken ? (
-            <View style={st.alert_form}>
-              <Text style={[st.form_label, { marginBottom: 8 }]}>Adresse du contrat ({activeNetwork.label})</Text>
-              <TextInput
-                style={[st.form_input, { marginBottom: 10 }]}
-                value={customTokenAddrInput}
-                onChangeText={setCustomTokenAddrInput}
-                placeholder="0x..."
-                placeholderTextColor={T.text3}
-                autoCapitalize="none"
-              />
-              <View style={{ flexDirection: 'row' }}>
-                <AnimPressable
-                  style={[st.green_btn, { flex: 1, opacity: customTokenLoading ? 0.7 : 1 }]}
-                  disabled={customTokenLoading}
-                  onPress={() => addCustomToken(customTokenAddrInput.trim())}
-                >
-                  {customTokenLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Ajouter</Text>}
-                </AnimPressable>
-              </View>
-              <TouchableOpacity onPress={() => { setShowAddCustomToken(false); setCustomTokenAddrInput(''); }} style={{ marginTop: 10 }}>
-                <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <AnimPressable style={st.settings_row} onPress={() => setShowAddCustomToken(true)}>
-              <Text style={{ fontSize: 22 }}>➕</Text>
-              <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={st.settings_row_title}>Ajouter un token personnalisé</Text>
-                <Text style={st.settings_row_sub}>Par adresse de contrat — lecture seule</Text>
-              </View>
-            </AnimPressable>
-          )}
-
+          {groupeReglages('comptes', '👤 Comptes et adresses', 'Mes comptes, adresses observées, tokens ajoutés, favoris', (
+ <>
           {!!walletSession && !isDuressMode && (
             <>
               <Text style={[st.settings_section, { marginTop: 24 }]}>👤 {t('settings_accounts')}</Text>
@@ -9537,6 +9656,204 @@ function AppContent({ themeMode, changeTheme }) {
                 </AnimPressable>
               )}
 
+            </>
+          )}
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🧩 {t('settings_tokens')}</Text>
+          {customTokens.filter(t => t.network === network).map(t => (
+            <View key={t.address} style={[st.settings_row, { justifyContent: 'space-between' }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.settings_row_title}>{t.symbol} — {t.name}</Text>
+                <Text style={st.settings_row_sub}>{parseFloat(t.balance || 0).toFixed(4)} • {t.address.slice(0, 6)}…{t.address.slice(-4)}</Text>
+              </View>
+              <TouchableOpacity onPress={() => removeCustomToken(t.address)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: T.red, fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+          {showAddCustomToken ? (
+            <View style={st.alert_form}>
+              <Text style={[st.form_label, { marginBottom: 8 }]}>Adresse du contrat ({activeNetwork.label})</Text>
+              <TextInput
+                style={[st.form_input, { marginBottom: 10 }]}
+                value={customTokenAddrInput}
+                onChangeText={setCustomTokenAddrInput}
+                placeholder="0x..."
+                placeholderTextColor={T.text3}
+                autoCapitalize="none"
+              />
+              <View style={{ flexDirection: 'row' }}>
+                <AnimPressable
+                  style={[st.green_btn, { flex: 1, opacity: customTokenLoading ? 0.7 : 1 }]}
+                  disabled={customTokenLoading}
+                  onPress={() => addCustomToken(customTokenAddrInput.trim())}
+                >
+                  {customTokenLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Ajouter</Text>}
+                </AnimPressable>
+              </View>
+              <TouchableOpacity onPress={() => { setShowAddCustomToken(false); setCustomTokenAddrInput(''); }} style={{ marginTop: 10 }}>
+                <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <AnimPressable style={st.settings_row} onPress={() => setShowAddCustomToken(true)}>
+              <Text style={{ fontSize: 22 }}>➕</Text>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={st.settings_row_title}>Ajouter un token personnalisé</Text>
+                <Text style={st.settings_row_sub}>Par adresse de contrat — lecture seule</Text>
+              </View>
+            </AnimPressable>
+          )}
+
+          {!!favorites.length && (
+            <>
+              <Text style={[st.settings_section, { marginTop: 24 }]}>⭐ Favoris</Text>
+              <AnimPressable
+                style={st.settings_row}
+                onPress={() => showAlert(
+                  'Vider les favoris ?',
+                  `Retire ${favorites.length} crypto${favorites.length > 1 ? 's' : ''} de tes favoris.`,
+                  [
+                    { text: 'Annuler', style: 'cancel' },
+                    { text: 'Vider', style: 'destructive', onPress: clearAllFavorites },
+                  ]
+                )}
+              >
+                <Text style={{ fontSize: 22 }}>🗑️</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>Vider mes favoris</Text>
+                  <Text style={st.settings_row_sub}>{favorites.length} crypto{favorites.length > 1 ? 's' : ''} épinglée{favorites.length > 1 ? 's' : ''}</Text>
+                </View>
+              </AnimPressable>
+            </>
+          )}
+
+ </>
+          ))}
+          {groupeReglages('affichage', '🎨 Affichage', "Mode, devise, langue, thème, écran d'accueil", (
+ <>
+          <Text style={st.settings_section}>🧭 Mode d'affichage</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 4 }}>
+            {[['beginner', '🌱', 'Débutant'], ['advanced', '⚡', 'Avancé']].map(([mode, icon, label]) => (
+              <TouchableOpacity
+                key={mode}
+                style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, experienceMode === mode && st.chip_pill_on]}
+                onPress={() => { setExperienceMode(mode); saveExperienceMode(mode); }}
+              >
+                <Text style={{ fontSize: 15 }}>{icon}</Text>
+                <Text style={[st.chip_pill_txt, experienceMode === mode && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={{ color: T.text3, fontSize: 11, marginBottom: 4 }}>
+            Le mode Débutant masque WalletConnect, le navigateur Web3, les autorisations, le pont cross-chain et les positions DeFi. Rien n'est supprimé, tu peux repasser en Avancé à tout moment.
+          </Text>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>💱 {t('settings_currency')}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {Object.entries(CURRENCIES).map(([code, cur]) => (
+              <TouchableOpacity
+                key={code}
+                style={[st.chip_pill, currency === code && st.chip_pill_on]}
+                onPress={() => { setCurrency(code); saveCurrency(code); }}
+              >
+                <Text style={{ fontSize: 15 }}>{cur.flag}</Text>
+                <Text style={[st.chip_pill_txt, currency === code && st.chip_pill_txt_on]}>{code}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {p7FxStatus === 'ok' && p7FxRates ? (
+            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux CoinGecko (dérivés des prix BTC) : 1 USD = {p7FxRates.EUR.toFixed(4)} EUR · {p7FxRates.CHF.toFixed(4)} CHF.</Text>
+          ) : (
+            <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Taux EUR/CHF CoinGecko indisponibles — la devise choisie reste affichée (EUR par défaut), aucun taux inventé.</Text>
+          )}
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {SUPPORTED_LOCALES.map(code => (
+              <TouchableOpacity key={code} style={[st.chip_pill, locale === code && st.chip_pill_on]} onPress={() => changeLocale(code)}>
+                <Text style={{ fontSize: 15 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
+                <Text style={[st.chip_pill_txt, locale === code && st.chip_pill_txt_on]}>{LOCALE_DISPLAY[code]?.name || code}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🎨 {t('settings_theme')}</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+            {[['dark', '🌙', t('settings_theme_dark')], ['light', '☀️', t('settings_theme_light')]].map(([mode, icon, label]) => (
+              <TouchableOpacity key={mode} style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, themeMode === mode && st.chip_pill_on]} onPress={() => changeTheme(mode)}>
+                <Text style={{ fontSize: 15 }}>{icon}</Text>
+                <Text style={[st.chip_pill_txt, themeMode === mode && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>👛 Affichage du portefeuille</Text>
+          <AnimPressable
+            style={st.settings_row}
+            onPress={() => { const next = !hideZeroBalances; setHideZeroBalances(next); saveHideZeroBalances(next); }}
+          >
+            <Text style={{ fontSize: 22 }}>🧹</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={st.settings_row_title}>Masquer les soldes à zéro</Text>
+              <Text style={st.settings_row_sub}>Ne montre que les tokens que tu possèdes réellement</Text>
+            </View>
+            <View style={[st.status_dot, { backgroundColor: hideZeroBalances ? T.gold : T.text3 }]} />
+          </AnimPressable>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 {t('settings_quick_actions')}</Text>
+          {QUICK_ACTIONS_BASE.map(a => {
+            const isHidden = hiddenQuickActions.includes(a.id);
+            return (
+              <AnimPressable key={a.id} style={st.settings_row} onPress={() => toggleQuickAction(a.id)}>
+                <Ionicons name={a.icon} size={20} color={T.text2} />
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={st.settings_row_title}>{a.label}</Text>
+                  <Text style={st.settings_row_sub}>{isHidden ? 'Masquée' : 'Visible sur l\'accueil'}</Text>
+                </View>
+                <View style={[st.status_dot, { backgroundColor: isHidden ? T.text3 : T.gold }]} />
+              </AnimPressable>
+            );
+          })}
+
+ </>
+          ))}
+          {groupeReglages('reseau', '🌐 Réseau et dApps', 'Réseau, alerte gas, WalletConnect, outils avancés', (
+ <>
+          <Text style={[st.settings_section, { marginTop: 24 }]}>🌐 {t('settings_network')}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {Object.entries(NETWORK_INFO).map(([id, n]) => (
+              <TouchableOpacity
+                key={id}
+                style={[st.chip_pill, network === id && st.chip_pill_on]}
+                onPress={() => setNetwork(id)}
+              >
+                <Text style={{ fontSize: 15 }}>{n.emoji}</Text>
+                <Text style={[st.chip_pill_txt, network === id && st.chip_pill_txt_on]}>{n.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>{activeNetwork.desc}</Text>
+
+          <Text style={[st.settings_section, { marginTop: 24 }]}>⛽ Alerte gas</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {/* Seuils revus le 24/11/2026 : le gas Ethereum tourne aujourd'hui autour
+                de 0,1 a 5 gwei ; avec 20/50/100, l'alerte « gas sous ton seuil »
+                s'affichait en permanence et ne servait a rien. */}
+            {[[null, 'Désactivée'], [1, '1 gwei'], [5, '5 gwei'], [20, '20 gwei']].map(([val, label]) => (
+              <TouchableOpacity
+                key={label}
+                style={[st.chip_pill, gasThresholdGwei === val && st.chip_pill_on]}
+                onPress={() => setGasThresholdGwei(val)}
+              >
+                <Text style={[st.chip_pill_txt, gasThresholdGwei === val && st.chip_pill_txt_on]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Sur l’écran d’envoi, une alerte s’affiche quand le gas estimé passe sous ce seuil. Données gas existantes, sinon « indisponible ».</Text>
+
+          {!!walletSession && !isDuressMode && (
+            <>
               {experienceMode === 'advanced' && (<>
               <Text style={[st.settings_section, { marginTop: 24 }]}>🔗 {t('settings_walletconnect')}</Text>
               {wcSessions.map(session => {
@@ -9612,228 +9929,12 @@ function AppContent({ themeMode, changeTheme }) {
               </AnimPressable>
               </>)}
 
-              <Text style={[st.settings_section, { marginTop: 24 }]}>🔐 {t('settings_security')}</Text>
-              {!isDuressMode && (() => {
-                const checks = [
-                  { key: 'pin', label: 'Code PIN configuré', done: true },
-                  { key: 'seed', label: 'Phrase de récupération notée', done: seedBackedUp },
-                  ...(Platform.OS !== 'web' ? [{ key: 'bio', label: 'Déverrouillage biométrique activé', done: biometricEnabled }] : []),
-                  { key: 'export', label: 'Sauvegarde chiffrée exportée', done: keystoreExported },
-                  { key: 'accounts', label: 'Compte de secours créé', done: accounts.length > 1 },
-                  { key: 'watch', label: 'Une adresse surveillée ajoutée', done: watchAddresses.length > 0 },
-                ];
-                const doneCount = checks.filter(c => c.done).length;
-                const pct = Math.round((doneCount / checks.length) * 100);
-                return (
-                  <View style={[st.stats_card, { marginBottom: 14 }]}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={st.stats_card_lbl}>Niveau de sécurité</Text>
-                      <Text style={{ color: pct === 100 ? T.up : T.gold, fontSize: 13, fontWeight: '700' }}>{doneCount}/{checks.length}</Text>
-                    </View>
-                    <View style={{ height: 8, borderRadius: 4, backgroundColor: T.card2, overflow: 'hidden', marginTop: 10, marginBottom: 14 }}>
-                      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: pct === 100 ? T.up : T.gold }} />
-                    </View>
-                    {checks.map(c => (
-                      <View key={c.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                        <Ionicons
-                          name={c.done ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={18}
-                          color={c.done ? T.up : T.text3}
-                        />
-                        <Text style={{ color: c.done ? T.text : T.text2, fontSize: 13, marginLeft: 10, textDecorationLine: c.done ? 'line-through' : 'none' }}>
-                          {c.label}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                );
-              })()}
-              <View style={[st.stats_card, { marginBottom: 14 }]}>
-                <Text style={st.stats_card_lbl}>🛡️ Centre de sécurité</Text>
-                {(() => {
-                  let unlimitedCount = 0;
-                  try {
-                    unlimitedCount = tokenApprovals.filter((a) => !a.revoked && a.amount && ethers.BigNumber.from(a.amount).gte(ethers.BigNumber.from(2).pow(200))).length;
-                  } catch { unlimitedCount = 0; }
-                  const rows = [
-                    { icon: '📝', title: 'Phrase de récupération notée', sub: seedBackedUp ? 'Sauvegarde confirmée sur cet appareil' : 'Pas encore confirmée', done: seedBackedUp, actionLabel: 'Ouvrir la sauvegarde', onAction: () => { if (unlockedMnemonic) { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); } else { showToast('Déverrouille ton wallet pour accéder à la sauvegarde', 'info'); } } },
-                    { icon: '🔢', title: 'Code PIN fort', sub: 'Les PIN faibles sont refusés à la création — le PIN actuel n’est jamais lu ni stocké ici.', done: true, actionLabel: 'En savoir plus', onAction: () => showAlert('Code PIN fort', 'À la création, les PIN faibles (123456, 000000…) sont refusés. Ton PIN n’est jamais affiché ni stocké en clair dans ce centre de sécurité.') },
-                    { icon: '🔑', title: 'Approbations illimitées', sub: unlimitedCount === 0 ? 'Aucune approbation illimitée suivie' : `${unlimitedCount} approbation(s) illimitée(s) suivie(s)`, done: unlimitedCount === 0, actionLabel: 'Ouvrir les approbations', onAction: () => { setShowSettings(false); setShowApprovals(true); refreshApprovals(); } },
-                    { icon: '🗄️', title: 'Sauvegarde chiffrée exportée', sub: keystoreExported ? 'Keystore exporté (chiffré, phrase de passe dédiée)' : 'Pas encore exporté', done: keystoreExported, actionLabel: 'Exporter le keystore', onAction: () => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); } },
-                  ];
-                  return rows.map((r) => (
-                    <View key={r.title} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
-                      <Text style={{ fontSize: 20 }}>{r.icon}</Text>
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={st.settings_row_title}>{r.title}</Text>
-                        <Text style={st.settings_row_sub}>{r.sub}</Text>
-                        <Text style={{ color: r.done ? T.up : T.gold, fontSize: 12, fontWeight: '700', marginTop: 2 }}>{r.done ? '✓ Fait' : '○ À faire'}</Text>
-                      </View>
-                      <TouchableOpacity onPress={r.onAction} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: T.border }}>
-                        <Text style={{ color: T.gold, fontSize: 11, fontWeight: '700' }}>{r.actionLabel}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ));
-                })()}
-              </View>
-              {!!unlockedMnemonic && !isDuressMode && (
-                <AnimPressable
-                  style={st.settings_row}
-                  onPress={() => { setShowSettings(false); setMnemonicReauthPin(''); setMnemonicReauthError(null); setShowMnemonicReauth(true); }}
-                >
-                  <Text style={{ fontSize: 22 }}>🔑</Text>
-                  <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={st.settings_row_title}>{t('settings_show_mnemonic')}</Text>
-                    <Text style={st.settings_row_sub}>À ne montrer à personne d'autre que toi</Text>
-                  </View>
-                </AnimPressable>
-              )}
-              {isUnlocked && !isDuressMode && (
-                <>
-                  <AnimPressable
-                    style={st.settings_row}
-                    onPress={() => { setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); setExportPassphraseError(null); setShowExportKeystore(true); }}
-                  >
-                    <Text style={{ fontSize: 22 }}>🗄️</Text>
-                    <View style={{ flex: 1, marginLeft: 14 }}>
-                      <Text style={st.settings_row_title}>Exporter le keystore chiffré</Text>
-                      <Text style={st.settings_row_sub}>Format standard (ethers/geth), protégé par une phrase de passe dédiée</Text>
-                    </View>
-                  </AnimPressable>
-                  {showExportKeystore && (
-                    <View style={st.alert_form}>
-                      <Text style={{ color: T.text, fontSize: 13, marginBottom: 10 }}>
-                        Choisis une phrase de passe pour ce fichier — pas ton code PIN. Un PIN à 6 chiffres se
-                        devine en quelques heures une fois le fichier sorti de l'appareil ; une vraie phrase de
-                        passe, non.
-                      </Text>
-                      <TextInput
-                        style={[st.form_input, { marginBottom: 10 }]}
-                        value={exportPinInput}
-                        onChangeText={(v) => { setExportPinInput(v.replace(/\D/g, '').slice(0, 6)); setExportPassphraseError(null); }}
-                        placeholder="Ton code PIN actuel"
-                        placeholderTextColor={T.text3}
-                        keyboardType="numeric"
-                        secureTextEntry
-                        maxLength={6}
-                      />
-                      <TextInput
-                        style={[st.form_input, { marginBottom: 10 }]}
-                        value={exportPassphraseInput}
-                        onChangeText={setExportPassphraseInput}
-                        placeholder="Phrase de passe (8+ caractères)"
-                        placeholderTextColor={T.text3}
-                        secureTextEntry
-                        autoCapitalize="none"
-                      />
-                      <TextInput
-                        style={[st.form_input, { marginBottom: 10 }]}
-                        value={exportPassphraseConfirm}
-                        onChangeText={setExportPassphraseConfirm}
-                        placeholder="Confirme la phrase de passe"
-                        placeholderTextColor={T.text3}
-                        secureTextEntry
-                        autoCapitalize="none"
-                      />
-                      {!!exportPassphraseError && <Text style={[st.auth_error, { marginBottom: 10 }]}>{exportPassphraseError}</Text>}
-                      <AnimPressable style={[st.green_btn, { opacity: exportPassphraseLoading ? 0.7 : 1 }]} onPress={confirmExportKeystore} disabled={exportPassphraseLoading}>
-                        {exportPassphraseLoading ? <ActivityIndicator color="#000" /> : <Text style={st.green_btn_txt}>Chiffrer et copier</Text>}
-                      </AnimPressable>
-                      <TouchableOpacity onPress={() => { setShowExportKeystore(false); setExportPinInput(''); setExportPassphraseInput(''); setExportPassphraseConfirm(''); }} style={{ marginTop: 10 }}>
-                        <Text style={{ color: T.text3, fontSize: 12, textAlign: 'center' }}>Annuler</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </>
-              )}
-              {Platform.OS !== 'web' && biometricEnabled && (
-                <AnimPressable
-                  style={st.settings_row}
-                  onPress={() => showAlert(
-                    'Désactiver Face ID / empreinte ?',
-                    'Tu devras retaper ton code PIN pour déverrouiller.',
-                    [
-                      { text: 'Annuler', style: 'cancel' },
-                      { text: 'Désactiver', style: 'destructive', onPress: disableBiometric },
-                    ]
-                  )}
-                >
-                  <Text style={{ fontSize: 22 }}>👆</Text>
-                  <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={st.settings_row_title}>Face ID / Empreinte</Text>
-                    <Text style={st.settings_row_sub}>Activé — appuie pour désactiver</Text>
-                  </View>
-                </AnimPressable>
-              )}
-              <AnimPressable
-                style={st.settings_row}
-                onPress={() => {
-                  if (duressPinConfigured) {
-                    showAlert('Désactiver le code de détresse ?', 'Le code de détresse actuel ne fonctionnera plus.', [
-                      { text: 'Annuler', style: 'cancel' },
-                      { text: 'Désactiver', style: 'destructive', onPress: handleRemoveDuressPin },
-                    ]);
-                  } else {
-                    setShowSettings(false);
-                    setDuressSetupInput('');
-                    setDuressSetupError(null);
-                    setShowDuressSetup(true);
-                  }
-                }}
-              >
-                <Text style={{ fontSize: 22 }}>🚨</Text>
-                <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={st.settings_row_title}>Code PIN de détresse</Text>
-                  <Text style={st.settings_row_sub}>
-                    {duressPinConfigured ? 'Activé — appuie pour désactiver' : "Affiche un wallet vide si on te force à l'ouvrir"}
-                  </Text>
-                </View>
-              </AnimPressable>
             </>
           )}
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>⛽ Alerte gas</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {[[null, 'Désactivée'], [20, '20 gwei'], [50, '50 gwei'], [100, '100 gwei']].map(([val, label]) => (
-              <TouchableOpacity
-                key={label}
-                style={[st.chip_pill, gasThresholdGwei === val && st.chip_pill_on]}
-                onPress={() => setGasThresholdGwei(val)}
-              >
-                <Text style={[st.chip_pill_txt, gasThresholdGwei === val && st.chip_pill_txt_on]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={[st.settings_row_sub, { marginTop: 8 }]}>Sur l’écran d’envoi, une alerte s’affiche quand le gas estimé passe sous ce seuil. Données gas existantes, sinon « indisponible ».</Text>
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>👛 Affichage du portefeuille</Text>
-          <AnimPressable
-            style={st.settings_row}
-            onPress={() => { const next = !hideZeroBalances; setHideZeroBalances(next); saveHideZeroBalances(next); }}
-          >
-            <Text style={{ fontSize: 22 }}>🧹</Text>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={st.settings_row_title}>Masquer les soldes à zéro</Text>
-              <Text style={st.settings_row_sub}>Ne montre que les tokens que tu possèdes réellement</Text>
-            </View>
-            <View style={[st.status_dot, { backgroundColor: hideZeroBalances ? T.gold : T.text3 }]} />
-          </AnimPressable>
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🏠 {t('settings_quick_actions')}</Text>
-          {QUICK_ACTIONS_BASE.map(a => {
-            const isHidden = hiddenQuickActions.includes(a.id);
-            return (
-              <AnimPressable key={a.id} style={st.settings_row} onPress={() => toggleQuickAction(a.id)}>
-                <Ionicons name={a.icon} size={20} color={T.text2} />
-                <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={st.settings_row_title}>{a.label}</Text>
-                  <Text style={st.settings_row_sub}>{isHidden ? 'Masquée' : 'Visible sur l\'accueil'}</Text>
-                </View>
-                <View style={[st.status_dot, { backgroundColor: isHidden ? T.text3 : T.gold }]} />
-              </AnimPressable>
-            );
-          })}
-
+ </>
+          ))}
+          {groupeReglages('notifications', '🔔 Notifications et e-mail', 'Sons et vibrations, e-mail optionnel', (
+ <>
           <Text style={[st.settings_section, { marginTop: 24 }]}>🔔 {t('settings_notifications')}</Text>
           <AnimPressable
             style={st.settings_row}
@@ -9876,25 +9977,8 @@ function AppContent({ themeMode, changeTheme }) {
             )}
           </View>
 
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🌍 {t('settings_language')}</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {SUPPORTED_LOCALES.map(code => (
-              <TouchableOpacity key={code} style={[st.chip_pill, locale === code && st.chip_pill_on]} onPress={() => changeLocale(code)}>
-                <Text style={{ fontSize: 15 }}>{LOCALE_DISPLAY[code]?.flag || '🌐'}</Text>
-                <Text style={[st.chip_pill_txt, locale === code && st.chip_pill_txt_on]}>{LOCALE_DISPLAY[code]?.name || code}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={[st.settings_section, { marginTop: 24 }]}>🎨 {t('settings_theme')}</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-            {[['dark', '🌙', t('settings_theme_dark')], ['light', '☀️', t('settings_theme_light')]].map(([mode, icon, label]) => (
-              <TouchableOpacity key={mode} style={[st.chip_pill, { flex: 1, justifyContent: 'center' }, themeMode === mode && st.chip_pill_on]} onPress={() => changeTheme(mode)}>
-                <Text style={{ fontSize: 15 }}>{icon}</Text>
-                <Text style={[st.chip_pill_txt, themeMode === mode && st.chip_pill_txt_on]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+ </>
+          ))}
 
           <View style={[st.warning_box, { marginTop: 24 }]}>
             <Text style={st.warning_txt}>
@@ -9955,7 +10039,7 @@ function AppContent({ themeMode, changeTheme }) {
             <Text style={{ fontSize: 22 }}>📦</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={st.settings_row_title}>{t('settings_export_data')}</Text>
-              <Text style={st.settings_row_sub}>Favoris, carnet d'adresses, alertes — copiés en JSON</Text>
+              <Text style={st.settings_row_sub}>Favoris, adresses récentes, alertes, étiquettes — copiés en JSON</Text>
             </View>
           </AnimPressable>
           {showImportData ? (
