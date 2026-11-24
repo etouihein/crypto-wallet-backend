@@ -12,6 +12,13 @@ const { formatUnits, fiatValue } = require('./money');
 const CACHE_MS = 5 * 60 * 1000;
 const abi = ethers.utils.defaultAbiCoder;
 
+class NotAContract extends Error {
+  constructor(token) {
+    super(`${token} n'est pas un contrat de token`);
+    this.name = 'NotAContract';
+  }
+}
+
 function createBalances({ db, rpc, pricing, feeAddress, chains = CHAINS, now = () => Date.now() }) {
   const address = String(feeAddress).toLowerCase();
   let cache = null;
@@ -29,8 +36,12 @@ function createBalances({ db, rpc, pricing, feeAddress, chains = CHAINS, now = (
     return seen;
   }
 
+  // Un nœud répond "0x" (aucune donnée) quand l'adresse appelée n'a pas de
+  // code : ce n'est pas un token, et BigInt("0x") planterait.
   async function erc20Call(chain, token, data) {
-    return rpc.call(chain.rpcUrl, 'eth_call', [{ to: token, data }, 'latest']);
+    const result = await rpc.call(chain.rpcUrl, 'eth_call', [{ to: token, data }, 'latest']);
+    if (result === '0x') throw new NotAContract(token);
+    return result;
   }
 
   async function tokenMeta(chain, token, known) {
@@ -46,8 +57,18 @@ function createBalances({ db, rpc, pricing, feeAddress, chains = CHAINS, now = (
     const nativeRaw = BigInt(await rpc.call(chain.rpcUrl, 'eth_getBalance', [address, 'latest'])).toString();
     const lines = [{ token: NATIVE_TOKEN, symbol: chain.nativeSymbol, decimals: 18, raw: nativeRaw, coingeckoId: chain.nativeCoingeckoId }];
     for (const [token, known] of trackedTokens(chain.chainId)) {
-      const meta = await tokenMeta(chain, token, known);
-      const raw = BigInt(await erc20Call(chain, token, '0x70a08231' + address.slice(2).padStart(64, '0'))).toString();
+      let meta;
+      let raw;
+      try {
+        meta = await tokenMeta(chain, token, known);
+        raw = BigInt(await erc20Call(chain, token, '0x70a08231' + address.slice(2).padStart(64, '0'))).toString();
+      } catch (error) {
+        // Adresse sans contrat : on ignore ce token seul, sans effacer les
+        // autres soldes de la chaîne. Toute autre erreur (nœud en panne…)
+        // reste une erreur de la chaîne, affichée telle quelle.
+        if (error instanceof NotAContract) continue;
+        throw error;
+      }
       lines.push({ token, symbol: meta.symbol, decimals: meta.decimals, raw, coingeckoId: await pricing.resolveCoingeckoId(chain, token) });
     }
     return lines;
