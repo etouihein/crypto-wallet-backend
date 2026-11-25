@@ -194,6 +194,34 @@ function verifierCompte(adresseDemandee, wallet) {
   }
 }
 
+// Limite de gas d'une transaction demandee par un site (25/11/2026).
+// Avant, la limite fournie par le site (tx.gas) etait reprise telle quelle,
+// sans aucune verification : la transaction etait alors signee SANS
+// l'estimation du reseau, celle qui refuse une transaction vouee a l'echec.
+// Un site malveillant pouvait demander 30 000 000 de gas vers un contrat qui
+// consomme tout le gas puis echoue : l'utilisateur payait des frais enormes
+// (plusieurs centaines d'euros sur Ethereum) pour rien, sans que l'ecran de
+// confirmation n'affiche ces frais. Desormais, comme quand le site ne donne
+// pas de limite : estimation par le reseau depuis le compte de
+// l'utilisateur (transaction qui echouerait -> refusee, rien n'est paye) ;
+// la limite du site est gardee seulement entre l'estimation et 2 fois
+// l'estimation (marge normale des sites), sinon ramenee dans cet intervalle.
+async function limiteDeGas(wallet, demande, gasDuSite) {
+  let estimation;
+  try {
+    estimation = await wallet.estimateGas(demande);
+  } catch (err) {
+    const echec = err && (err.code === 'UNPREDICTABLE_GAS_LIMIT' || err.code === 'CALL_EXCEPTION' || /revert/i.test(String(err.message || '')));
+    if (echec) throw new Error("Cette transaction échouerait sur la blockchain : envoi refusé (aucun frais payé). Vérifie sur le site ce que tu essaies de faire.");
+    throw err;
+  }
+  let gasSite = null;
+  try { gasSite = gasDuSite ? ethers.BigNumber.from(gasDuSite) : null; } catch { gasSite = null; }
+  if (!gasSite || gasSite.lte(estimation)) return estimation;
+  const plafond = estimation.mul(2);
+  return gasSite.gt(plafond) ? plafond : gasSite;
+}
+
 async function executeSessionRequest({ chainId, method, params }, privateKey) {
   // Entree PROPRE seulement : "constructor" ou "__proto__" ne sont pas des chaines.
   const network = Object.prototype.hasOwnProperty.call(SUPPORTED_EVM_CHAINS, chainId) ? SUPPORTED_EVM_CHAINS[chainId] : undefined;
@@ -251,11 +279,13 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
         throw new Error(`Cette transaction est prévue pour un autre réseau (chainId ${tx.chainId}) que celui affiché : envoi refusé.`);
       }
     }
+    const value = tx.value ? ethers.BigNumber.from(tx.value) : undefined;
+    const data = tx.data || '0x';
     const populated = await wallet.populateTransaction({
       to: tx.to,
-      value: tx.value ? ethers.BigNumber.from(tx.value) : undefined,
-      data: tx.data || '0x',
-      gasLimit: tx.gas ? ethers.BigNumber.from(tx.gas) : undefined,
+      value,
+      data,
+      gasLimit: await limiteDeGas(wallet, { to: tx.to, value, data }, tx.gas),
     });
     const signed = await wallet.signTransaction(populated);
     const sent = await wallet.provider.sendTransaction(signed);
