@@ -182,6 +182,39 @@ async function rejectSessionRequest(topic, id, message = "Refusé par l'utilisat
   });
 }
 
+// Diffusion d'une transaction demandee par un site (25/11/2026). Avant, si
+// le noeud ne repondait pas (delai depasse, connexion coupee) APRES avoir
+// peut-etre recu la transaction, l'app affichait « Le réseau ne répond pas —
+// réessaie dans un instant » : en recommencant, l'utilisateur signait une
+// SECONDE transaction (nouveau numero), donc pouvait payer deux fois.
+// Desormais : seul un refus explicite du noeud (solde insuffisant, numero
+// deja utilise...) reste une erreur normale ; tout le reste est annonce
+// comme un envoi INCERTAIN, avec la reference de la transaction, et sans
+// jamais inviter a recommencer.
+const REFUS_DU_NOEUD = new Set(['INSUFFICIENT_FUNDS', 'NONCE_EXPIRED', 'REPLACEMENT_UNDERPRICED', 'UNPREDICTABLE_GAS_LIMIT', 'CALL_EXCEPTION', 'INVALID_ARGUMENT']);
+function refusCertainDuNoeud(err) {
+  if (!err) return false;
+  const texte = String(err.message || '') + ' ' + String(err.error?.message || '');
+  if (/already known|known transaction/i.test(texte)) return false; // le noeud l'a deja : elle est partie
+  if (REFUS_DU_NOEUD.has(err.code)) return true;
+  // ethers : le noeud a repondu par une erreur JSON-RPC (« processing response error »)
+  return err.code === 'SERVER_ERROR' && !!err.error;
+}
+
+async function diffuserSansDoublon(provider, signed) {
+  const hash = ethers.utils.keccak256(signed);
+  try {
+    const sent = await provider.sendTransaction(signed);
+    return sent.hash;
+  } catch (err) {
+    if (refusCertainDuNoeud(err)) throw err;
+    const incertain = new Error(`Envoi incertain : ta transaction est peut-être partie (réf. ${hash}). Ne recommence pas : vérifie d'abord ton historique.`);
+    incertain.code = 'ENVOI_INCERTAIN';
+    incertain.hash = hash;
+    throw incertain;
+  }
+}
+
 // Exécute réellement la demande (signature ou envoi de transaction) avec la
 // clé privée déjà déverrouillée en mémoire — jamais persistée, jamais
 // envoyée au relais WalletConnect. Lève une erreur pour toute méthode/chaîne
@@ -258,8 +291,7 @@ async function executeSessionRequest({ chainId, method, params }, privateKey) {
       gasLimit: tx.gas ? ethers.BigNumber.from(tx.gas) : undefined,
     });
     const signed = await wallet.signTransaction(populated);
-    const sent = await wallet.provider.sendTransaction(signed);
-    return sent.hash;
+    return diffuserSansDoublon(wallet.provider, signed);
   }
 
   throw new Error(`Méthode non supportée : ${method}`);
