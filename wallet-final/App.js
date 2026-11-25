@@ -3865,7 +3865,8 @@ function AppContent({ themeMode, changeTheme }) {
     setWcSimResult(null);
     const tx = wcRequest.params.request.params?.[0] || {};
     const net = walletConnect.SUPPORTED_EVM_CHAINS[wcRequest.params.chainId] || 'ethereum';
-    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network: net })
+    // from : simulation depuis le compte qui signera (voir lib/txSimulation.js).
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, from: walletAddr, network: net })
       .then((res) => { if (!cancelled) setWcSimResult(res); })
       .catch(() => { if (!cancelled) setWcSimResult(null); });
     // Phase 6 (audit M1) : délai max 5 s — au-delà, on n'attend plus, mais
@@ -3874,20 +3875,20 @@ function AppContent({ themeMode, changeTheme }) {
     setWcSimExpired(false);
     const timer = setTimeout(() => { if (!cancelled) setWcSimExpired(true); }, 5000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [wcRequest]);
+  }, [wcRequest, walletAddr]);
 
   useEffect(() => {
     if (dappBridgeRequest?.method !== 'eth_sendTransaction') { setDappSimResult(null); return; }
     let cancelled = false;
     setDappSimResult(null);
     const tx = dappBridgeRequest.params?.[0] || {};
-    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, network })
+    simulateTransaction({ to: tx.to, data: tx.data, value: tx.value, from: walletAddr, network })
       .then((res) => { if (!cancelled) setDappSimResult(res); })
       .catch(() => { if (!cancelled) setDappSimResult(null); });
     setDappSimExpired(false);
     const timer = setTimeout(() => { if (!cancelled) setDappSimExpired(true); }, 5000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [dappBridgeRequest, network]);
+  }, [dappBridgeRequest, network, walletAddr]);
 
   // ── Staking natif Solana ──
   // La liste des comptes de stake connus de cet appareil (par adresse de
