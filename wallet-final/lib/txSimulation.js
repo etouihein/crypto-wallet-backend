@@ -143,7 +143,7 @@ function extractRevertReason(err) {
 }
 
 // { risk: 'none'|'medium'|'high', warnings: string[], willLikelyRevert, revertReason, decodedMethod }
-async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
+async function simulateTransaction({ to, data, value, from, network = 'ethereum' }) {
   const warnings = [];
   let risk = 'none';
 
@@ -185,7 +185,16 @@ async function simulateTransaction({ to, data, value, network = 'ethereum' }) {
   let willLikelyRevert = false;
   let revertReason = null;
   try {
+    // L'estimation doit se faire DEPUIS le compte qui va signer (25/11/2026).
+    // Sans "from", le noeud simule depuis l'adresse 0x000...0 : un swap de
+    // tokens (qui depense les jetons ou l'autorisation de l'utilisateur)
+    // etait annonce "va probablement echouer" alors qu'il passerait, et a
+    // l'inverse une transaction qui echouera depuis le vrai compte (solde
+    // insuffisant...) pouvait sembler correcte. Fausses alertes = alertes
+    // qu'on finit par ignorer.
+    const expediteur = typeof from === 'string' && ethers.utils.isAddress(from) ? from : undefined;
     await getProvider(network).estimateGas({
+      from: expediteur,
       to,
       data: data || '0x',
       value: value ? ethers.BigNumber.from(value) : undefined,
